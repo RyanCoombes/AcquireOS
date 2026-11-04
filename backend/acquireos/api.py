@@ -28,8 +28,15 @@ from .ownership import rebuild as rebuild_ownership
 @asynccontextmanager
 async def lifespan(_app):
     db.migrate()
+    with db.conn() as c:
+        from . import sic
+
+        sic.seed(c)
     config.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    yield
+    # A fresh MCP HTTP app per start: its session manager can only run once.
+    manager = _install_mcp()
+    async with manager.run():
+        yield
 
 
 app = FastAPI(title="AcquireOS", version=__version__, lifespan=lifespan)
@@ -38,11 +45,21 @@ UID = config.DEFAULT_USER_ID
 
 @app.middleware("http")
 async def basic_auth(request: Request, call_next):
-    """Optional password. Set APP_PASSWORD to require it (always do this
-    if the app is reachable from outside your home network)."""
-    if not config.APP_PASSWORD or request.url.path == "/api/health":
-        return await call_next(request)
+    """Optional password (APP_PASSWORD, for people in a browser) and API
+    token (API_TOKEN, for Claude over MCP and for scripts)."""
+    path = request.url.path
     header = request.headers.get("authorization", "")
+    token_ok = bool(config.API_TOKEN) and (
+        secrets.compare_digest(header, f"Bearer {config.API_TOKEN}")
+        or secrets.compare_digest(request.headers.get("x-api-key", ""), config.API_TOKEN)
+    )
+    if path.startswith("/mcp"):
+        if token_ok or (not config.API_TOKEN and not config.APP_PASSWORD):
+            return await call_next(request)
+        msg = "Set API_TOKEN on the server and send it as a Bearer token" if not config.API_TOKEN else "Invalid or missing API token"
+        return JSONResponse({"error": msg}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+    if token_ok or not config.APP_PASSWORD or path == "/api/health":
+        return await call_next(request)
     if header.startswith("Basic "):
         try:
             user, _, pw = base64.b64decode(header[6:]).decode().partition(":")
@@ -89,6 +106,7 @@ def meta():
         "regions": regions,
         "tiers": tiers,
         "company_statuses": company_statuses,
+        "map": {"tiles": config.MAP_TILE_URL, "attribution": config.MAP_ATTRIBUTION},
         "counts": counts,
         "buy_box": {"id": bb["id"], "name": bb["name"]},
     }
@@ -110,7 +128,8 @@ def companies(
     flag: str | None = None, sort: str = "score", dir: str = "desc", limit: int = 100, offset: int = 0,
     company_status: str | None = None, sic: str | None = None, changed_days: int | None = None,
     change_kind: str | None = None, min_value: float | None = None, max_value: float | None = None,
-    min_years: int | None = None,
+    min_years: int | None = None, format: str = "list", business_type: str | None = None,
+    has_website: bool | None = None,
 ):
     with db.conn() as c:
         bb = scoring.active_buy_box(c)
@@ -157,8 +176,15 @@ def companies(
             where.append("s.value_low <= %(maxv)s"); params["maxv"] = max_value
         if min_years is not None:
             where.append("c.incorporation_date <= current_date - make_interval(years => %(miny)s)"); params["miny"] = min_years
+        if business_type:
+            where.append("exists (select 1 from enrichment en where en.company_number = c.company_number and en.business_type = %(btype)s)")
+            params["btype"] = business_type
+        if has_website is not None:
+            where.append(("" if has_website else "not ") + "exists (select 1 from enrichment en where en.company_number = c.company_number and en.website is not null)")
         if not include_excluded:
             where.append("not coalesce(s.excluded, false)")
+        if format == "map":
+            return _map_points(c, where, params)
         order = SORTS.get(sort, "s.score")
         direction = "asc" if dir == "asc" else "desc"
         sql = f"""
@@ -174,6 +200,8 @@ def companies(
                    s.score, s.coverage, s.excluded, s.exclusion, s.value_low, s.value_high, s.value_basis,
                    coalesce(uc.status, 'new') as status, uc.rating, uc.next_action, uc.next_action_on,
                    ch.last_change, ch.last_kinds,
+                   (select website from enrichment en where en.company_number = c.company_number) as website,
+                   (select business_type from enrichment en where en.company_number = c.company_number) as business_type,
                    (select array_agg(employees order by period_end) from (
                         select period_end, employees from financial_period t
                         where t.company_number = c.company_number and not t.period_inferred and t.employees is not null
@@ -249,12 +277,77 @@ def company(num: str):
         a = valuation.assumptions(bb["criteria"], override)
         val = {**valuation.value(facts, a), "assumptions": a, "defaults": valuation.assumptions(bb["criteria"]),
                "override": override, "cash": facts.get("cash")}
+        geo = c.execute("select lat, lon, precision from postcode_geo where postcode = %s and lat is not null",
+                        (row["postcode"],)).fetchone() if row["postcode"] else None
+        sic_known = {r["code"]: r["description"] for r in c.execute(
+            "select code, description from sic_code where code = any(%s)", (row["sic_codes"] or [],))}
+        from . import sic as sic_mod
+
+        sics = [{"code": code, "description": sic_mod.describe(code, sic_known)} for code in row["sic_codes"] or []]
+        enr = c.execute("select * from enrichment where company_number = %s", (num,)).fetchone()
+        issues = c.execute("select * from data_issue where company_number = %s order by status, created_at desc",
+                           (num,)).fetchall()
     return {
+        "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
         "changes": changes, "valuation": val,
         "company": row, "financials": fin, "estimate": est, "ownership": own, "people": people,
         "links": links, "score": sc, "state": state or {"status": "new", "rating": None, "tags": []},
         "notes": notes, "research": research, "outreach": outreach,
     }
+
+
+def _map_points(c, where, params):
+    """Located companies matching the filters, plus links between them."""
+    rows = c.execute(
+        f"""select c.company_number, c.name, c.postcode, c.region, g.lat, g.lon, g.precision,
+                   s.score, s.excluded, coalesce(uc.status, 'new') as status, o.ownership_type,
+                   c.status as company_status
+            from company c
+            left join company_ownership o on o.company_number = c.company_number
+            left join score s on s.company_number = c.company_number and s.buy_box_id = %(bb)s
+            left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
+            left join (select company_number, max(detected_at) as last_change from company_change group by 1) ch
+                   on ch.company_number = c.company_number
+            left join estimate e on e.company_number = c.company_number
+            left join (select distinct on (company_number) company_number, employees, net_assets
+                       from financial_period where not period_inferred order by company_number, period_end desc) l
+                   on l.company_number = c.company_number
+            join postcode_geo g on g.postcode = c.postcode and g.lat is not null
+            where {' and '.join(where)}
+            order by s.score desc nulls last limit 25000""",
+        params,
+    ).fetchall()
+    total = c.execute(
+        f"""select count(*) as n from company c
+            left join company_ownership o on o.company_number = c.company_number
+            left join score s on s.company_number = c.company_number and s.buy_box_id = %(bb)s
+            left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
+            left join (select company_number, max(detected_at) as last_change from company_change group by 1) ch
+                   on ch.company_number = c.company_number
+            left join estimate e on e.company_number = c.company_number
+            left join (select distinct on (company_number) company_number, employees, net_assets
+                       from financial_period where not period_inferred order by company_number, period_end desc) l
+                   on l.company_number = c.company_number
+            where {' and '.join(where)}""",
+        params,
+    ).fetchone()["n"]
+    nums = [r["company_number"] for r in rows]
+    links = c.execute(
+        """select l.a, l.b, l.kind, l.confidence, l.via, coalesce(l.b_name, cb.name) as b_name,
+                  coalesce(gb.lat, gp.lat) as b_lat, coalesce(gb.lon, gp.lon) as b_lon,
+                  cb.company_number is not null as b_in_list
+           from company_link l
+           left join company cb on cb.company_number = l.b
+           left join postcode_geo gb on gb.postcode = cb.postcode
+           left join lateral (select p.postcode from person p where p.registration_number = l.b
+                              and p.postcode is not null limit 1) pp on cb.company_number is null
+           left join postcode_geo gp on gp.postcode = pp.postcode
+           where l.a = any(%s) and l.kind in ('owned_by', 'shared_owner')
+             and (l.kind = 'owned_by' or l.b = any(%s))""",
+        (nums, nums),
+    ).fetchall() if nums else []
+    return {"total": total, "located": len(rows), "points": rows,
+            "links": [x for x in links if x["b_lat"] is not None]}
 
 
 def _links_for(c, num):
@@ -265,10 +358,17 @@ def _links_for(c, num):
                   case when l.kind = 'owned_by' and l.a = %(n)s then 'parent'
                        when l.kind = 'owned_by' then 'subsidiary' else 'peer' end as direction,
                   exists(select 1 from company x where x.company_number =
-                         case when l.a = %(n)s then l.b else l.a end) as in_list
+                         case when l.a = %(n)s then l.b else l.a end) as in_list,
+                  coalesce(case when l.a = %(n)s then gb.lat else ga.lat end, gp.lat) as lat,
+                  coalesce(case when l.a = %(n)s then gb.lon else ga.lon end, gp.lon) as lon
            from company_link l
            left join company ca on ca.company_number = l.a
            left join company cb on cb.company_number = l.b
+           left join postcode_geo ga on ga.postcode = ca.postcode
+           left join postcode_geo gb on gb.postcode = cb.postcode
+           left join lateral (select p.postcode from person p where p.registration_number = l.b
+                              and p.postcode is not null limit 1) pp on l.a = %(n)s and cb.company_number is null
+           left join postcode_geo gp on gp.postcode = pp.postcode
            where l.a = %(n)s or l.b = %(n)s
            order by case l.confidence when 'confirmed' then 0 when 'likely' then 1 else 2 end, l.kind""",
         {"n": num},
@@ -478,6 +578,137 @@ def dashboard():
         "freshness": {r["kind"]: r["last"] for r in freshness}, "trend": trend, "refresh": _refresh_state,
         "buy_box": bb["name"],
     }
+
+
+_geo_state = {"running": False, "result": None}
+
+
+@app.post("/api/geocode")
+def start_geocode():
+    """Look up map coordinates for postcodes not yet located (background)."""
+    import threading
+
+    if _geo_state["running"]:
+        raise HTTPException(409, "Already running")
+
+    def work():
+        from . import geo
+
+        try:
+            with db.conn() as c:
+                _geo_state["result"] = geo.geocode(c)
+        except Exception as e:
+            _geo_state["result"] = {"error": str(e)}
+        finally:
+            _geo_state["running"] = False
+
+    _geo_state.update(running=True, result=None)
+    threading.Thread(target=work, daemon=True).start()
+    return _geo_state
+
+
+@app.get("/api/geocode")
+def geocode_status():
+    with db.conn() as c:
+        counts = c.execute(
+            """select count(*) filter (where g.lat is not null) as located,
+                      count(*) filter (where g.postcode is null) as pending,
+                      count(*) filter (where g.precision = 'none') as not_found,
+                      count(*) as total
+               from company c left join postcode_geo g on g.postcode = c.postcode
+               where c.postcode is not null""").fetchone()
+    return {**_geo_state, "counts": counts}
+
+
+@app.get("/api/sic")
+def sic_list():
+    from . import sic as sic_mod
+
+    with db.conn() as c:
+        bb = scoring.active_buy_box(c)
+        rows = c.execute(
+            """select code, count(*) as n,
+                      count(*) filter (where not coalesce(s.excluded, false)) as in_scope
+               from company c cross join unnest(c.sic_codes) code
+               left join score s on s.company_number = c.company_number and s.buy_box_id = %s
+               group by code order by n desc""", (bb["id"],)).fetchall()
+        known = {r["code"]: r["description"] for r in c.execute("select code, description from sic_code")}
+    return [{**r, "description": sic_mod.describe(r["code"], known)} for r in rows]
+
+
+class EnrichIn(BaseModel):
+    source_url: str = "manual"
+    website: str | None = None
+    business_type: str | None = None
+    recurring_revenue: str | None = None
+    field_service: str | None = None
+    summary: str | None = None
+    confidence: str = "high"
+    source_label: str | None = None
+
+
+@app.post("/api/companies/{num}/enrichment")
+def save_enrichment(num: str, body: EnrichIn):
+    from . import enrich
+
+    with db.conn() as c:
+        try:
+            return enrich.save_enrichment(c, num, by="me", **body.model_dump())
+        except enrich.EnrichError as e:
+            raise HTTPException(400, str(e))
+
+
+class IssueIn(BaseModel):
+    issue: str
+    company_number: str | None = None
+    detail: str | None = None
+    suggested_fix: str | None = None
+
+
+@app.get("/api/issues")
+def issues(status: str = "open"):
+    where = "" if status == "all" else "where d.status = %s"
+    return _rows(f"""select d.*, c.name from data_issue d left join company c on c.company_number = d.company_number
+                     {where} order by d.created_at desc limit 500""", () if status == "all" else (status,))
+
+
+@app.post("/api/issues")
+def add_issue(body: IssueIn):
+    from . import enrich
+
+    with db.conn() as c:
+        try:
+            return enrich.flag_issue(c, body.company_number, body.issue, body.detail, body.suggested_fix, by="me")
+        except enrich.EnrichError as e:
+            raise HTTPException(400, str(e))
+
+
+class ResolveIn(BaseModel):
+    resolution: str = ""
+    status: str = "resolved"
+
+
+@app.post("/api/issues/{issue_id}/resolve")
+def resolve_issue(issue_id: int, body: ResolveIn):
+    from . import enrich
+
+    with db.conn() as c:
+        try:
+            return enrich.resolve_issue(c, issue_id, body.resolution, body.status)
+        except enrich.EnrichError as e:
+            raise HTTPException(400, str(e))
+
+
+@app.get("/api/connect")
+def connect_info(request: Request):
+    """What the Connect Claude page needs: endpoint and whether a token is set."""
+    base = str(request.base_url).rstrip("/")
+    with db.conn() as c:
+        e = c.execute("""select (select count(*) from enrichment) as enriched,
+                                (select count(*) from data_issue where status = 'open') as open_issues,
+                                (select max(updated_at) from enrichment where updated_by like 'claude%%') as last_claude""").fetchone()
+    return {"mcp_url": f"{base}/mcp", "api_docs": f"{base}/docs", "token_set": bool(config.API_TOKEN),
+            "password_set": bool(config.APP_PASSWORD), **e}
 
 
 @app.get("/api/changes")
@@ -786,6 +1017,29 @@ def _cell(v):
     if v is None or isinstance(v, (str, int, float, bool)):
         return v
     return str(v)
+
+
+# --------------------------------------------------------------------- MCP
+
+from .mcp_server import server as _mcp_server  # noqa: E402
+
+_MCP_ROUTES: list = []
+
+
+def _install_mcp():
+    """Create the /mcp route (stateless Streamable HTTP, JSON responses) and
+    put it ahead of the web app's catch-all route. host=0.0.0.0 turns off the
+    SDK's localhost-only Host check; access is controlled by API_TOKEN."""
+    mcp_app = _mcp_server.streamable_http_app(
+        streamable_http_path="/mcp", stateless_http=True, json_response=True, host="0.0.0.0",
+    )
+    for r in _MCP_ROUTES:
+        if r in app.router.routes:
+            app.router.routes.remove(r)
+    _MCP_ROUTES[:] = list(mcp_app.routes)
+    for r in reversed(_MCP_ROUTES):
+        app.router.routes.insert(0, r)
+    return _mcp_server.session_manager
 
 
 # --------------------------------------------------------------- front end

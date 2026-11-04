@@ -24,15 +24,16 @@ const VIEWS: { key: string; label: string; params: Record<string, string> }[] = 
   { key: "all", label: "All companies", params: { include_excluded: "1" } },
   { key: "changed", label: "Changed recently", params: { include_excluded: "1", changed_days: "30", sort: "changed" } },
 ];
-const FILTER_KEYS = ["q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
+const FILTER_KEYS = ["business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
   "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
-const MORE_KEYS = ["company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
+const MORE_KEYS = ["business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
 
 export default function Targets() {
   const [params, setParams] = useSearchParams();
   const nav = useNavigate();
   const meta = useAsync(() => api.meta(), []);
   const saved = useAsync(() => api.searches(), []);
+  const sicList = useAsync(() => api.sic(), []);
   const query = useMemo(() => Object.fromEntries(params.entries()), [params]);
   const page = Number(query.page ?? 0);
   const apiParams: Record<string, string> = { ...query, limit: String(PAGE), offset: String(page * PAGE) };
@@ -166,12 +167,18 @@ export default function Targets() {
                 <Select label="Company status" k="company_status" query={query} set={set} options={(m?.company_statuses ?? []).map((s) => [s, cap(s)])} />
                 <div className="field">
                   <label htmlFor="f-sic">SIC code starts</label>
-                  <input id="f-sic" type="text" style={{ width: 96 }} key={`sic-${query.sic ?? ""}`} defaultValue={query.sic ?? ""} placeholder="e.g. 620"
+                  <datalist id="sic-codes">{sicList.data?.slice(0, 300).map((x) => <option key={x.code} value={x.code}>{`${x.description} (${x.n})`}</option>)}</datalist>
+                  <input id="f-sic" type="text" list="sic-codes" style={{ width: 120 }} key={`sic-${query.sic ?? ""}`} defaultValue={query.sic ?? ""} placeholder="e.g. 620"
                          onBlur={(e) => set("sic", e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") set("sic", (e.target as HTMLInputElement).value); }} />
                 </div>
                 <NumField label="Years trading" k="min_years" placeholder="at least" query={query} set={set} />
                 <NumRange label="Indicative value, £" lo="min_value" hi="max_value" query={query} set={set} wide />
                 <Select label="Review tier" k="tier" query={query} set={set} options={(m?.tiers ?? []).map((t) => [t, t])} />
+                <Select label="Business type" k="business_type" query={query} set={set} options={[
+                  ["software", "Software"], ["saas", "SaaS"], ["data", "Data"], ["msp", "Managed service provider"],
+                  ["it_consultancy", "IT consultancy"], ["field_service", "Field service"], ["agency", "Agency"], ["reseller", "Reseller"], ["other", "Other"],
+                ]} />
+                <Select label="Website" k="has_website" query={query} set={set} options={[["true", "Found"], ["false", "Not found yet"]]} />
                 <Select label="Changed in" k="changed_days" query={query} set={set}
                         options={[["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"], ["365", "Last year"]]} />
                 <Select label="Change type" k="change_kind" query={query} set={set} options={Object.entries(CHANGE_KIND)} />

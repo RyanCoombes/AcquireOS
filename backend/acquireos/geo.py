@@ -1,0 +1,93 @@
+"""Postcode to latitude and longitude, for the map.
+
+Uses postcodes.io (free, open data from the ONS Postcode Directory, no key):
+    POST https://api.postcodes.io/postcodes      up to 100 postcodes a call
+    GET  https://api.postcodes.io/outcodes/{out} district centroid
+Results are cached in postcode_geo, so each postcode is looked up once.
+Set POSTCODES_IO_URL to use a self-hosted copy of postcodes.io.
+"""
+from __future__ import annotations
+
+import json
+import os
+import time
+import urllib.request
+
+API = os.environ.get("POSTCODES_IO_URL", "https://api.postcodes.io").rstrip("/")
+UA = "AcquireOS/0.3 (self-hosted research tool)"
+
+
+def _post(path: str, body: dict) -> dict:
+    req = urllib.request.Request(API + path, data=json.dumps(body).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read())
+
+
+def _get(path: str) -> dict | None:
+    req = urllib.request.Request(API + path, headers={"User-Agent": UA})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+
+
+def missing_postcodes(conn, limit: int | None = None) -> list[str]:
+    rows = conn.execute(
+        """select distinct pc from (
+               select postcode as pc from company where postcode is not null
+               union select postcode from person where postcode is not null) x
+           left join postcode_geo g on g.postcode = x.pc
+           where g.postcode is null or (g.precision = 'none' and g.looked_up_at < now() - interval '90 days')
+           order by 1""" + (f" limit {int(limit)}" if limit else "")
+    ).fetchall()
+    return [r["pc"] for r in rows]
+
+
+def geocode(conn, limit: int | None = None, post=None, get=None) -> dict:
+    """Look up postcodes not yet in the cache. post/get can be replaced in tests."""
+    post, get = post or _post, get or _get
+    todo = missing_postcodes(conn, limit)
+    exact = outcode = none = 0
+    outcode_cache: dict[str, tuple | None] = {}
+    for i in range(0, len(todo), 100):
+        batch = todo[i:i + 100]
+        try:
+            res = post("/postcodes", {"postcodes": batch}).get("result") or []
+        except Exception as e:
+            return {"error": str(e), "exact": exact, "outcode": outcode, "not_found": none, "remaining": len(todo) - i}
+        for item in res:
+            pc, r = item.get("query"), item.get("result")
+            if r and r.get("latitude") is not None:
+                _store(conn, pc, r["latitude"], r["longitude"], "postcode")
+                exact += 1
+                continue
+            out = pc.split(" ")[0] if pc else None
+            if out and out not in outcode_cache:
+                try:
+                    o = get(f"/outcodes/{out}")
+                    rr = (o or {}).get("result")
+                    outcode_cache[out] = (rr["latitude"], rr["longitude"]) if rr and rr.get("latitude") is not None else None
+                except Exception:
+                    outcode_cache[out] = None
+            if out and outcode_cache.get(out):
+                _store(conn, pc, *outcode_cache[out], "outcode")
+                outcode += 1
+            else:
+                _store(conn, pc, None, None, "none")
+                none += 1
+        conn.commit()
+        time.sleep(0.2)  # be polite to a free service
+    return {"exact": exact, "outcode": outcode, "not_found": none, "remaining": 0}
+
+
+def _store(conn, pc, lat, lon, precision):
+    conn.execute(
+        """insert into postcode_geo (postcode, lat, lon, precision) values (%s, %s, %s, %s)
+           on conflict (postcode) do update set lat = excluded.lat, lon = excluded.lon,
+             precision = excluded.precision, looked_up_at = now()""",
+        (pc, lat, lon, precision),
+    )

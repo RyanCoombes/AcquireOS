@@ -14,3 +14,12 @@ DEFAULT_USER_ID = 1
 # Optional HTTP basic auth. Leave APP_PASSWORD empty on a trusted LAN.
 APP_USER = os.environ.get("APP_USER", "admin")
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+
+# Token for the MCP endpoint (/mcp) and for scripts calling the REST API.
+# Send it as "Authorization: Bearer <token>". Strongly recommended; required
+# for /mcp whenever APP_PASSWORD is set.
+API_TOKEN = os.environ.get("API_TOKEN", "")
+# Map tiles. The default is OpenStreetMap's own server, which is fine for
+# personal use; a hosted product should use a commercial tile provider.
+MAP_TILE_URL = os.environ.get("MAP_TILE_URL", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
+MAP_ATTRIBUTION = os.environ.get("MAP_ATTRIBUTION", "© OpenStreetMap contributors")

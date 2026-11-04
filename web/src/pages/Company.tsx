@@ -4,6 +4,7 @@ import { api, type CompanyDetail, type Status } from "../api";
 import { ErrorLine, Flags, Score, STATUS_LABEL, Toast, useAsync } from "../components/bits";
 import { AreaChart as SmallLine } from "../components/charts";
 import Valuation from "../components/Valuation";
+import { Enrichment, Location } from "../components/CompanyExtras";
 import { ageFrom, CHANGE_KIND, chUrl, date, dateTime, describeChange, int, isBadStatus, LINK_KIND, money, MONTHS, OWNERSHIP, range, relDays, toNum, years } from "../format";
 
 const STATUSES: Status[] = ["new", "watching", "researching", "approach", "contacted", "in_talks", "passed", "rejected"];
@@ -97,6 +98,8 @@ export default function Company() {
               </table>
             ) : <div className="faint">Not scored yet.</div>}
           </section>
+
+          <Enrichment key={JSON.stringify(data.enrichment)} data={data} num={num} onSaved={reload} />
 
           <section>
             <div className="sechead"><h2>Financial history</h2><span className="faint small">{fin.filter((f) => !f.period_inferred).length} years from filed accounts{fin.some((f) => f.period_inferred) ? "; dashed points are prior-year figures with an inferred date" : ""}</span></div>
@@ -199,6 +202,8 @@ export default function Company() {
               </table>
             ) : <div className="faint">No links found in the data imported so far.</div>}
           </section>
+
+          <Location data={data} />
 
           <Research data={data} num={num} onAdded={reload} />
 

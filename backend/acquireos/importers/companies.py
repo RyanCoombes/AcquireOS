@@ -188,6 +188,7 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
 
     ok, skipped, not_in_list, messages, changes = 0, 0, 0, [], 0
     rows_in = 0
+    sic_texts: set[str] = set()
     for i, row in enumerate(rows, start=2):
         rows_in += 1
         num = n.company_number(get(row, "company_number"))
@@ -220,6 +221,9 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
             h: _jsonable(v) for h, v in row.items() if h not in mapped_headers and v not in (None, "")
         }
         status = (n.text(get(row, "status")) or "").lower() or None
+        sic_raw = n.text(get(row, "sic"))
+        if sic_raw and " - " in sic_raw and len(sic_texts) < 5000:
+            sic_texts.add(sic_raw)
         new = {
             "name": name,
             "status": status,
@@ -327,6 +331,10 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
     )
     refresh_estimates(conn)
     flag_mass_addresses(conn)
+    from .. import sic as sic_mod
+
+    sic_mod.seed(conn)
+    sic_mod.learn(conn, sic_texts)
     return {"run_id": run_id, "rows_in": rows_in, "rows_ok": ok, "rows_skipped": skipped + not_in_list,
             "changes": changes, "messages": messages}
 

@@ -39,6 +39,8 @@ def main(argv=None):
     p.add_argument("--keep", action="store_true", help="Keep downloaded files instead of deleting them")
 
     sub.add_parser("scheduler", help="Run the monthly refresh on a schedule (used by the Docker stack)")
+    sub.add_parser("geocode", help="Look up map locations for postcodes not yet located (uses postcodes.io)")
+    sub.add_parser("new-token", help="Print a new random API token to put in API_TOKEN")
 
     p = sub.add_parser("import-psc", help="Import owners from the Companies House PSC snapshot (.txt or .zip)")
     p.add_argument("files", nargs="+", type=Path)
@@ -53,6 +55,11 @@ def main(argv=None):
     sub.add_parser("rescore", help="Recompute scores against the active buy box")
 
     a = ap.parse_args(argv)
+    if a.cmd == "new-token":
+        import secrets
+
+        print(secrets.token_urlsafe(32))
+        return
     if a.cmd == "scheduler":
         from .fetch import scheduler
 
@@ -75,6 +82,11 @@ def main(argv=None):
         elif a.cmd == "import-notes":
             for f in a.files:
                 _print(f, notes.run(c, f, sheet=a.sheet))
+        elif a.cmd == "geocode":
+            from . import geo
+
+            print(geo.geocode(c))
+            return
         elif a.cmd == "import-accounts":
             _print(a.files[0], accounts.run(c, a.files))
         elif a.cmd == "fetch":
@@ -108,6 +120,9 @@ def main(argv=None):
             _print(d / "notes.csv", notes.run(c, d / "notes.csv", source="demo notes"))
             _print(d / "companies_update.csv", companies.run(c, d / "companies_update.csv", source="demo refresh",
                                                              only_existing=True))
+            from .demo import seed_geo
+
+            print("demo map locations:", seed_geo(c))
         elif a.cmd == "rebuild":
             print(rebuild(c))
         n = scoring.rescore(c)

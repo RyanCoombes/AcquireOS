@@ -36,6 +36,9 @@ DEFAULT_CRITERIA = {
         "ownership": ["eot"],
         "keywords": ["electrical", "plumbing", "heating", "cctv", "fire alarm", "scaffold", "roofing", "cleaning"],
         "address_flags": [],
+        # Exclude companies that research has found to be field-service or
+        # van-based (from the enrichment field_service = yes).
+        "field_service": True,
     },
 }
 
@@ -96,6 +99,8 @@ def score_company(c: dict, criteria: dict, today: date | None = None) -> dict:
         exclusion = f"Ownership: {TYPE_LABELS.get(c['ownership_type'], c['ownership_type']).lower()}"
     elif c.get("address_flag") and c["address_flag"] in ex.get("address_flags", []):
         exclusion = "Registered at an excluded address type"
+    elif ex.get("field_service") and c.get("field_service") == "yes":
+        exclusion = "Research found field-service or van-based work"
     else:
         hay = f"{c.get('name') or ''} {c.get('nature_of_business') or ''} {c.get('research_text') or ''}".lower()
         for kw in ex.get("keywords", []):
@@ -214,13 +219,14 @@ select c.company_number, c.name, c.status, c.review_tier, c.incorporation_date, 
        l.employees, l.net_assets, l.operating_profit, l.cash, p.net_assets as net_assets_prev,
        e.revenue_low, e.revenue_high, e.basis as revenue_basis,
        o.ownership_type, o.flags as ownership_flags, o.oldest_birth_year,
-       rt.txt as research_text
+       concat_ws(' ', rt.txt, en.summary, en.business_type) as research_text, en.field_service
 from company c
 left join latest l on l.company_number = c.company_number
 left join prev p on p.company_number = c.company_number
 left join estimate e on e.company_number = c.company_number
 left join company_ownership o on o.company_number = c.company_number
 left join research_text rt on rt.company_number = c.company_number
+left join enrichment en on en.company_number = c.company_number
 {where}
 """
 

@@ -7,6 +7,7 @@ import { dateTime, FLAGS, OWNERSHIP } from "../format";
 export default function Reports() {
   const nav = useNavigate();
   const { data, error } = useAsync(() => api.reports(), []);
+  const sic = useAsync(() => api.sic(), []);
   if (error) return <ErrorLine error={error} />;
   if (!data) return <div className="empty">Loading…</div>;
   const hist = Array.from({ length: 10 }, (_, i) => ({
@@ -51,6 +52,13 @@ export default function Reports() {
         <section>
           <h2>Why companies were excluded</h2>
           {data.exclusions.length ? <HBars rows={data.exclusions.map((e: any) => ({ label: e.reason, n: e.n }))} /> : <div className="faint">Nothing excluded.</div>}
+        </section>
+        <section>
+          <h2>Industries (SIC)</h2>
+          {sic.data?.length ? (
+            <HBars rows={sic.data.slice(0, 12).map((x) => ({ label: `${x.code} ${x.description || ""}`.trim(), n: x.n, key: x.code }))}
+                   onPick={(k) => nav(`/targets?sic=${k}&include_excluded=1`)} />
+          ) : <div className="faint">No SIC codes yet.</div>}
         </section>
         <section>
           <h2>Regions</h2>

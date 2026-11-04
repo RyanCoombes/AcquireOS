@@ -12,6 +12,8 @@ import Connections from "./pages/Connections";
 import BuyBox from "./pages/BuyBox";
 import Import from "./pages/Import";
 import Changes from "./pages/Changes";
+import MapPage from "./pages/MapPage";
+import Connect from "./pages/Connect";
 
 const ICONS: Record<string, string> = {
   home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z",
@@ -22,6 +24,8 @@ const ICONS: Record<string, string> = {
   reports: "M4 20V10M10 20V4M16 20v-7M22 20H2",
   buybox: "M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M16 4v4M10 10v4M18 16v4",
   import: "M12 3v12M7 10l5 5 5-5M4 21h16",
+  map: "M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14",
+  claude: "M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8",
 };
 
 function Icon({ name }: { name: string }) {
@@ -53,11 +57,13 @@ function Side({ meta }: { meta: Meta | null }) {
       {item("/pipeline", "pipeline", "Pipeline", c?.tracked)}
       {item("/changes", "changes", "Changes", c?.changed_30d)}
       <div className="group">Analyse</div>
+      {item("/map", "map", "Map")}
       {item("/connections", "connections", "Connections")}
       {item("/reports", "reports", "Reports")}
       <div className="group">Set up</div>
       {item("/buy-box", "buybox", "Buy box")}
       {item("/import", "import", "Data")}
+      {item("/connect", "claude", "Connect Claude")}
       <div className="foot">
         {c ? <>{c.companies.toLocaleString("en-GB")} companies</> : " "}
         {c?.last_import ? <div>Updated {new Date(c.last_import).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</div> : null}
@@ -120,6 +126,8 @@ function App() {
             <Route path="/connections" element={<Connections />} />
             <Route path="/connections/:num" element={<Connections />} />
             <Route path="/reports" element={<Reports />} />
+            <Route path="/map" element={<MapPage />} />
+            <Route path="/connect" element={<Connect />} />
             <Route path="/buy-box" element={<BuyBox />} />
             <Route path="/import" element={<Import />} />
             <Route path="*" element={<div className="empty"><b>Page not found.</b> <Link to="/">Back to home</Link></div>} />

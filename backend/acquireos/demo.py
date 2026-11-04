@@ -94,6 +94,8 @@ def generate(out: Path, n: int = 320, seed: int = 7):
             psc.append({"company_number": num, "data": {
                 "kind": "corporate-entity-person-with-significant-control", "name": f"{a.upper()} HOLDINGS LIMITED",
                 "identification": {"registration_number": h, "country_registered": "England And Wales"},
+                "address": {"address_line_1": f"{rnd.randint(1, 50)} Holding Street", "locality": rnd.choice(TOWNS)[0],
+                            "postal_code": f"{rnd.choice(TOWNS)[1]} 2HQ"},
                 "natures_of_control": ["ownership-of-shares-75-to-100-percent"], "notified_on": "2016-04-06"}})
             psc.append({"company_number": h, "data": person()})
         elif r < 0.8:
@@ -224,6 +226,31 @@ def generate_accounts(out: Path, companies_csv: Path, seed: int = 11) -> Path:
                 fname = f"Prod224_{rnd.randint(1000, 9999)}_{num}_{pair[0][0]:%Y%m%d}.html"
                 zf.writestr(fname, _ix_filing(num, pair))
     return z
+
+
+TOWN_COORDS = {"SA1": (51.621, -3.944), "CF10": (51.481, -3.179), "NP20": (51.588, -2.998), "CF31": (51.504, -3.577),
+               "LL11": (53.046, -2.993), "BS1": (51.455, -2.588), "GL1": (51.864, -2.244), "HR1": (52.056, -2.716),
+               "CH1": (53.193, -2.893), "CF14": (51.513, -3.214)}
+
+
+def seed_geo(conn, seed: int = 5):
+    """Demo only: place fictional postcodes near their towns, so the map can be
+    tried without internet access. Real data uses geo.geocode (postcodes.io)."""
+    rnd = random.Random(seed)
+    pcs = [r["postcode"] for r in conn.execute(
+        "select distinct postcode from company where postcode is not null "
+        "union select distinct postcode from person where postcode is not null")]
+    n = 0
+    for pc in pcs:
+        base = TOWN_COORDS.get(pc.split(" ")[0])
+        if not base:
+            continue
+        conn.execute(
+            """insert into postcode_geo (postcode, lat, lon, precision) values (%s, %s, %s, 'postcode')
+               on conflict (postcode) do nothing""",
+            (pc, base[0] + rnd.uniform(-0.035, 0.035), base[1] + rnd.uniform(-0.06, 0.06)))
+        n += 1
+    return n
 
 
 def main():

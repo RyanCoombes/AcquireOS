@@ -37,6 +37,9 @@ services:
       DATABASE_URL: postgresql://acquireos:${DB_PASSWORD}@db:5432/acquireos
       APP_USER: ${APP_USER:-admin}
       APP_PASSWORD: ${APP_PASSWORD:-}
+      # Token for Claude (MCP at /mcp) and scripts. Generate one with:
+      #   docker exec acquireos acquireos new-token
+      API_TOKEN: ${API_TOKEN:-}
     ports:
       - "${APP_PORT:-8090}:8000"
     volumes:

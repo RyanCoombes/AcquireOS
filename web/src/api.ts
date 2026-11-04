@@ -9,6 +9,7 @@ export interface Meta {
   tiers: string[];
   counts: { companies: number; in_scope: number; tracked: number; owner_records: number; last_import: string | null; changed_30d: number };
   company_statuses: string[];
+  map: { tiles: string; attribution: string };
   buy_box: { id: number; name: string };
 }
 
@@ -45,6 +46,8 @@ export interface Row {
   last_change: string | null;
   last_kinds: string[] | null;
   staff_trend: number[] | null;
+  website?: string | null;
+  business_type?: string | null;
 }
 
 export interface Change {
@@ -65,6 +68,7 @@ export interface SavedSearch { id: number; name: string; params: Record<string, 
 export interface Reason { key: string; label: string; points: number; max: number; status: "good" | "partial" | "miss" | "unknown"; text: string }
 
 export interface Link {
+  lat?: number | null; lon?: number | null;
   kind: "owned_by" | "shared_owner" | "shared_address";
   via: string;
   confidence: "confirmed" | "likely" | "possible";
@@ -105,6 +109,13 @@ export interface CompanyDetail {
   state: { status: Status; rating: number | null; tags: string[]; next_action?: string | null; next_action_on?: string | null; valuation?: Partial<Assumptions> };
   changes: Change[];
   valuation: Valuation;
+  geo: { lat: number; lon: number; precision: string } | null;
+  sics: { code: string; description: string }[];
+  enrichment: {
+    website: string | null; business_type: string | null; recurring_revenue: string | null; field_service: string | null;
+    summary: string | null; confidence: string | null; updated_at: string; updated_by: string | null;
+  } | null;
+  issues: { id: number; issue: string; detail: string | null; suggested_fix: string | null; status: string; created_by: string | null; created_at: string; resolution: string | null }[];
   notes: Note[];
   research: { id: number; kind: string; content: string; source_url: string | null; source_label: string | null; retrieved_at: string }[];
   outreach: Outreach[];
@@ -158,6 +169,17 @@ export const api = {
       "/api/import/commit", { method: "POST", body: JSON.stringify(body) }),
   imports: () => req<any[]>("/api/imports"),
   dashboard: () => req<Record<string, any>>("/api/dashboard"),
+  mapData: (params: Record<string, string>) => req<Record<string, any>>("/api/companies?" + new URLSearchParams(params)),
+  geocodeStatus: () => req<Record<string, any>>("/api/geocode"),
+  startGeocode: () => req<Record<string, any>>("/api/geocode", { method: "POST" }),
+  sic: () => req<{ code: string; n: number; in_scope: number; description: string }[]>("/api/sic"),
+  connect: () => req<Record<string, any>>("/api/connect"),
+  issues: (status = "open") => req<any[]>(`/api/issues?status=${status}`),
+  addIssue: (body: Record<string, unknown>) => req("/api/issues", { method: "POST", body: JSON.stringify(body) }),
+  resolveIssue: (id: number, status: string, resolution: string) =>
+    req(`/api/issues/${id}/resolve`, { method: "POST", body: JSON.stringify({ status, resolution }) }),
+  saveEnrichment: (n: string, body: Record<string, unknown>) =>
+    req(`/api/companies/${encodeURIComponent(n)}/enrichment`, { method: "POST", body: JSON.stringify(body) }),
   startRefresh: (months = 1) => req<Record<string, any>>(`/api/refresh?months=${months}`, { method: "POST" }),
   refreshStatus: () => req<Record<string, any>>("/api/refresh"),
   changes: (params: Record<string, string>) =>

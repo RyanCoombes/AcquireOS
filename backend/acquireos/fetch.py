@@ -186,6 +186,13 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True) -> dict:
     rebuild(conn)
     scoring.rescore(conn)
     conn.commit()
+    try:
+        from . import geo
+
+        out["map_locations"] = geo.geocode(conn)
+        conn.commit()
+    except Exception as e:
+        log(f"Map location lookup failed: {e}")
     return out
 
 

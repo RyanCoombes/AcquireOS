@@ -35,6 +35,73 @@ of targets.
 Your notes, ratings and decisions are stored apart from imported data.
 Re-importing or refreshing never overwrites them.
 
+## Connect Claude (MCP) for questions, auditing and enrichment
+
+AcquireOS includes an MCP server at `http://<pi-address>:8090/mcp`, so Claude
+on your computer (Claude Desktop, Cowork or Claude Code) can work with your
+data directly. The **Connect Claude** page in the app has copy-and-paste setup.
+
+1. Set `API_TOKEN` in the stack (any long random string, or run
+   `docker exec acquireos acquireos new-token`) and redeploy.
+2. **Claude Desktop / Cowork**: Settings → Developer → Edit Config, and add:
+
+   ```json
+   {
+     "mcpServers": {
+       "acquireos": {
+         "command": "npx",
+         "args": ["-y", "mcp-remote", "http://<pi-address>:8090/mcp", "--allow-http",
+                  "--header", "Authorization:${AUTH}"],
+         "env": { "AUTH": "Bearer <your API_TOKEN>" }
+       }
+     }
+   }
+   ```
+
+   This uses the `mcp-remote` bridge (needs Node.js on your computer) because
+   the Pi is on your home network. Claude's "Add custom connector" option
+   needs a server reachable over HTTPS from the internet.
+3. **Claude Code**:
+   `claude mcp add --transport http acquireos http://<pi-address>:8090/mcp --header "Authorization: Bearer <token>"`
+
+What Claude can do:
+
+| Tools | Purpose |
+|---|---|
+| `dataset_overview`, `search_companies`, `get_company`, `list_changes` | Answer questions about targets, owners, financials and changes |
+| `describe_database`, `query_database` | Read-only SQL for audits and analysis (15 s limit, 500 rows) |
+| `audit_queue` | Companies missing a website, research, owners, filed turnover or a field-service check, or with a SIC code that does not match the name |
+| `save_enrichment` | Save website, business type, recurring revenue, field-service work and a summary. **A source URL is required**; the company is rescored at once |
+| `flag_data_issue`, `list_data_issues`, `resolve_data_issue` | Problems for you to review |
+| `add_note`, `set_status` | Your notes and pipeline, labelled as Claude; only when you ask |
+
+There is also an `audit_and_enrich` prompt that walks Claude through a batch.
+Enrichment is stored separately from your own notes and decisions, and every
+fact keeps its source link in the company's research history. A company
+found to do field-service work is excluded by default (Buy box → Exclusions).
+
+The same token also works for the REST API (`Authorization: Bearer …`), with
+interactive documentation at `/docs`.
+
+## Map and SIC codes
+
+Registered offices are placed on an OpenStreetMap map using the free
+[postcodes.io](https://postcodes.io) service (ONS open data), cached so each
+postcode is looked up once. Retired postcodes fall back to the postcode
+district. The **Map** page shows companies coloured by score, with optional
+lines to parent companies and to companies sharing an owner; each company page
+has its own location map. Locations are looked up after each monthly refresh,
+or with **Locate postcodes** on the Map page, or `acquireos geocode`.
+
+OpenStreetMap's own tile server is fine for personal use. For a hosted
+product, set `MAP_TILE_URL` and `MAP_ATTRIBUTION` to a commercial tile
+provider; heavy use of the free tiles breaks their usage policy.
+
+SIC codes show their descriptions everywhere. Descriptions for IT and
+software codes are built in; the rest are learnt from the Companies House
+bulk file. Reports include an industry breakdown, and the targets filter
+suggests codes as you type.
+
 ## Run it on the Raspberry Pi with Portainer
 
 Needs a 64-bit OS on the Pi (Raspberry Pi OS 64-bit, Ubuntu arm64 and so on).
@@ -59,6 +126,7 @@ Needs a 64-bit OS on the Pi (Raspberry Pi OS 64-bit, Ubuntu arm64 and so on).
    DATA_DIR=/opt/acquireos/data
    BACKUP_DIR=/mnt/nas/acquireos
    APP_PASSWORD=
+   API_TOKEN=a-long-random-string
    ```
 
    Set `BACKUP_DIR` to wherever your NAS is mounted on the Pi.

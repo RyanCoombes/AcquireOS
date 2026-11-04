@@ -130,10 +130,16 @@ def person_from(data: dict) -> dict:
         key = f"c:{reg}:{(country or '').lower()}"
     else:
         key = f"{kind[0]}:{n.company_name_key(name)}"
+    addr = data.get("address") or {}
+    parts = [addr.get(k) for k in ("premises", "address_line_1", "address_line_2", "locality", "region", "postal_code", "country")]
+    pc = n.postcode(addr.get("postal_code") or "") if kind != "individual" else None
     return {
         "person_key": key,
         "kind": kind,
         "name": name,
+        # Individuals' service addresses are not kept: not needed, and personal data.
+        "address": ", ".join(p for p in parts if p) if kind != "individual" else None,
+        "postcode": pc,
         "birth_year": dob.get("year"),
         "birth_month": dob.get("month"),
         "registration_number": reg,
@@ -145,10 +151,11 @@ def person_from(data: dict) -> dict:
 def _upsert_person(conn, p: dict) -> int:
     return conn.execute(
         """insert into person (person_key, kind, name, birth_year, birth_month, registration_number,
-               country_registered, legal_form)
+               country_registered, legal_form, address, postcode)
            values (%(person_key)s, %(kind)s, %(name)s, %(birth_year)s, %(birth_month)s,
-               %(registration_number)s, %(country_registered)s, %(legal_form)s)
-           on conflict (person_key) do update set name = excluded.name
+               %(registration_number)s, %(country_registered)s, %(legal_form)s, %(address)s, %(postcode)s)
+           on conflict (person_key) do update set name = excluded.name,
+               address = coalesce(excluded.address, person.address), postcode = coalesce(excluded.postcode, person.postcode)
            returning id""",
         p,
     ).fetchone()["id"]
