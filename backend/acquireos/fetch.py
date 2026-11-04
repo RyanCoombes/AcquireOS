@@ -84,8 +84,26 @@ def links(kind: str, html_by_page: dict[str, str] | None = None) -> list[tuple[s
     return sorted(out.items(), reverse=True)
 
 
+def _writable_dir(preferred: Path) -> Path:
+    """The data folder, or a temporary folder if it cannot be written to."""
+    import tempfile
+
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        probe = preferred / ".write-test"
+        probe.write_text("ok")
+        probe.unlink()
+        return preferred
+    except OSError as e:
+        fallback = Path(tempfile.gettempdir()) / "acquireos-downloads"
+        fallback.mkdir(parents=True, exist_ok=True)
+        log(f"Cannot write to {preferred} ({e}); using {fallback} instead. "
+            f"Fix with: sudo chown -R 1000:1000 <your DATA_DIR> on the host.")
+        return fallback
+
+
 def download(url: str, dest_dir: Path = DATA_DIR) -> Path:
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_dir = _writable_dir(dest_dir)
     dest = dest_dir / url.rsplit("/", 1)[-1]
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     for attempt in range(4):

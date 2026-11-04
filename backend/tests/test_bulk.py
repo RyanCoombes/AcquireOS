@@ -97,3 +97,21 @@ def test_link_discovery():
     assert acc[2][1].endswith("archive/Accounts_Monthly_Data-December2025.zip")
     psc = fetch.links("psc", pages)
     assert len(psc) == 2
+
+
+def test_download_dir_falls_back_when_not_writable(tmp_path):
+    import os
+
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    os.chmod(locked, 0o500)
+    try:
+        got = fetch._writable_dir(locked / "companies-house")
+        if os.geteuid() == 0:  # root ignores permissions; nothing to fall back from
+            assert got == locked / "companies-house"
+        else:
+            assert got.name == "acquireos-downloads"
+    finally:
+        os.chmod(locked, 0o700)
+    ok = tmp_path / "ok"
+    assert fetch._writable_dir(ok) == ok

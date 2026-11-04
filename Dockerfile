@@ -18,7 +18,10 @@ RUN pip install --no-cache-dir ./backend \
  && useradd --create-home --uid 1000 app \
  && mkdir -p /data && chown app /data
 COPY --from=web /web/dist /app/web
-USER app
+COPY backend/entrypoint.sh /usr/local/bin/acquireos-entrypoint
+RUN chmod 755 /usr/local/bin/acquireos-entrypoint
+# Starts as root only to fix the data folder's ownership, then runs as "app".
+ENTRYPOINT ["acquireos-entrypoint"]
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')" || exit 1
