@@ -1,0 +1,78 @@
+# AcquireOS stack.
+#
+# Portainer: Stacks > Add stack > Web editor. Paste this whole file, add the
+# environment variables (at least DB_PASSWORD) under "Environment variables",
+# then Deploy the stack. Open http://<pi-address>:8090
+#
+# Plain Docker: copy .env.example to .env, then `docker compose up -d`.
+#
+# The image is built for amd64 and arm64, so the same file runs on a
+# Raspberry Pi 4/5 (64-bit OS), a home server or a cloud host.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: acquireos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: acquireos
+      POSTGRES_USER: acquireos
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+    volumes:
+      - acquireos-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acquireos -d acquireos"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    image: ${ACQUIREOS_IMAGE:-ghcr.io/ryancoombes/acquireos:latest}
+    container_name: acquireos
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://acquireos:${DB_PASSWORD}@db:5432/acquireos
+      APP_USER: ${APP_USER:-admin}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+    ports:
+      - "${APP_PORT:-8090}:8000"
+    volumes:
+      # Large files for command-line imports, such as the PSC snapshot.
+      - ${DATA_DIR:-/opt/acquireos/data}:/data
+
+  # Nightly database dump at 02:30. Point BACKUP_DIR at your NAS mount.
+  backup:
+    image: postgres:16-alpine
+    container_name: acquireos-backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: acquireos
+      PGPASSWORD: ${DB_PASSWORD}
+      PGDATABASE: acquireos
+      KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+      TZ: ${TZ:-Europe/London}
+    volumes:
+      - ${BACKUP_DIR:-/opt/acquireos/backups}:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Backups run daily at 02:30 into /backups"
+        while true; do
+          if [ "$$(date +%H%M)" = "0230" ]; then
+            f=/backups/acquireos-$$(date +%Y%m%d).sql.gz
+            pg_dump --no-owner | gzip > "$$f.tmp" && mv "$$f.tmp" "$$f" && echo "Backup written: $$f"
+            find /backups -name 'acquireos-*.sql.gz' -mtime +$$KEEP_DAYS -delete
+            sleep 60
+          fi
+          sleep 30
+        done
+
+volumes:
+  acquireos-db:

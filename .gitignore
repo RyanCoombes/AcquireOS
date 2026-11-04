@@ -1,0 +1,20 @@
+# Your search data contains personal data (owner names and birth dates).
+# Keep it out of Git.
+data/
+backups/
+*.csv
+*.xlsx
+*.xlsm
+*.jsonl
+*.zip
+!backend/tests/fixtures/*.csv
+!backend/tests/fixtures/*.jsonl
+
+.env
+node_modules/
+web/dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
