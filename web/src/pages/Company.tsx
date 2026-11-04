@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type CompanyDetail, type Status } from "../api";
 import { ErrorLine, Flags, Score, STATUS_LABEL, Toast, useAsync } from "../components/bits";
-import { SmallLine } from "../components/charts";
+import { AreaChart as SmallLine } from "../components/charts";
 import Valuation from "../components/Valuation";
 import { ageFrom, CHANGE_KIND, chUrl, date, dateTime, describeChange, int, isBadStatus, LINK_KIND, money, MONTHS, OWNERSHIP, range, relDays, toNum, years } from "../format";
 
@@ -44,10 +44,10 @@ export default function Company() {
     <>
       <div className="pagehead">
         <div>
-          <div className="muted small">
-            <Link to="/">Targets</Link> / {c.company_number}
+          <div className="crumb">
+            <Link to="/targets">Targets</Link> / {c.company_number}
           </div>
-          <h1 style={{ marginTop: 6 }}>{c.name}</h1>
+          <h1>{c.name}</h1>
           <div className="lede">
             {c.status ? (isBadStatus(c.status) ? <span className="tag red" style={{ marginLeft: 0 }}>{cap(c.status)}{c.dissolution_date ? ` ${date(c.dissolution_date)}` : ""}</span> : cap(c.status)) : "Status unknown"}
             {c.incorporation_date ? ` · incorporated ${date(c.incorporation_date)}` : ""}
@@ -99,7 +99,7 @@ export default function Company() {
           </section>
 
           <section>
-            <div className="sechead"><h2>Financial history</h2><span className="faint small">From filed accounts. Hollow points are prior-year figures with an inferred date.</span></div>
+            <div className="sechead"><h2>Financial history</h2><span className="faint small">{fin.filter((f) => !f.period_inferred).length} years from filed accounts{fin.some((f) => f.period_inferred) ? "; dashed points are prior-year figures with an inferred date" : ""}</span></div>
             {fin.length ? (
               <>
                 <div className="multiples">

@@ -16,7 +16,7 @@ export function Score({ value, coverage }: { value: string | number | null; cove
   if (v === null) return <span className="faint">—</span>;
   const cov = toNum(coverage ?? null);
   return (
-    <span className={`score ${v >= 65 ? "high" : ""}`} title={cov !== null ? `Score ${v} · ${cov}% of criteria had data` : undefined}>
+    <span className={`score ${v >= 70 ? "high" : v >= 40 ? "mid" : ""}`} title={cov !== null ? `Score ${v} · ${cov}% of criteria had data` : undefined}>
       <b>{Math.round(v)}</b>
       <span className="bar">
         <i style={{ width: `${Math.min(v, 100)}%` }} />

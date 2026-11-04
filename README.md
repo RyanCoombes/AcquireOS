@@ -4,6 +4,8 @@ Acquisition research for UK private companies, built on free Companies House
 data. It turns your search files into a ranked, explained and trackable list
 of targets.
 
+- **Home**: headline numbers, best new targets, what changed, staff trend
+  across your buy box, next actions, score spread, funnel and ownership mix.
 - **Targets**: three views (fits my buy box, all companies, changed
   recently), filters for staff, owner age, ownership, region, status, score,
   company status, SIC code, years trading, indicative value, changes and
@@ -104,7 +106,32 @@ Open **Import**, in this order:
 To try the app without your data: `acquireos demo` in the container console
 loads 320 invented companies.
 
-## Monthly refresh from Companies House
+## Companies House data, loaded automatically
+
+AcquireOS downloads the free Companies House bulk files itself, keeps only
+what matters to you, and deletes each file once read (so the Pi needs room
+for one file at a time: a few GB).
+
+| File | What it adds |
+|---|---|
+| Basic company data (monthly, ~0.5 GB zip, 2.6 GB unzipped) | Every live company. New companies matching your buy box **universe** (SIC codes, name keywords, postcode areas, age) are added; existing ones are updated and changes recorded; companies that leave the register are flagged. |
+| Monthly accounts (several GB a month) | Filed accounts (iXBRL) for your companies: staff, turnover, operating profit, profit, net assets, cash, debtors, dividends, for the year and the prior year. This builds the multi-year charts. |
+| Owners (PSC snapshot, ~2 GB) | Owners traced through holding companies. |
+
+Three ways to run it:
+
+- **Automatically**: the `scheduler` service in the stack runs it on the 6th
+  of each month at 03:00 (change with `REFRESH_DAY`, `REFRESH_HOUR`).
+- **From the app**: Data page → Download and load now. Pick 12 or 24 months
+  of accounts the first time to build history.
+- **Command line**: `acquireos fetch all --months 12`, or
+  `acquireos fetch accounts --months 24`.
+
+The data goes into your database, not into this repository: the files are
+far too big for Git, they change monthly, and the owner data is personal
+data.
+
+## Monthly refresh from Companies House (manual)
 
 Download the free [basic company data](https://download.companieshouse.gov.uk/en_output.html)
 zip (all UK companies, updated monthly) into `DATA_DIR` and run, in the
@@ -173,6 +200,9 @@ Inside the container (`docker exec -it acquireos sh`):
 | `acquireos import-companies --only-existing FILE` | Refresh only companies already in your list |
 | `acquireos import-notes FILE…` | Import your notes and decisions |
 | `acquireos import-psc FILE` | Import owners from the PSC snapshot |
+| `acquireos import-accounts FILE…` | Import accounts zips you downloaded yourself |
+| `acquireos fetch company-data\|accounts\|psc\|all [--months N]` | Download from Companies House and load |
+| `acquireos scheduler` | Run the monthly refresh on a schedule (the stack does this) |
 | `acquireos preview companies FILE` | Show how a file's columns will be read |
 | `acquireos rebuild` | Recompute ownership, links and scores |
 | `acquireos demo` | Load fictional demo data, including a later refresh so changes show |

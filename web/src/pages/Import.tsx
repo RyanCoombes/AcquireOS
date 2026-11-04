@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type Preview } from "../api";
 import { ErrorLine, useAsync } from "../components/bits";
@@ -62,8 +62,8 @@ export default function Import() {
     <>
       <div className="pagehead">
         <div>
-          <h1>Import</h1>
-          <div className="lede">Bring in the data from your search. You will see how each column is read before anything is saved.</div>
+          <h1>Data</h1>
+          <div className="lede">Load your own files, and keep everything current from the free Companies House bulk data.</div>
         </div>
       </div>
 
@@ -91,7 +91,7 @@ export default function Import() {
           {result.notes_added !== undefined ? `, ${result.notes_added} notes added` : ""}
           {result.rows_skipped ? `, ${result.rows_skipped.toLocaleString("en-GB")} skipped` : ""}
           {result.changes !== undefined ? `, ${result.changes.toLocaleString("en-GB")} changes found` : ""}. Ownership, links and scores have been recalculated.{" "}
-          {result.changes ? <Link to="/changes?days=7">See what changed</Link> : <Link to="/">See targets</Link>}
+          {result.changes ? <Link to="/changes?days=7">See what changed</Link> : <Link to="/targets">See targets</Link>}
           {result.messages?.length > 0 && (
             <ul className="small" style={{ margin: "8px 0 0", paddingLeft: 18 }}>{result.messages.slice(0, 8).map((m: string, i: number) => <li key={i}>{m}</li>)}</ul>
           )}
@@ -163,27 +163,7 @@ export default function Import() {
         </section>
       )}
 
-      <section>
-        <h2>Monthly refresh from Companies House</h2>
-        <p className="muted" style={{ maxWidth: "75ch" }}>
-          The free <a href="https://download.companieshouse.gov.uk/en_output.html" target="_blank" rel="noreferrer">basic company data file ↗</a> covers
-          every UK company and is updated monthly. It is too large for the browser, so put it in the <code>data</code> folder and run the command
-          below. It updates only companies already in your list and records what changed, including dissolutions and new accounts.
-        </p>
-        <pre className="cmd">docker exec -it acquireos sh -c 'acquireos import-companies --only-existing /data/BasicCompanyDataAsOneFile-*.zip'</pre>
-      </section>
-
-      <section>
-        <h2>Owners: Companies House PSC snapshot</h2>
-        <p className="muted" style={{ maxWidth: "75ch" }}>
-          The free owner (PSC) snapshot is several gigabytes, too large to upload through a browser. Download it from{" "}
-          <a href="https://download.companieshouse.gov.uk/en_pscdata.html" target="_blank" rel="noreferrer">Companies House ↗</a>,
-          put the zip in the <code>data</code> folder on the server, then run:
-        </p>
-        <pre className="cmd">
-docker exec -it acquireos sh -c 'acquireos import-psc /data/persons-with-significant-control-snapshot*.zip'</pre>
-        <p className="muted small">It keeps only companies in your list, then follows parent companies to find the people behind them.</p>
-      </section>
+      <ChFeed onDone={history.reload} />
 
       <section>
         <h2>History</h2>
@@ -202,5 +182,69 @@ docker exec -it acquireos sh -c 'acquireos import-psc /data/persons-with-signifi
         ) : <div className="faint">Nothing imported yet.</div>}
       </section>
     </>
+  );
+}
+
+
+function ChFeed({ onDone }: { onDone: () => void }) {
+  const [months, setMonths] = useState(1);
+  const status = useAsync(() => api.refreshStatus(), []);
+  const [busy, setBusy] = useState(false);
+  const st = status.data;
+  useEffect(() => {
+    if (!st?.running) return;
+    const t = setInterval(() => { status.reload(); }, 5000);
+    return () => clearInterval(t);
+  }, [st?.running]);
+  useEffect(() => { if (st && !st.running && st.finished) onDone(); }, [st?.running]);
+  const start = async () => {
+    setBusy(true);
+    try { await api.startRefresh(months); status.reload(); } catch (e: any) { alert(e.message); }
+    setBusy(false);
+  };
+  return (
+    <section>
+      <div className="sechead">
+        <h2>Companies House bulk data</h2>
+        <span className="right" style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {st?.running ? <span className="pill-live">Running since {new Date(st.started).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span> : null}
+          <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <span className="label">Months of accounts</span>
+            <select value={months} onChange={(e) => setMonths(Number(e.target.value))}>
+              {[1, 3, 6, 12, 24].map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </label>
+          <button className="btn primary" disabled={busy || st?.running} onClick={start}>Download and load now</button>
+        </span>
+      </div>
+      <p className="muted" style={{ maxWidth: "80ch", marginTop: 0 }}>
+        AcquireOS downloads these free files itself, keeps only the companies that matter to you, and deletes each file once read.
+        It runs automatically each month (the <code>scheduler</code> service in the stack). Use more months of accounts the first time to build up history for the charts.
+      </p>
+      <table>
+        <thead><tr><th>File</th><th>What it adds</th><th>Size</th></tr></thead>
+        <tbody>
+          <tr><td><a href="https://download.companieshouse.gov.uk/en_output.html" target="_blank" rel="noreferrer">Basic company data ↗</a></td>
+            <td>Every live company: name, status, address, SIC codes, accounts dates. New companies matching your <Link to="/buy-box">universe</Link> are added; yours are updated and changes recorded. Companies that leave the register are flagged.</td><td className="nowrap">~0.5 GB zip</td></tr>
+          <tr><td><a href="https://download.companieshouse.gov.uk/en_monthlyaccountsdata.html" target="_blank" rel="noreferrer">Monthly accounts ↗</a></td>
+            <td>Filed accounts (staff, turnover, profit, net assets, cash, debtors) for your companies, current and prior year. Builds the financial history charts.</td><td className="nowrap">several GB a month</td></tr>
+          <tr><td><a href="https://download.companieshouse.gov.uk/en_pscdata.html" target="_blank" rel="noreferrer">Owners (PSC) ↗</a></td>
+            <td>Who owns each company, traced through holding companies; ages, trusts, EOTs, foreign parents.</td><td className="nowrap">~2 GB zip</td></tr>
+        </tbody>
+      </table>
+      {st?.error && <div className="callout red" style={{ marginTop: 14 }}>Last run failed: {st.error}</div>}
+      {st?.result && !st.running && (
+        <div className="callout" style={{ marginTop: 14 }}>
+          Last run finished {st.finished ? new Date(st.finished).toLocaleString("en-GB") : ""}.{" "}
+          {Object.entries(st.result).map(([k, v]: [string, any]) => `${k.replace("_", " ")}: ${v?.error ? "failed (" + v.error + ")" : "done"}`).join(" · ")}
+        </div>
+      )}
+      <details style={{ marginTop: 14 }}>
+        <summary className="muted" style={{ cursor: "pointer" }}>Prefer the command line?</summary>
+        <pre className="cmd">{`docker exec -it acquireos acquireos fetch all --months 12   # everything, 12 months of accounts
+docker exec -it acquireos acquireos fetch accounts --months 24
+docker exec -it acquireos sh -c 'acquireos import-accounts /data/Accounts_Monthly_Data-*.zip'   # files you downloaded yourself`}</pre>
+      </details>
+    </section>
   );
 }

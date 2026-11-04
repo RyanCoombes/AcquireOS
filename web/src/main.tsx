@@ -1,7 +1,9 @@
-import { StrictMode, useEffect, useRef } from "react";
+import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, NavLink, Route, Routes, useNavigate, useSearchParams, Link } from "react-router-dom";
+import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import "./styles.css";
+import { api, type Meta } from "./api";
+import Home from "./pages/Home";
 import Targets from "./pages/Targets";
 import Company from "./pages/Company";
 import Pipeline from "./pages/Pipeline";
@@ -11,41 +13,87 @@ import BuyBox from "./pages/BuyBox";
 import Import from "./pages/Import";
 import Changes from "./pages/Changes";
 
+const ICONS: Record<string, string> = {
+  home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z",
+  targets: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01",
+  pipeline: "M4 5h16M4 12h10M4 19h6",
+  changes: "M3 12h4l3-8 4 16 3-8h4",
+  connections: "M6 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM7.7 6.9l8.6 9.2M8 6h8",
+  reports: "M4 20V10M10 20V4M16 20v-7M22 20H2",
+  buybox: "M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M16 4v4M10 10v4M18 16v4",
+  import: "M12 3v12M7 10l5 5 5-5M4 21h16",
+};
+
+function Icon({ name }: { name: string }) {
+  return <svg viewBox="0 0 24 24" aria-hidden><path d={ICONS[name]} /></svg>;
+}
+
+function Logo() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden>
+      <rect width="26" height="26" rx="7" fill="#0e7c6b" />
+      <path d="M7 18.5 11.5 7h3L19 18.5h-3l-1-2.8h-4l-1 2.8zm4.8-5.3h2.4L13 9.8z" fill="#fff" />
+    </svg>
+  );
+}
+
+function Side({ meta }: { meta: Meta | null }) {
+  const c = meta?.counts;
+  const item = (to: string, icon: string, label: string, count?: number | null, end = false) => (
+    <NavLink to={to} end={end} className="nav">
+      <Icon name={icon} />{label}
+      {count ? <span className="count">{count.toLocaleString("en-GB")}</span> : null}
+    </NavLink>
+  );
+  return (
+    <nav className="side" aria-label="Main">
+      <Link to="/" className="mark"><Logo /><span>AcquireOS</span></Link>
+      {item("/", "home", "Home", null, true)}
+      {item("/targets", "targets", "Targets", c?.in_scope)}
+      {item("/pipeline", "pipeline", "Pipeline", c?.tracked)}
+      {item("/changes", "changes", "Changes", c?.changed_30d)}
+      <div className="group">Analyse</div>
+      {item("/connections", "connections", "Connections")}
+      {item("/reports", "reports", "Reports")}
+      <div className="group">Set up</div>
+      {item("/buy-box", "buybox", "Buy box")}
+      {item("/import", "import", "Data")}
+      <div className="foot">
+        {c ? <>{c.companies.toLocaleString("en-GB")} companies</> : " "}
+        {c?.last_import ? <div>Updated {new Date(c.last_import).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</div> : null}
+      </div>
+    </nav>
+  );
+}
+
 function TopBar() {
   const nav = useNavigate();
-  const [params] = useSearchParams();
   const ref = useRef<HTMLInputElement>(null);
+  const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (e.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName)) {
+      const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName);
+      if ((e.key === "/" && !typing) || (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey))) {
         e.preventDefault();
         ref.current?.focus();
       }
     };
+    const onScroll = () => setScrolled(window.scrollY > 4);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("scroll", onScroll); };
   }, []);
   return (
-    <header className="top">
-      <Link to="/" className="mark"><i />AcquireOS</Link>
-      <nav className="tabs">
-        <NavLink to="/" end>Targets</NavLink>
-        <NavLink to="/pipeline">Pipeline</NavLink>
-        <NavLink to="/changes">Changes</NavLink>
-        <NavLink to="/connections">Connections</NavLink>
-        <NavLink to="/reports">Reports</NavLink>
-        <NavLink to="/buy-box">Buy box</NavLink>
-        <NavLink to="/import">Import</NavLink>
-      </nav>
-      <form className="search" onSubmit={(e) => {
+    <header className={`topbar ${scrolled ? "scrolled" : ""}`}>
+      <form className="search" role="search" onSubmit={(e) => {
         e.preventDefault();
         const q = ref.current?.value.trim() ?? "";
-        nav(q ? `/?q=${encodeURIComponent(q)}&include_excluded=1` : "/");
+        nav(q ? `/targets?q=${encodeURIComponent(q)}&include_excluded=1` : "/targets");
         ref.current?.blur();
       }}>
-        <input ref={ref} type="search" placeholder="Company name, number or postcode" defaultValue={params.get("q") ?? ""}
-               aria-label="Search companies" />
+        <svg viewBox="0 0 24 24" aria-hidden><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+        <input ref={ref} type="search" placeholder="Search companies by name, number or postcode" aria-label="Search companies" />
         <span className="kbd" aria-hidden>/</span>
       </form>
     </header>
@@ -53,25 +101,35 @@ function TopBar() {
 }
 
 function App() {
+  const [meta, setMeta] = useState<Meta | null>(null);
+  const loc = useLocation();
+  useEffect(() => { api.meta().then(setMeta).catch(() => {}); }, [loc.pathname]);
+  useEffect(() => { window.scrollTo(0, 0); }, [loc.pathname]);
   return (
-    <BrowserRouter>
-      <TopBar />
-      <main>
-        <Routes>
-          <Route path="/" element={<Targets />} />
-          <Route path="/c/:num" element={<Company />} />
-          <Route path="/pipeline" element={<Pipeline />} />
-          <Route path="/changes" element={<Changes />} />
-          <Route path="/connections" element={<Connections />} />
-          <Route path="/connections/:num" element={<Connections />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/buy-box" element={<BuyBox />} />
-          <Route path="/import" element={<Import />} />
-          <Route path="*" element={<div className="empty"><b>Page not found.</b> <Link to="/">Back to targets</Link></div>} />
-        </Routes>
-      </main>
-    </BrowserRouter>
+    <div className="shell">
+      <Side meta={meta} />
+      <div className="content">
+        <TopBar />
+        <main>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/targets" element={<Targets />} />
+            <Route path="/c/:num" element={<Company />} />
+            <Route path="/pipeline" element={<Pipeline />} />
+            <Route path="/changes" element={<Changes />} />
+            <Route path="/connections" element={<Connections />} />
+            <Route path="/connections/:num" element={<Connections />} />
+            <Route path="/reports" element={<Reports />} />
+            <Route path="/buy-box" element={<BuyBox />} />
+            <Route path="/import" element={<Import />} />
+            <Route path="*" element={<div className="empty"><b>Page not found.</b> <Link to="/">Back to home</Link></div>} />
+          </Routes>
+        </main>
+      </div>
+    </div>
   );
 }
 
-createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+createRoot(document.getElementById("root")!).render(
+  <StrictMode><BrowserRouter><App /></BrowserRouter></StrictMode>,
+);

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Row } from "../api";
 import { ErrorLine, Flags, Score, StatusMark, Toast, useAsync } from "../components/bits";
+import { Spark } from "../components/charts";
 import { ageFrom, cap, CHANGE_KIND, int, isBadStatus, OWNERSHIP, range, relDays, years } from "../format";
 
 const PAGE = 100;
@@ -282,7 +283,9 @@ function TargetRow({ r, cursor, onOpen }: { r: Row; cursor: boolean; onOpen: () 
           {" "}<Flags flags={r.flags} address={r.address_flag} />
         </div>
       </td>
-      <td className="num">{int(r.employees)}</td>
+      <td className="num">
+        <div className="staffcell"><Spark values={r.staff_trend} w={48} h={16} />{int(r.employees)}</div>
+      </td>
       <td className="num hide-sm">
         {range(r.revenue_low, r.revenue_high)}
         {r.revenue_basis === "estimated" && <div className="sub">estimate</div>}
@@ -293,7 +296,7 @@ function TargetRow({ r, cursor, onOpen }: { r: Row; cursor: boolean; onOpen: () 
       </td>
       <td className="num hide-sm">{years(r.incorporation_date)}</td>
       <td className="num">{age ?? "—"}</td>
-      <td className="hide-sm">{r.ownership_type ? OWNERSHIP[r.ownership_type] ?? r.ownership_type : <span className="faint">Not traced</span>}</td>
+      <td className="hide-sm nowrap">{r.ownership_type ? OWNERSHIP[r.ownership_type] ?? r.ownership_type : <span className="faint">Not traced</span>}</td>
       <td>
         <StatusMark s={r.status} />
         {r.rating ? <span className="faint"> · {r.rating}/5</span> : null}

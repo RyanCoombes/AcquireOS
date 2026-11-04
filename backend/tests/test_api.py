@@ -35,3 +35,8 @@ def test_api_flow(c):
         assert cl.put("/api/buybox", json={"criteria": bb["criteria"]}).json()["rescored"] == 7
         assert cl.get("/api/export.csv").status_code == 200
         assert cl.get("/api/pipeline").json()["rows"]
+        d = cl.get("/api/dashboard")
+        assert d.status_code == 200, d.text
+        assert d.json()["head"]["companies"] == 7 and len(d.json()["score_hist"]) == 10
+        assert "staff_trend" in cl.get("/api/companies").json()["rows"][0]
+        assert cl.get("/api/refresh").json()["running"] is False

@@ -26,7 +26,7 @@ export default function Pipeline() {
         </div>
       )}
       {data && data.rows.length === 0 && (
-        <div className="empty"><b>Nothing in your pipeline yet.</b> Open a company from <Link to="/">Targets</Link> and give it a status.</div>
+        <div className="empty"><b>Nothing in your pipeline yet.</b> Open a company from <Link to="/targets">Targets</Link> and give it a status.</div>
       )}
       {data?.statuses.map((s) => {
         const rows = data.rows.filter((r) => r.status === s.value);

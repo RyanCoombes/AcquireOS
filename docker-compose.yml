@@ -43,6 +43,26 @@ services:
       # Large files for command-line imports, such as the PSC snapshot.
       - ${DATA_DIR:-/opt/acquireos/data}:/data
 
+  # Downloads and loads the Companies House files once a month:
+  # company data, the latest month of filed accounts, and owners (PSC).
+  # Needs a few GB of free space in DATA_DIR while it runs.
+  scheduler:
+    image: ${ACQUIREOS_IMAGE:-ghcr.io/ryancoombes/acquireos:latest}
+    container_name: acquireos-scheduler
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["acquireos", "scheduler"]
+    environment:
+      DATABASE_URL: postgresql://acquireos:${DB_PASSWORD}@db:5432/acquireos
+      REFRESH_DAY: ${REFRESH_DAY:-6}
+      REFRESH_HOUR: ${REFRESH_HOUR:-3}
+      REFRESH_ACCOUNTS_MONTHS: ${REFRESH_ACCOUNTS_MONTHS:-1}
+      TZ: ${TZ:-Europe/London}
+    volumes:
+      - ${DATA_DIR:-/opt/acquireos/data}:/data
+
   # Nightly database dump at 02:30. Point BACKUP_DIR at your NAS mount.
   backup:
     image: postgres:16-alpine

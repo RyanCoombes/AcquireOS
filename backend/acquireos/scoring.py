@@ -20,6 +20,16 @@ DEFAULT_CRITERIA = {
     "sic": {"weight": 5, "preferred": ["62012", "62020", "62030", "62090", "63110", "63120", "58290", "58210"]},
     "regions": [],
     "valuation": {"margin_low": 8.0, "margin_high": 15.0, "multiple_low": 3.0, "multiple_high": 5.0},
+    # Which companies the monthly Companies House file adds to the database.
+    # Companies already in the database are always kept up to date.
+    "universe": {
+        "sic_prefixes": ["5821", "5829", "620", "631"],
+        "keyword_sic_prefixes": ["70229", "74909", "82990"],
+        "name_keywords": ["software", "digital", "data", "computing", "systems", "technology", "technologies",
+                          "cloud", "networks", "IT services", "IT solutions", "analytics", "cyber"],
+        "postcode_areas": [],
+        "min_years": 3,
+    },
     "exclude": {
         "statuses": ["dissolved", "liquidation", "administration", "receivership", "converted-closed"],
         "tiers": ["Dormant"],

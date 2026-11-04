@@ -45,6 +45,8 @@ ALIASES: dict[str, list[str]] = {
 # Per-head revenue range used when only staff numbers are known. It matches
 # the range used in the original search scripts. Shown on every estimate.
 REVENUE_PER_HEAD = (80_000, 150_000)
+# Fewer rows than this and a "full register" file is treated as partial.
+FULL_REGISTER_MIN_ROWS = 500_000
 
 
 MULTI = {
@@ -95,12 +97,49 @@ def _used(mapping: dict) -> set[str]:
 TRACKED = {"name": "name", "status": "status", "registered_address": "address", "sic_codes": "sic"}
 
 
+def universe_filter(criteria: dict):
+    """Return a test(row_values) -> bool for adding new companies."""
+    import re as _re
+    from datetime import date as _date
+
+    u = (criteria or {}).get("universe") or {}
+    sic = tuple(u.get("sic_prefixes") or ())
+    ksic = tuple(u.get("keyword_sic_prefixes") or ())
+    kw = [k.lower() for k in u.get("name_keywords") or []]
+    kw_re = _re.compile(r"\b(" + "|".join(_re.escape(k) for k in kw) + r")\b", _re.I) if kw else None
+    areas = {a.upper() for a in u.get("postcode_areas") or []}
+    min_years = int(u.get("min_years") or 0)
+    today = _date.today()
+
+    def test(v: dict) -> bool:
+        if (v.get("status") or "active") != "active":
+            return False
+        if areas and n.postcode_area(v.get("postcode")) not in areas:
+            return False
+        inc = v.get("inc")
+        if min_years and inc and (today - inc).days < min_years * 365.25:
+            return False
+        codes = v.get("sic") or []
+        if sic and any(c.startswith(sic) for c in codes):
+            return True
+        if kw_re and (not ksic or any(c.startswith(ksic) for c in codes)) and kw_re.search(v.get("name") or ""):
+            return True
+        return not sic and not kw_re
+
+    return test
+
+
 def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None, source: str | None = None,
-        only_existing: bool = False) -> dict:
+        only_existing: bool = False, universe: bool = False, full_register: bool = False) -> dict:
     """Import or refresh companies.
 
     only_existing: update companies already in the database and ignore the
     rest (use this with the full Companies House bulk file).
+    universe: add new companies only if they match the buy box "universe"
+    (SIC codes, name keywords, postcode areas, age). Existing ones are always
+    updated. Use with the full Companies House file.
+    full_register: the file is the complete live register, so companies in
+    the database that are missing from it have left the register.
     Differences from what was stored before are recorded in company_change.
     """
     headers, rows = open_table(path, sheet)
@@ -133,6 +172,12 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
         )
     }
     first_import = not before
+    in_universe = None
+    if universe:
+        from ..scoring import active_buy_box, merged
+
+        in_universe = universe_filter(merged(active_buy_box(conn)["criteria"]))
+    seen_numbers: set[str] = set()
 
     def get(row, field):
         h = mapping.get(field)
@@ -152,16 +197,25 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
             if len(messages) < 50:
                 messages.append(f"Row {i}: no company number, skipped.")
             continue
+        seen_numbers.add(num)
         if only_existing and num not in before:
             not_in_list += 1
             continue
         address = n.text(get(row, "address"))
         pc = n.text(get(row, "postcode")) or n.postcode(address)
         pc = pc.upper() if pc else None
+        if in_universe is not None and num not in before:
+            if not in_universe({"status": (n.text(get(row, "status")) or "active").lower(), "postcode": pc,
+                                "inc": n.parse_date(get(row, "incorporation_date")),
+                                "sic": n.sic_codes(get(row, "sic")), "name": name}):
+                not_in_list += 1
+                continue
         flag = n.known_address_flag(pc)
         region = n.text(get(row, "region"))
         if not region and mapping.get("wales_flag") and n.yes(get(row, "wales_flag")):
             region = "Wales"
+        if not region:
+            region = n.region_for(pc)
         extra = {
             h: _jsonable(v) for h, v in row.items() if h not in mapped_headers and v not in (None, "")
         }
@@ -174,10 +228,7 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
         }
         old = before.get(num)
         status_changed = False
-        if old is None and not first_import:
-            _change(conn, num, run_id, "new_company", None, None, "Added to your list")
-            changes += 1
-        elif old is not None:
+        if old is not None:
             for col, kind in TRACKED.items():
                 nv, ov = new[col], old[col]
                 if not nv:
@@ -245,11 +296,31 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
                 "acc": n.parse_date(get(row, "accounts_made_up_to")),
             },
         )
+        if old is None and not first_import:
+            _change(conn, num, run_id, "new_company", None, None, "Added to your list")
+            changes += 1
         changes += _financials(conn, num, row, get, source, latest_period.get(num) if old else None, run_id)
         ok += 1
 
+    if full_register:
+        missing = [num for num in before if num not in seen_numbers]
+        if rows_in < FULL_REGISTER_MIN_ROWS:
+            messages.append("Not treated as the full register (too few rows), so missing companies were not flagged.")
+        else:
+            for num in missing:
+                if (before[num]["status"] or "") in ("removed from register", "dissolved"):
+                    continue
+                _change(conn, num, run_id, "status", "status", before[num]["status"], "removed from register")
+                changes += 1
+            if missing:
+                conn.execute(
+                    """update company set status = 'removed from register', status_changed_at = now()
+                       where company_number = any(%s) and coalesce(status, '') not in ('removed from register', 'dissolved')""",
+                    (missing,),
+                )
+                messages.append(f"{len(missing):,} companies are no longer on the live register (usually dissolved).")
     if not_in_list:
-        messages.insert(0, f"{not_in_list:,} rows were for companies not in your list and were ignored.")
+        messages.insert(0, f"{not_in_list:,} rows were outside your list{' and universe' if universe else ''} and were skipped.")
     conn.execute(
         "update import_run set rows_in=%s, rows_ok=%s, rows_skipped=%s, messages=%s, finished_at=now() where id=%s",
         (rows_in, ok, skipped + not_in_list, json.dumps(messages), run_id),

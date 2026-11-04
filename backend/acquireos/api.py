@@ -71,7 +71,7 @@ def meta():
         counts = c.execute(
             """select (select count(*) from company) as companies,
                       (select count(*) from score where buy_box_id = %s and not excluded) as in_scope,
-                      (select count(*) from user_company where user_id = %s and status <> 'new') as tracked,
+                      (select count(*) from user_company where user_id = %s and status not in ('new', 'rejected', 'passed')) as tracked,
                       (select count(*) from company_person) as owner_records,
                       (select max(finished_at) from import_run) as last_import,
                       (select count(distinct company_number) from company_change
@@ -174,6 +174,10 @@ def companies(
                    s.score, s.coverage, s.excluded, s.exclusion, s.value_low, s.value_high, s.value_basis,
                    coalesce(uc.status, 'new') as status, uc.rating, uc.next_action, uc.next_action_on,
                    ch.last_change, ch.last_kinds,
+                   (select array_agg(employees order by period_end) from (
+                        select period_end, employees from financial_period t
+                        where t.company_number = c.company_number and not t.period_inferred and t.employees is not null
+                        order by period_end desc limit 6) z) as staff_trend,
                    count(*) over () as total
             from company c
             left join latest l on l.company_number = c.company_number
@@ -391,6 +395,89 @@ def outreach_add(o: OutreachIn):
             (UID, o.company_number, o.contact_name, o.contact_role, o.channel, o.summary,
              o.happened_on, o.next_action, o.next_action_on),
         ).fetchone()
+
+
+@app.get("/api/dashboard")
+def dashboard():
+    with db.conn() as c:
+        bb = scoring.active_buy_box(c)
+        p = {"bb": bb["id"], "uid": UID}
+        head = c.execute(
+            """select
+                 (select count(*) from company) as companies,
+                 (select count(*) from score where buy_box_id = %(bb)s and not excluded) as in_scope,
+                 (select count(*) from score where buy_box_id = %(bb)s and not excluded and score >= 70) as strong,
+                 (select count(*) from user_company where user_id = %(uid)s and status not in ('new','rejected','passed')) as pipeline,
+                 (select count(*) from user_company where user_id = %(uid)s and status in ('contacted','in_talks')) as talking,
+                 (select count(distinct company_number) from company_change where detected_at > now() - interval '7 days') as changed_7d,
+                 (select count(distinct company_number) from company_change where detected_at > now() - interval '30 days') as changed_30d,
+                 (select count(*) from company_change where kind = 'status' and detected_at > now() - interval '30 days') as status_30d,
+                 (select percentile_cont(0.5) within group (order by extract(year from current_date) - o.oldest_birth_year)
+                    from company_ownership o join score s on s.company_number = o.company_number and s.buy_box_id = %(bb)s
+                    where not s.excluded and o.oldest_birth_year is not null) as median_owner_age,
+                 (select count(*) from company_ownership o join score s on s.company_number = o.company_number
+                    and s.buy_box_id = %(bb)s where not s.excluded and o.oldest_birth_year <= extract(year from current_date) - 60) as owners_60,
+                 (select count(*) from (select company_number from financial_period where not period_inferred
+                    group by company_number having count(*) >= 3) h) as with_history,
+                 (select sum((value_low + value_high) / 2) from score s join user_company uc on uc.company_number = s.company_number
+                    and uc.user_id = %(uid)s where s.buy_box_id = %(bb)s and uc.status not in ('new','rejected','passed')) as pipeline_value""",
+            p,
+        ).fetchone()
+        hist = c.execute(
+            """select width_bucket(score, 0, 100.0001, 10) as b, count(*) as n from score
+               where buy_box_id = %(bb)s and not excluded group by 1 order by 1""", p).fetchall()
+        top = c.execute(
+            """with latest as (select distinct on (company_number) company_number, employees from financial_period
+                               where not period_inferred order by company_number, period_end desc)
+               select c.company_number, c.name, c.region, s.score, s.value_low, s.value_high, l.employees,
+                      o.oldest_birth_year, o.ownership_type
+               from score s join company c on c.company_number = s.company_number
+               left join latest l on l.company_number = c.company_number
+               left join company_ownership o on o.company_number = c.company_number
+               left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
+               where s.buy_box_id = %(bb)s and not s.excluded and coalesce(uc.status, 'new') = 'new'
+               order by s.score desc, s.coverage desc limit 8""", p).fetchall()
+        recent = c.execute(
+            """select ch.company_number, ch.kind, ch.field, ch.old_value, ch.new_value, ch.detected_at, c.name,
+                      coalesce(uc.status, 'new') as status
+               from company_change ch join company c on c.company_number = ch.company_number
+               left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
+               left join score s on s.company_number = ch.company_number and s.buy_box_id = %(bb)s
+               where ch.detected_at > now() - interval '30 days' and not coalesce(s.excluded, false)
+                 and ch.kind <> 'new_company'
+               order by (coalesce(uc.status,'new') <> 'new') desc, (ch.kind = 'status') desc, ch.detected_at desc
+               limit 8""", p).fetchall()
+        due = c.execute(
+            """select uc.company_number, c.name, uc.status, uc.next_action, uc.next_action_on
+               from user_company uc join company c on c.company_number = uc.company_number
+               where uc.user_id = %(uid)s and uc.next_action_on is not null and uc.status not in ('rejected','passed')
+               order by uc.next_action_on limit 6""", p).fetchall()
+        funnel = c.execute("select status, count(*) as n from user_company where user_id = %(uid)s group by 1", p).fetchall()
+        ownership = c.execute(
+            """select coalesce(o.ownership_type,'unknown') as type, count(*) as n from score s
+               left join company_ownership o on o.company_number = s.company_number
+               where s.buy_box_id = %(bb)s and not s.excluded group by 1 order by 2 desc""", p).fetchall()
+        freshness = c.execute(
+            "select kind, max(finished_at) as last from import_run where finished_at is not null group by kind").fetchall()
+        trend = c.execute(
+            """select extract(year from period_end)::int as year, count(distinct company_number) as companies,
+                      percentile_cont(0.5) within group (order by employees) as median_staff,
+                      sum(employees) as total_staff
+               from financial_period where not period_inferred and employees is not null
+                 and company_number in (select company_number from score where buy_box_id = %(bb)s and not excluded)
+               group by 1 having count(*) >= 3 order by 1""", p).fetchall()
+    fmap = {r["status"]: r["n"] for r in funnel}
+    # Recent years are only partly filed (accounts are due up to nine months
+    # after the year end), so drop years with under half the usual coverage.
+    peak = max((t["companies"] for t in trend), default=0)
+    trend = [t for t in trend if t["companies"] >= peak * 0.5]
+    return {
+        "head": head, "score_hist": [{"b": i, "n": next((h["n"] for h in hist if h["b"] == i), 0)} for i in range(1, 11)],
+        "top": top, "recent": recent, "due": due, "ownership": ownership,
+        "funnel": [{"status": st, "label": STATUS_LABELS[st], "n": fmap.get(st, 0)} for st in STATUSES if st != "new"],
+        "freshness": {r["kind"]: r["last"] for r in freshness}, "trend": trend, "refresh": _refresh_state,
+        "buy_box": bb["name"],
+    }
 
 
 @app.get("/api/changes")
@@ -631,6 +718,40 @@ def import_commit(body: CommitIn):
     return result
 
 
+_refresh_state = {"running": False, "started": None, "finished": None, "result": None, "error": None}
+
+
+@app.post("/api/refresh")
+def start_refresh(months: int = 1):
+    """Start the Companies House download and load in the background."""
+    import threading
+    from datetime import datetime
+
+    if _refresh_state["running"]:
+        raise HTTPException(409, "A refresh is already running")
+
+    def work():
+        from . import fetch
+
+        try:
+            with db.conn() as c:
+                _refresh_state["result"] = fetch.refresh(c, accounts_months=max(1, min(months, 24)))
+        except Exception as e:
+            _refresh_state["error"] = str(e)
+        finally:
+            _refresh_state["running"] = False
+            _refresh_state["finished"] = datetime.now().isoformat()
+
+    _refresh_state.update(running=True, started=datetime.now().isoformat(), finished=None, result=None, error=None)
+    threading.Thread(target=work, daemon=True).start()
+    return _refresh_state
+
+
+@app.get("/api/refresh")
+def refresh_status():
+    return _refresh_state
+
+
 @app.get("/api/imports")
 def imports():
     return _rows("select * from import_run order by id desc limit 50")
@@ -655,7 +776,7 @@ def export_csv():
         w = csv.DictWriter(buf, fieldnames=list(data[0].keys()))
         w.writeheader()
         for r in data:
-            w.writerow({k: (",".join(v) if isinstance(v, list) else v) for k, v in r.items()})
+            w.writerow({k: (",".join(map(str, v)) if isinstance(v, list) else v) for k, v in r.items()})
     buf.seek(0)
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
                              headers={"Content-Disposition": "attachment; filename=acquireos-export.csv"})

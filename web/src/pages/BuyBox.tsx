@@ -97,6 +97,27 @@ export default function BuyBox() {
       </table>
 
       <section>
+        <h2>Universe</h2>
+        <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}>
+          Which companies the monthly Companies House file adds to AcquireOS. Companies already here are always kept up to date.
+          A company is added if it is active, old enough, in your postcode areas (if any), and either has a SIC code below
+          or has a keyword in its name and one of the secondary SIC codes (to catch tech firms filed as consultancies).
+        </p>
+        <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
+          <dt>SIC codes starting with</dt><dd><input type="text" style={{ width: 460 }} placeholder="e.g. 620, 631, 5829" value={(c.universe?.sic_prefixes ?? []).join(", ")}
+                   onChange={(e) => upd(["universe", "sic_prefixes"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
+          <dt>Name keywords</dt><dd><input type="text" style={{ width: 620 }} placeholder="software, data, digital" value={(c.universe?.name_keywords ?? []).join(", ")}
+                   onChange={(e) => upd(["universe", "name_keywords"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
+          <dt>…with SIC codes starting</dt><dd><input type="text" style={{ width: 460 }} placeholder="e.g. 70229, 74909" value={(c.universe?.keyword_sic_prefixes ?? []).join(", ")}
+                   onChange={(e) => upd(["universe", "keyword_sic_prefixes"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
+          <dt>Postcode areas</dt><dd><input type="text" style={{ width: 360 }} placeholder="e.g. CF, SA, NP, LL (blank for all of the UK)" value={(c.universe?.postcode_areas ?? []).join(", ")}
+                   onChange={(e) => upd(["universe", "postcode_areas"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
+          <dt>Trading at least</dt><dd className="range">{n(["universe", "min_years"])}<span className="faint">years</span></dd>
+        </dl>
+        <p className="faint small">Saving does not remove companies already loaded; it changes what the next monthly refresh adds.</p>
+      </section>
+
+      <section>
         <h2>Valuation assumptions</h2>
         <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}>
           Used for the indicative value on every company. Where filed operating profit exists it is used directly;

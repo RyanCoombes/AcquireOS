@@ -44,6 +44,7 @@ export interface Row {
   value_basis: string | null;
   last_change: string | null;
   last_kinds: string[] | null;
+  staff_trend: number[] | null;
 }
 
 export interface Change {
@@ -156,6 +157,9 @@ export const api = {
     req<{ rows_in: number; rows_ok: number; rows_skipped: number; notes_added?: number; changes?: number; messages: string[] }>(
       "/api/import/commit", { method: "POST", body: JSON.stringify(body) }),
   imports: () => req<any[]>("/api/imports"),
+  dashboard: () => req<Record<string, any>>("/api/dashboard"),
+  startRefresh: (months = 1) => req<Record<string, any>>(`/api/refresh?months=${months}`, { method: "POST" }),
+  refreshStatus: () => req<Record<string, any>>("/api/refresh"),
   changes: (params: Record<string, string>) =>
     req<{ rows: Change[]; summary: { kind: string; n: number }[] }>("/api/changes?" + new URLSearchParams(params)),
   searches: () => req<SavedSearch[]>("/api/searches"),

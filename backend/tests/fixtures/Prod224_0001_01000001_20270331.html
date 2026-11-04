@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:ix="http://www.xbrl.org/2013/inlineXBRL" xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:core="http://xbrl.frc.org.uk/fr/2021-01-01/core" xmlns:bus="http://xbrl.frc.org.uk/cd/2021-01-01/business" xmlns:ixt2="http://www.xbrl.org/inlineXBRL/transformation/2011-07-31" xmlns:xbrldi="http://xbrl.org/2006/xbrldi">
+<head><title>Example Systems Limited - Accounts (fictional test file)</title></head>
+<body>
+<ix:header><ix:resources>
+<xbrli:context id="cy"><xbrli:entity><xbrli:identifier scheme="http://www.companieshouse.gov.uk/">01000001</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:startDate>2026-04-01</xbrli:startDate><xbrli:endDate>2027-03-31</xbrli:endDate></xbrli:period></xbrli:context>
+<xbrli:context id="cy_i"><xbrli:entity><xbrli:identifier scheme="http://www.companieshouse.gov.uk/">01000001</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2027-03-31</xbrli:instant></xbrli:period></xbrli:context>
+<xbrli:context id="py"><xbrli:entity><xbrli:identifier scheme="http://www.companieshouse.gov.uk/">01000001</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:startDate>2025-04-01</xbrli:startDate><xbrli:endDate>2026-03-31</xbrli:endDate></xbrli:period></xbrli:context>
+<xbrli:context id="py_i"><xbrli:entity><xbrli:identifier scheme="http://www.companieshouse.gov.uk/">01000001</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2026-03-31</xbrli:instant></xbrli:period></xbrli:context>
+<xbrli:context id="cy_dir1"><xbrli:entity><xbrli:identifier scheme="http://www.companieshouse.gov.uk/">01000001</xbrli:identifier><xbrli:segment><xbrldi:explicitMember dimension="bus:EntityOfficersDimension">bus:Director1</xbrldi:explicitMember></xbrli:segment></xbrli:entity><xbrli:period><xbrli:instant>2027-03-31</xbrli:instant></xbrli:period></xbrli:context>
+</ix:resources></ix:header>
+<table>
+<tr><td>Average number of employees</td><td><ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="cy" unitRef="pure" decimals="0">41</ix:nonFraction></td><td><ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="py" unitRef="pure" decimals="0">34</ix:nonFraction></td></tr>
+<tr><td>Turnover</td><td><ix:nonFraction name="core:TurnoverRevenue" contextRef="cy" unitRef="GBP" decimals="-3" scale="3" format="ixt2:numdotdecimal">4,120</ix:nonFraction></td><td><ix:nonFraction name="core:TurnoverRevenue" contextRef="py" unitRef="GBP" decimals="-3" scale="3">3,650</ix:nonFraction></td></tr>
+<tr><td>Operating profit</td><td><ix:nonFraction name="core:OperatingProfitLoss" contextRef="cy" unitRef="GBP" decimals="0">512,300</ix:nonFraction></td><td>(<ix:nonFraction name="core:OperatingProfitLoss" contextRef="py" unitRef="GBP" decimals="0" sign="-">20,000</ix:nonFraction>)</td></tr>
+<tr><td>Cash at bank</td><td><ix:nonFraction name="core:CashBankOnHand" contextRef="cy_i" unitRef="GBP" decimals="0"><span>1,020,000</span></ix:nonFraction></td><td><ix:nonFraction name="core:CashBankOnHand" contextRef="py_i" unitRef="GBP" decimals="0">900,000</ix:nonFraction></td></tr>
+<tr><td>Debtors</td><td><ix:nonFraction name="core:Debtors" contextRef="cy_i" unitRef="GBP" decimals="0">455,000</ix:nonFraction></td><td><ix:nonFraction name="core:Debtors" contextRef="py_i" unitRef="GBP" decimals="0" format="ixt2:zerodash">-</ix:nonFraction></td></tr>
+<tr><td>Net assets</td><td><ix:nonFraction name="core:NetAssetsLiabilities" contextRef="cy_i" unitRef="GBP" decimals="0">2,100,000</ix:nonFraction></td><td><ix:nonFraction name="core:NetAssetsLiabilities" contextRef="py_i" unitRef="GBP" decimals="0">1,850,000</ix:nonFraction></td></tr>
+<tr><td>Equity (should be ignored: NetAssets preferred)</td><td><ix:nonFraction name="core:Equity" contextRef="cy_i" unitRef="GBP" decimals="0">9</ix:nonFraction></td></tr>
+<tr><td>Director loan (dimensioned, ignored)</td><td><ix:nonFraction name="core:NetAssetsLiabilities" contextRef="cy_dir1" unitRef="GBP" decimals="0">5</ix:nonFraction></td></tr>
+</table>
+</body></html>

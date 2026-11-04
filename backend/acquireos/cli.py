@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from . import db, scoring
-from .importers import companies, notes, psc
+from .importers import accounts, companies, notes, psc
 from .ownership import rebuild
 
 
@@ -30,6 +30,16 @@ def main(argv=None):
     p.add_argument("files", nargs="+", type=Path)
     p.add_argument("--sheet")
 
+    p = sub.add_parser("import-accounts", help="Import filed accounts (iXBRL) from Companies House accounts zips")
+    p.add_argument("files", nargs="+", type=Path)
+
+    p = sub.add_parser("fetch", help="Download and load Companies House bulk data")
+    p.add_argument("what", choices=["company-data", "accounts", "psc", "all"])
+    p.add_argument("--months", type=int, default=1, help="Months of accounts to load, newest first (default 1)")
+    p.add_argument("--keep", action="store_true", help="Keep downloaded files instead of deleting them")
+
+    sub.add_parser("scheduler", help="Run the monthly refresh on a schedule (used by the Docker stack)")
+
     p = sub.add_parser("import-psc", help="Import owners from the Companies House PSC snapshot (.txt or .zip)")
     p.add_argument("files", nargs="+", type=Path)
 
@@ -43,6 +53,11 @@ def main(argv=None):
     sub.add_parser("rescore", help="Recompute scores against the active buy box")
 
     a = ap.parse_args(argv)
+    if a.cmd == "scheduler":
+        from .fetch import scheduler
+
+        scheduler()
+        return
     if a.cmd == "migrate":
         print("Applied:", db.migrate() or "nothing new")
         return
@@ -60,6 +75,21 @@ def main(argv=None):
         elif a.cmd == "import-notes":
             for f in a.files:
                 _print(f, notes.run(c, f, sheet=a.sheet))
+        elif a.cmd == "import-accounts":
+            _print(a.files[0], accounts.run(c, a.files))
+        elif a.cmd == "fetch":
+            from . import fetch
+
+            if a.what == "company-data":
+                _print(Path("company data"), fetch.fetch_company_data(c, keep=a.keep))
+            elif a.what == "accounts":
+                for r in fetch.fetch_accounts(c, months=a.months, keep=a.keep):
+                    print(r)
+            elif a.what == "psc":
+                _print(Path("owners"), fetch.fetch_psc(c, keep=a.keep))
+            else:
+                print(fetch.refresh(c, accounts_months=a.months))
+            rebuild(c)
         elif a.cmd == "import-psc":
             print("Streaming the PSC snapshot. On a Raspberry Pi this can take a while.", file=sys.stderr)
             _print(a.files[0], psc.run(c, a.files))
@@ -70,6 +100,10 @@ def main(argv=None):
 
             d = generate(Path(tempfile.mkdtemp()))
             _print(d / "companies.csv", companies.run(c, d / "companies.csv", source="demo data"))
+            from .demo import generate_accounts
+
+            acc = generate_accounts(d, d / "companies.csv")
+            print("accounts:", {k: v for k, v in accounts.run(c, [acc]).items() if k != "messages"})
             _print(d / "psc.jsonl", psc.run(c, [d / "psc.jsonl"]))
             _print(d / "notes.csv", notes.run(c, d / "notes.csv", source="demo notes"))
             _print(d / "companies_update.csv", companies.run(c, d / "companies_update.csv", source="demo refresh",

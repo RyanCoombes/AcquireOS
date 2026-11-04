@@ -148,3 +148,30 @@ def company_name_key(name: str) -> str:
 
 def yes(value) -> bool:
     return str(value).strip().lower() in {"yes", "y", "true", "1"}
+
+
+# Postcode areas fully in each nation. A few areas straddle a border (SY,
+# CH, LD, TD, HR, NP) and are assigned to where most of the area lies.
+WALES_AREAS = {"CF", "SA", "NP", "LL", "LD"}
+SCOTLAND_AREAS = {"AB", "DD", "DG", "EH", "FK", "G", "HS", "IV", "KA", "KW", "KY", "ML", "PA", "PH", "TD", "ZE"}
+NI_AREAS = {"BT"}
+
+
+def postcode_area(pc: str | None) -> str | None:
+    if not pc:
+        return None
+    m = re.match(r"([A-Z]{1,2})\d", pc.strip().upper())
+    return m.group(1) if m else None
+
+
+def region_for(pc: str | None) -> str | None:
+    area = postcode_area(pc)
+    if not area:
+        return None
+    if area in WALES_AREAS:
+        return "Wales"
+    if area in SCOTLAND_AREAS:
+        return "Scotland"
+    if area in NI_AREAS:
+        return "Northern Ireland"
+    return "England"
