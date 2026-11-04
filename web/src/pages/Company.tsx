@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type CompanyDetail, type Status } from "../api";
 import { ErrorLine, Flags, Score, STATUS_LABEL, Toast, useAsync } from "../components/bits";
 import { SmallLine } from "../components/charts";
-import { ageFrom, chUrl, date, dateTime, int, LINK_KIND, money, MONTHS, OWNERSHIP, range, toNum, years } from "../format";
+import Valuation from "../components/Valuation";
+import { ageFrom, CHANGE_KIND, chUrl, date, dateTime, describeChange, int, isBadStatus, LINK_KIND, money, MONTHS, OWNERSHIP, range, relDays, toNum, years } from "../format";
 
 const STATUSES: Status[] = ["new", "watching", "researching", "approach", "contacted", "in_talks", "passed", "rejected"];
 
@@ -48,7 +49,7 @@ export default function Company() {
           </div>
           <h1 style={{ marginTop: 6 }}>{c.name}</h1>
           <div className="lede">
-            {c.status ? cap(c.status) : "Status unknown"}
+            {c.status ? (isBadStatus(c.status) ? <span className="tag red" style={{ marginLeft: 0 }}>{cap(c.status)}{c.dissolution_date ? ` ${date(c.dissolution_date)}` : ""}</span> : cap(c.status)) : "Status unknown"}
             {c.incorporation_date ? ` · incorporated ${date(c.incorporation_date)}` : ""}
             {c.region ? ` · ${c.region}` : ""}
             {" · "}<a href={chUrl(c.company_number)} target="_blank" rel="noreferrer">Companies House record ↗</a>
@@ -67,6 +68,13 @@ export default function Company() {
       </div>
 
       {score?.excluded && <div className="callout red"><b>Excluded by your buy box:</b> {score.exclusion}</div>}
+      {data.changes.filter((x) => Date.now() - new Date(x.detected_at).getTime() < 30 * 864e5).length > 0 && (
+        <div className="callout">
+          <b>Changed recently:</b>{" "}
+          {data.changes.filter((x) => Date.now() - new Date(x.detected_at).getTime() < 30 * 864e5).slice(0, 4).map((x) => describeChange(x)).join("; ")}.{" "}
+          <a href="#changes">History</a>
+        </div>
+      )}
 
       <div className="company-grid">
         <div className="main">
@@ -122,6 +130,8 @@ export default function Company() {
               </>
             ) : <div className="faint">No accounts imported.</div>}
           </section>
+
+          <Valuation data={data} num={num} onSaved={reload} />
 
           <section>
             <div className="sechead"><h2>Ownership</h2><Flags flags={own?.flags} address={c.address_flag} /></div>
@@ -192,6 +202,24 @@ export default function Company() {
 
           <Research data={data} num={num} onAdded={reload} />
 
+          <section id="changes">
+            <div className="sechead"><h2>Change history</h2><span className="faint small">What differed each time new data was imported.</span></div>
+            {data.changes.length ? (
+              <table>
+                <tbody>
+                  {data.changes.map((x) => (
+                    <tr key={x.id}>
+                      <td style={{ width: 130 }} className="muted">{date(x.detected_at)}</td>
+                      <td style={{ width: 130 }}><b>{CHANGE_KIND[x.kind] ?? x.kind}</b></td>
+                      <td className={x.kind === "status" && isBadStatus(x.new_value) ? "neg" : ""}>{describeChange(x)}</td>
+                      <td className="faint small hide-sm">{x.filename}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <div className="faint">No changes recorded. Re-import a newer Companies House file to see what moves.</div>}
+          </section>
+
           <section>
             <h2>Record</h2>
             <dl className="facts">
@@ -200,7 +228,8 @@ export default function Company() {
               <dt>Industry (SIC)</dt><dd>{c.sic_codes.join(", ") || "—"}</dd>
               <dt>Registered office</dt><dd>{c.registered_address ?? "—"} <Flags address={c.address_flag} /></dd>
               <dt>Review tier</dt><dd>{c.review_tier ?? "—"}</dd>
-              <dt>Source</dt><dd>{c.source ?? "—"} · updated {dateTime(c.updated_at)}</dd>
+              {c.last_accounts_date && <><dt>Last accounts</dt><dd>Made up to {date(c.last_accounts_date)}</dd></>}
+              <dt>Source</dt><dd>{c.source ?? "—"} · updated {dateTime(c.updated_at)} ({relDays(c.updated_at)})</dd>
               {Object.entries(c.extra ?? {}).map(([k, v]) => (
                 <FactRow key={k} k={k} v={v} />
               ))}

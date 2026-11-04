@@ -74,13 +74,12 @@ h3 { font-size: 14px; font-weight: 650; margin: 0 0 6px; }
 .muted { color: var(--ink-2); }
 .faint { color: var(--ink-3); }
 .small { font-size: 12.5px; }
-/* Tabular figures only where numbers line up: in this font the setting
-   also widens commas and full stops, which looks wrong in running text. */
-.num, .factline b, .score b, .hbars .n, .chart text { font-variant-numeric: tabular-nums; }
+/* No tabular figures: in this typeface they also widen full stops and
+   commas ("0 . 96"). Right-aligned proportional figures read better. */
 .num { text-align: right; white-space: nowrap; }
 .neg { color: var(--red); }
 .pos { color: var(--green); }
-.hl { background: linear-gradient(transparent 55%, var(--yellow) 55%); padding: 0 1px; }
+.hl { box-shadow: inset 0 -0.28em 0 var(--yellow); padding: 0 2px; }
 
 /* ---------------------------------------------------------------- page head */
 .pagehead {
@@ -140,8 +139,13 @@ input[type="number"] { width: 84px; }
   background: var(--paper-2); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
   margin: 0 calc(-1 * var(--gutter)); padding: 10px var(--gutter);
   display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: flex-end;
-  position: sticky; top: 52px; z-index: 10;
 }
+.band-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.band-more {
+  flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: flex-end;
+  border-top: 1px dashed var(--rule-2); padding-top: 10px;
+}
+input.set, select.set { border-color: var(--green); background: var(--green-2); }
 .field { display: flex; flex-direction: column; gap: 3px; }
 .field > label, .label { font-size: 12px; color: var(--ink-2); }
 .range { display: flex; align-items: center; gap: 4px; }
@@ -155,7 +159,7 @@ th {
   padding: 8px 10px; border-bottom: 1px solid var(--ink); white-space: nowrap;
   position: sticky; top: 0; background: var(--paper);
 }
-.list th { top: 106px; }
+.list th { top: 52px; z-index: 5; }
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable:hover { color: var(--ink); }
 th .arrow { color: var(--green); margin-left: 3px; }
@@ -169,10 +173,11 @@ tbody tr { cursor: default; }
 td .name { font-weight: 600; color: var(--ink); }
 td .sub { font-size: 12px; color: var(--ink-3); }
 .excluded td { color: var(--ink-3); }
+.excluded td.neg, .excluded .tag.red { color: var(--red); }
 
 /* score: a thin rule with a filled portion */
 .score { display: flex; align-items: center; gap: 8px; min-width: 104px; }
-.score b { width: 30px; text-align: right; font-weight: 700; }
+.score b { min-width: 34px; text-align: right; font-weight: 700; }
 .score .bar { flex: 1; height: 4px; background: var(--rule); position: relative; min-width: 56px; }
 .score .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ink); }
 .score.high .bar i { background: var(--green); }
@@ -306,3 +311,55 @@ dl.facts dd { margin: 0; padding: 6px 0; border-bottom: 1px solid var(--rule); }
   h1 { font-size: 24px; }
   .report-grid { grid-template-columns: 1fr; }
 }
+
+/* ---------------------------------------------------------------- views + saved searches */
+.views { display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-top: 2px; }
+.viewtabs { display: flex; gap: 0; }
+.viewtabs button {
+  border: 0; background: none; padding: 8px 14px 9px; cursor: pointer; color: var(--ink-2); font-weight: 550;
+  border-bottom: 3px solid transparent;
+}
+.viewtabs button:first-child { padding-left: 0; }
+.viewtabs button:hover { color: var(--ink); }
+.viewtabs button.on { color: var(--ink); border-bottom-color: var(--ink); }
+.saved { display: flex; gap: 4px 14px; align-items: center; flex-wrap: wrap; padding-bottom: 9px; font-size: 13px; }
+.savedlink { display: inline-flex; align-items: center; }
+.savedlink button { border: 0; background: none; cursor: pointer; color: var(--green); padding: 2px 0; font-weight: 550; }
+.savedlink button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.savedlink.on > button:first-child { color: var(--ink); background: linear-gradient(transparent 55%, var(--yellow) 55%); }
+.savedlink .x { color: var(--ink-3); padding: 0 0 0 4px; font-weight: 400; }
+.savedlink .x:hover { color: var(--red); text-decoration: none; }
+.resultline { display: flex; gap: 16px; align-items: baseline; padding: 14px 0 4px; color: var(--ink-2); flex-wrap: wrap; }
+.resultline b, .ink { color: var(--ink); }
+
+/* small square-cornered text tags, used sparingly for state that matters */
+.tag {
+  display: inline-block; margin-left: 8px; padding: 0 5px; font-size: 11.5px; font-weight: 600; line-height: 18px;
+  border: 1px solid var(--ink); color: var(--ink); background: var(--yellow-2); vertical-align: 1px; white-space: nowrap;
+}
+.tag.red { border-color: var(--red); color: var(--red); background: var(--red-2); }
+
+.summary-line { display: flex; gap: 6px 16px; flex-wrap: wrap; align-items: baseline; padding: 14px 0 0; color: var(--ink-2); }
+.summary-line b { color: var(--ink); }
+.linkish { border: 0; background: none; padding: 0; cursor: pointer; color: var(--green); font-weight: 550; }
+.linkish:hover { text-decoration: underline; text-underline-offset: 3px; }
+.linkish.on { color: var(--ink); background: linear-gradient(transparent 55%, var(--yellow) 55%); }
+
+/* ---------------------------------------------------------------- valuation */
+.steps { margin: 12px 0; padding-left: 20px; color: var(--ink-2); }
+.steps li { padding: 2px 0; }
+.assume { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: flex-end; padding: 12px 0; border-top: 1px solid var(--rule); }
+.assume .unit { display: inline-flex; align-items: center; gap: 4px; }
+.assume .unit i { font-style: normal; color: var(--ink-2); }
+.assume input { width: 76px; }
+.assume input:disabled { background: var(--paper-2); color: var(--ink-3); }
+.assume-actions { display: flex; gap: 10px; align-items: center; margin-left: auto; }
+.dealcheck { margin-top: 6px; border-top: 1px solid var(--rule); padding-top: 12px; }
+.dealcheck summary { cursor: pointer; font-weight: 650; }
+.dealcheck summary::marker { color: var(--green); }
+.dc-grid { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 12px 0; }
+.dc-table { max-width: 640px; }
+.dc-table td { padding: 6px 10px 6px 0; }
+.dc-table tr.total td { border-top: 2px solid var(--ink); border-bottom: 0; padding-top: 10px; }
+pre.cmd { background: var(--paper-2); padding: 10px 14px; overflow-x: auto; border-left: 3px solid var(--ink); font-size: 13px; }
+code { font-size: 0.92em; background: var(--paper-2); padding: 0 3px; }

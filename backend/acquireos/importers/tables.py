@@ -8,10 +8,59 @@ from pathlib import Path
 
 
 def read_rows(path: Path, sheet: str | None = None) -> tuple[list[str], list[dict]]:
+    """Whole file in memory. Fine for workbooks and lists of thousands."""
+    headers, it = open_table(path, sheet)
+    return headers, list(it)
+
+
+def open_table(path: Path, sheet: str | None = None):
+    """(headers, row iterator). CSV and zipped CSV are streamed, so the
+    multi-gigabyte Companies House bulk file never sits in memory."""
     suffix = path.suffix.lower()
     if suffix in {".xlsx", ".xlsm"}:
-        return _read_xlsx(path, sheet)
-    return _read_csv(path)
+        headers, rows = _read_xlsx(path, sheet)
+        return headers, iter(rows)
+    if suffix == ".zip":
+        import zipfile
+
+        z = zipfile.ZipFile(path)
+        name = next((n for n in z.namelist() if n.lower().endswith((".csv", ".txt"))), None)
+        if not name:
+            raise ValueError("The zip file has no CSV inside.")
+        return _stream_csv(io.TextIOWrapper(z.open(name), encoding="utf-8-sig", errors="replace", newline=""))
+    if path.stat().st_size > 50_000_000:
+        return _stream_csv(open(path, encoding="utf-8-sig", errors="replace", newline=""))
+    headers, rows = _read_csv(path)
+    return headers, iter(rows)
+
+
+def _stream_csv(f):
+    reader = csv.reader(f)
+    try:
+        headers = _unique_headers(next(reader))
+    except StopIteration:
+        return [], iter(())
+
+    def gen():
+        try:
+            for r in reader:
+                if any(cell.strip() for cell in r):
+                    yield {h: (r[i] if i < len(r) else None) for i, h in enumerate(headers)}
+        finally:
+            f.close()
+
+    return headers, gen()
+
+
+def head_rows(path: Path, sheet: str | None = None, n: int = 5) -> tuple[list[str], list[dict], int | None]:
+    """Headers, the first n rows and the row count (None if too big to count quickly)."""
+    import itertools
+
+    headers, it = open_table(path, sheet)
+    first = list(itertools.islice(it, n))
+    big = path.suffix.lower() == ".zip" or path.stat().st_size > 50_000_000
+    count = None if big else len(first) + sum(1 for _ in it)
+    return headers, first, count
 
 
 def list_sheets(path: Path) -> list[str]:

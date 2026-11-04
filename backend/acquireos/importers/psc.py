@@ -67,6 +67,9 @@ def run(conn, paths: list[Path], max_depth: int = 4) -> dict:
     ).fetchone()["id"]
 
     wanted = {r["company_number"] for r in conn.execute("select company_number from company")}
+    # On the first owner import everything is "new", so only later imports
+    # record owner changes.
+    first = conn.execute("select 1 from company_person limit 1").fetchone() is None
     known_companies = set(wanted)
     done: set[str] = set()
     total = 0
@@ -81,7 +84,7 @@ def run(conn, paths: list[Path], max_depth: int = 4) -> dict:
             if num not in wanted:
                 continue
             if num in known_companies:
-                _store(conn, num, data)
+                _store(conn, num, data, run_id, first)
                 total += 1
             else:
                 parent_rows.setdefault(num, []).append(("psc", data))
@@ -151,12 +154,25 @@ def _upsert_person(conn, p: dict) -> int:
     ).fetchone()["id"]
 
 
-def _store(conn, num: str, data: dict):
+def _store(conn, num: str, data: dict, run_id=None, first=True):
     p = person_from(data)
     pid = _upsert_person(conn, p)
     notified = n.parse_date(data.get("notified_on"))
     ceased = n.parse_date(data.get("ceased_on"))
     row_key = f"psc:{num}:{p['person_key']}:{notified or ''}"
+    if not first:
+        old = conn.execute("select ceased_on from company_person where row_key = %s", (row_key,)).fetchone()
+        change = None
+        if old is None and not ceased:
+            change = ("New owner", p["name"])
+        elif old is not None and old["ceased_on"] is None and ceased:
+            change = ("Owner ceased", p["name"])
+        if change:
+            conn.execute(
+                """insert into company_change (company_number, import_run_id, kind, field, old_value, new_value)
+                   values (%s, %s, 'owner', %s, null, %s)""",
+                (num, run_id, change[0], change[1]),
+            )
     conn.execute(
         """insert into company_person (row_key, company_number, person_id, role, natures,
                notified_on, ceased_on, source)

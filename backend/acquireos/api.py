@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, config, db, scoring
+from . import __version__, config, db, scoring, valuation
 from .importers import companies as company_importer
 from .importers import notes as notes_importer
 from .importers.notes import STATUS_LABELS, STATUSES
@@ -73,11 +73,14 @@ def meta():
                       (select count(*) from score where buy_box_id = %s and not excluded) as in_scope,
                       (select count(*) from user_company where user_id = %s and status <> 'new') as tracked,
                       (select count(*) from company_person) as owner_records,
-                      (select max(finished_at) from import_run) as last_import""",
+                      (select max(finished_at) from import_run) as last_import,
+                      (select count(distinct company_number) from company_change
+                         where detected_at > now() - interval '30 days') as changed_30d""",
             (bb["id"], UID),
         ).fetchone()
         regions = [r["region"] for r in c.execute("select distinct region from company where region is not null order by 1")]
         tiers = [r["review_tier"] for r in c.execute("select distinct review_tier from company where review_tier is not null order by 1")]
+        company_statuses = [r["status"] for r in c.execute("select status, count(*) from company where status is not null group by 1 order by 2 desc")]
     return {
         "version": __version__,
         "statuses": [{"value": s, "label": STATUS_LABELS[s]} for s in STATUSES],
@@ -85,6 +88,7 @@ def meta():
         "address_flags": ADDRESS_FLAG_LABELS,
         "regions": regions,
         "tiers": tiers,
+        "company_statuses": company_statuses,
         "counts": counts,
         "buy_box": {"id": bb["id"], "name": bb["name"]},
     }
@@ -93,7 +97,8 @@ def meta():
 SORTS = {
     "score": "s.score", "name": "c.name", "staff": "l.employees", "revenue": "e.revenue_high",
     "age": "o.oldest_birth_year", "years": "c.incorporation_date", "net_assets": "l.net_assets",
-    "updated": "uc.updated_at", "status": "uc.status",
+    "updated": "uc.updated_at", "status": "uc.status", "value": "s.value_high",
+    "changed": "ch.last_change",
 }
 
 
@@ -103,6 +108,9 @@ def companies(
     ownership: str | None = None, min_staff: int | None = None, max_staff: int | None = None,
     min_score: float | None = None, min_owner_age: int | None = None, include_excluded: bool = False,
     flag: str | None = None, sort: str = "score", dir: str = "desc", limit: int = 100, offset: int = 0,
+    company_status: str | None = None, sic: str | None = None, changed_days: int | None = None,
+    change_kind: str | None = None, min_value: float | None = None, max_value: float | None = None,
+    min_years: int | None = None,
 ):
     with db.conn() as c:
         bb = scoring.active_buy_box(c)
@@ -131,6 +139,24 @@ def companies(
             where.append("o.oldest_birth_year <= %(by)s"); params["by"] = date.today().year - min_owner_age
         if flag:
             where.append("(%(flag)s = any(o.flags) or c.address_flag = %(flag)s)"); params["flag"] = flag
+        if company_status:
+            where.append("c.status = %(cstatus)s"); params["cstatus"] = company_status
+        if sic:
+            where.append("exists (select 1 from unnest(c.sic_codes) x where x like %(sic)s)")
+            params["sic"] = sic.strip().rstrip("*") + "%"
+        if changed_days:
+            where.append("ch.last_change > now() - make_interval(days => %(cdays)s)"); params["cdays"] = changed_days
+        if change_kind:
+            where.append(
+                "exists (select 1 from company_change x where x.company_number = c.company_number and x.kind = %(ckind)s"
+                + (" and x.detected_at > now() - make_interval(days => %(cdays)s))" if changed_days else ")"))
+            params["ckind"] = change_kind
+        if min_value is not None:
+            where.append("s.value_high >= %(minv)s"); params["minv"] = min_value
+        if max_value is not None:
+            where.append("s.value_low <= %(maxv)s"); params["maxv"] = max_value
+        if min_years is not None:
+            where.append("c.incorporation_date <= current_date - make_interval(years => %(miny)s)"); params["miny"] = min_years
         if not include_excluded:
             where.append("not coalesce(s.excluded, false)")
         order = SORTS.get(sort, "s.score")
@@ -145,8 +171,9 @@ def companies(
                    l.employees, l.net_assets, l.period_end,
                    e.revenue_low, e.revenue_high, e.basis as revenue_basis,
                    o.ownership_type, o.oldest_birth_year, o.flags,
-                   s.score, s.coverage, s.excluded, s.exclusion,
+                   s.score, s.coverage, s.excluded, s.exclusion, s.value_low, s.value_high, s.value_basis,
                    coalesce(uc.status, 'new') as status, uc.rating, uc.next_action, uc.next_action_on,
+                   ch.last_change, ch.last_kinds,
                    count(*) over () as total
             from company c
             left join latest l on l.company_number = c.company_number
@@ -154,6 +181,11 @@ def companies(
             left join company_ownership o on o.company_number = c.company_number
             left join score s on s.company_number = c.company_number and s.buy_box_id = %(bb)s
             left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
+            left join (
+                select company_number, max(detected_at) as last_change,
+                       array_agg(distinct kind) filter (where detected_at > now() - interval '90 days') as last_kinds
+                from company_change group by company_number
+            ) ch on ch.company_number = c.company_number
             where {' and '.join(where)}
             order by {order} {direction} nulls last, c.name
             limit %(limit)s offset %(offset)s
@@ -203,7 +235,18 @@ def company(num: str):
             "select * from outreach where company_number = %s and user_id = %s order by happened_on desc, id desc",
             (num, UID),
         ).fetchall()
+        changes = c.execute(
+            """select ch.*, r.filename from company_change ch left join import_run r on r.id = ch.import_run_id
+               where ch.company_number = %s order by ch.detected_at desc, ch.id desc limit 100""",
+            (num,),
+        ).fetchall()
+        facts = (scoring.load_facts(c, num) or [{}])[0]
+        override = (state or {}).get("valuation") or {}
+        a = valuation.assumptions(bb["criteria"], override)
+        val = {**valuation.value(facts, a), "assumptions": a, "defaults": valuation.assumptions(bb["criteria"]),
+               "override": override, "cash": facts.get("cash")}
     return {
+        "changes": changes, "valuation": val,
         "company": row, "financials": fin, "estimate": est, "ownership": own, "people": people,
         "links": links, "score": sc, "state": state or {"status": "new", "rating": None, "tags": []},
         "notes": notes, "research": research, "outreach": outreach,
@@ -234,6 +277,7 @@ class StateIn(BaseModel):
     next_action: str | None = None
     next_action_on: date | None = None
     tags: list[str] | None = None
+    valuation: dict | None = None
     clear_rating: bool = False
 
 
@@ -256,6 +300,11 @@ def set_state(num: str, body: StateIn):
             if k in fields:
                 sets.append(f"{k} = %s")
                 params.append(fields[k])
+        if "valuation" in fields:
+            clean = {k: float(v) for k, v in (fields["valuation"] or {}).items()
+                     if k in valuation.DEFAULTS and v not in (None, "")}
+            sets.append("valuation = %s")
+            params.append(json.dumps(clean))
         if body.clear_rating:
             sets.append("rating = null")
         c.execute(
@@ -342,6 +391,70 @@ def outreach_add(o: OutreachIn):
             (UID, o.company_number, o.contact_name, o.contact_role, o.channel, o.summary,
              o.happened_on, o.next_action, o.next_action_on),
         ).fetchone()
+
+
+@app.get("/api/changes")
+def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limit: int = 500):
+    with db.conn() as c:
+        bb = scoring.active_buy_box(c)
+        where, params = ["ch.detected_at > now() - make_interval(days => %(days)s)"], {"days": days, "uid": UID, "bb": bb["id"], "limit": min(limit, 2000)}
+        if kind:
+            where.append("ch.kind = %(kind)s"); params["kind"] = kind
+        if tracked:
+            where.append("coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed')")
+        rows = c.execute(
+            f"""select ch.id, ch.company_number, ch.kind, ch.field, ch.old_value, ch.new_value, ch.detected_at,
+                       c.name, c.status as company_status, coalesce(uc.status, 'new') as status, s.score, s.excluded,
+                       r.filename
+                from company_change ch join company c on c.company_number = ch.company_number
+                left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
+                left join score s on s.company_number = ch.company_number and s.buy_box_id = %(bb)s
+                left join import_run r on r.id = ch.import_run_id
+                where {' and '.join(where)}
+                order by ch.detected_at desc, (coalesce(uc.status,'new') <> 'new') desc, s.score desc nulls last
+                limit %(limit)s""",
+            params,
+        ).fetchall()
+        summary = c.execute(
+            f"""select ch.kind, count(*) as n from company_change ch
+                left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
+                where ch.detected_at > now() - make_interval(days => %(days)s)
+                {"and coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed')" if tracked else ""}
+                group by 1 order by 2 desc""",
+            params,
+        ).fetchall()
+    return {"rows": rows, "summary": summary}
+
+
+@app.get("/api/searches")
+def searches():
+    return _rows("select * from saved_search where user_id = %s order by name", (UID,))
+
+
+class SearchIn(BaseModel):
+    name: str
+    params: dict
+
+
+@app.post("/api/searches")
+def save_search(body: SearchIn):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Give the search a name")
+    params = {k: str(v) for k, v in body.params.items() if v not in (None, "") and k not in ("page",)}
+    with db.conn() as c:
+        return c.execute(
+            """insert into saved_search (user_id, name, params) values (%s, %s, %s)
+               on conflict (user_id, name) do update set params = excluded.params returning *""",
+            (UID, name, json.dumps(params)),
+        ).fetchone()
+
+
+@app.delete("/api/searches/{sid}")
+def delete_search(sid: int):
+    with db.conn() as c:
+        c.execute("delete from saved_search where id = %s and user_id = %s", (sid, UID))
+    return {"ok": True}
 
 
 @app.get("/api/pipeline")
@@ -470,8 +583,8 @@ async def import_preview(kind: str = Form(...), file: UploadFile = File(...), sh
     if kind not in IMPORTERS:
         raise HTTPException(400, "Unknown import type")
     suffix = Path(file.filename or "upload.csv").suffix.lower()
-    if suffix not in {".csv", ".xlsx", ".xlsm", ".txt"}:
-        raise HTTPException(400, "Upload a CSV or Excel (.xlsx) file")
+    if suffix not in {".csv", ".xlsx", ".xlsm", ".txt", ".zip"}:
+        raise HTTPException(400, "Upload a CSV, zipped CSV or Excel (.xlsx) file")
     token = uuid.uuid4().hex
     dest = config.UPLOAD_DIR / f"{token}{suffix}"
     with dest.open("wb") as out:
@@ -495,6 +608,7 @@ class CommitIn(BaseModel):
     filename: str
     mapping: dict
     sheet: str | None = None
+    only_existing: bool = False
 
 
 @app.post("/api/import/commit")
@@ -506,7 +620,8 @@ def import_commit(body: CommitIn):
         raise HTTPException(410, "Upload expired. Choose the file again.")
     with db.conn() as c:
         try:
-            result = IMPORTERS[body.kind].run(c, path, mapping=body.mapping, sheet=body.sheet, source=body.filename)
+            kwargs = {"only_existing": body.only_existing} if body.kind == "companies" else {}
+            result = IMPORTERS[body.kind].run(c, path, mapping=body.mapping, sheet=body.sheet, source=body.filename, **kwargs)
         except ValueError as e:
             raise HTTPException(400, str(e))
         if body.kind == "companies":

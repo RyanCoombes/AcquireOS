@@ -116,3 +116,71 @@ def test_status_words():
     assert notes.map_status("Reject - field service") == "rejected"
     assert notes.map_status("Shortlist") == "approach"
     assert notes.map_status("") is None
+
+
+def test_bulk_file_refresh_records_changes(loaded):
+    c = loaded
+    pv = companies.preview(FIX / "ch_bulk_update.csv")
+    assert pv["mapping"]["company_number"].strip() == "CompanyNumber"
+    assert isinstance(pv["mapping"]["sic"], list) and len(pv["mapping"]["sic"]) == 4
+    assert isinstance(pv["mapping"]["address"], list)
+    r = companies.run(c, FIX / "ch_bulk_update.csv", only_existing=True)
+    assert r["rows_ok"] == 3 and r["rows_skipped"] == 1  # Someone Else Ltd ignored
+    assert c.execute("select 1 from company where company_number='01234567'").fetchone() is None
+    ch = {(x["company_number"], x["kind"]): x for x in c.execute("select * from company_change")}
+    assert ch[("01000006", "status")]["new_value"] == "dissolved"
+    assert ch[("01000002", "name")]["new_value"] == "SAMPLE DATA GROUP LTD"
+    assert ("01000002", "address") in ch
+    # new accounts filed (date only in the bulk file), recorded once
+    assert ch[("01000001", "accounts")]["new_value"] == "2027-03-31"
+    companies.run(c, FIX / "ch_bulk_update.csv", only_existing=True)
+    assert c.execute("select count(*) as n from company_change").fetchone()["n"] == len(ch)
+    co = c.execute("select * from company where company_number='01000006'").fetchone()
+    assert co["status"] == "dissolved" and co["dissolution_date"] == date(2026, 10, 1)
+    assert co["status_changed_at"] is not None
+    # unchanged SIC codes (same set) are not recorded as a change
+    assert ("01000001", "sic") not in ch
+
+
+def test_new_accounts_recorded(loaded):
+    import csv, tempfile
+    from pathlib import Path
+
+    c = loaded
+    rows = list(csv.DictReader((FIX / "ranked_sample.csv").open()))
+    rows[0]["accounts_made_up_to"] = "2027-03-31"
+    rows[0]["employees"] = "41"
+    p = Path(tempfile.mkdtemp()) / "update.csv"
+    with p.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=rows[0].keys()); w.writeheader(); w.writerows(rows[:1])
+    companies.run(c, p)
+    kinds = {x["kind"]: x for x in c.execute("select * from company_change where company_number='01000001'")}
+    assert kinds["accounts"]["new_value"] == "2027-03-31"
+    assert kinds["staff"]["old_value"] == "34" and kinds["staff"]["new_value"] == "41"
+
+
+def test_valuation():
+    from acquireos import valuation
+
+    a = valuation.assumptions({})
+    v = valuation.value({"revenue_low": 2_000_000, "revenue_high": 4_000_000, "revenue_basis": "estimated"}, a)
+    assert v["ebitda_low"] == 160_000 and v["ebitda_high"] == 600_000
+    assert v["value_low"] == 480_000 and v["value_high"] == 3_000_000
+    assert v["basis"] == "estimated" and len(v["steps"]) == 2
+    f = valuation.value({"operating_profit": 300_000, "revenue_low": 1, "cash": 50_000}, a)
+    assert f["basis"] == "filed" and f["value_low"] == 900_000 and "Cash" in f["steps"][-1]
+    o = valuation.assumptions({}, {"multiple_high": 6})
+    assert o["multiple_high"] == 6.0 and o["multiple_low"] == 3.0
+    assert valuation.value({}, a)["value_low"] is None
+
+
+def test_zipped_bulk_file_streams(loaded, tmp_path):
+    import zipfile
+
+    z = tmp_path / "BasicCompanyDataAsOneFile-2026-11-01.zip"
+    with zipfile.ZipFile(z, "w") as zf:
+        zf.write(FIX / "ch_bulk_update.csv", "BasicCompanyDataAsOneFile-2026-11-01.csv")
+    pv = companies.preview(z)
+    assert pv["row_count"] is None and len(pv["sample"]) == 4
+    r = companies.run(loaded, z, only_existing=True)
+    assert r["rows_in"] == 4 and r["rows_ok"] == 3

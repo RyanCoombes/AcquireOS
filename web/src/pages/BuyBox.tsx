@@ -97,6 +97,21 @@ export default function BuyBox() {
       </table>
 
       <section>
+        <h2>Valuation assumptions</h2>
+        <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}>
+          Used for the indicative value on every company. Where filed operating profit exists it is used directly;
+          otherwise profit is revenue × margin. Value is profit × multiple. You can override these on any single company.
+        </p>
+        <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
+          <dt>Profit margin</dt>
+          <dd className="range">{n(["valuation", "margin_low"], { step: 1 })}<span className="faint">to</span>{n(["valuation", "margin_high"], { step: 1 })}<span className="faint">% of revenue</span></dd>
+          <dt>EBITDA multiple</dt>
+          <dd className="range">{n(["valuation", "multiple_low"], { step: 0.25 })}<span className="faint">to</span>{n(["valuation", "multiple_high"], { step: 0.25 })}<span className="faint">times</span></dd>
+        </dl>
+        <p className="faint small">Small UK IT services and software businesses often trade at roughly 3 to 6 times EBITDA, higher with strong recurring revenue. Treat this as a starting point and replace it with real deal evidence as you gather it.</p>
+      </section>
+
+      <section>
         <h2>Exclusions</h2>
         <p className="muted" style={{ marginTop: -4 }}>Excluded companies drop out of the list (tick “Show excluded” on Targets to see them, with the reason).</p>
         <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>

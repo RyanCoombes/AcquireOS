@@ -9,6 +9,7 @@ import Reports from "./pages/Reports";
 import Connections from "./pages/Connections";
 import BuyBox from "./pages/BuyBox";
 import Import from "./pages/Import";
+import Changes from "./pages/Changes";
 
 function TopBar() {
   const nav = useNavigate();
@@ -31,6 +32,7 @@ function TopBar() {
       <nav className="tabs">
         <NavLink to="/" end>Targets</NavLink>
         <NavLink to="/pipeline">Pipeline</NavLink>
+        <NavLink to="/changes">Changes</NavLink>
         <NavLink to="/connections">Connections</NavLink>
         <NavLink to="/reports">Reports</NavLink>
         <NavLink to="/buy-box">Buy box</NavLink>
@@ -59,6 +61,7 @@ function App() {
           <Route path="/" element={<Targets />} />
           <Route path="/c/:num" element={<Company />} />
           <Route path="/pipeline" element={<Pipeline />} />
+          <Route path="/changes" element={<Changes />} />
           <Route path="/connections" element={<Connections />} />
           <Route path="/connections/:num" element={<Connections />} />
           <Route path="/reports" element={<Reports />} />

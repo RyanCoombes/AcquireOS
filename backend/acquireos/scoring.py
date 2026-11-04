@@ -19,6 +19,7 @@ DEFAULT_CRITERIA = {
     "net_asset_growth": {"weight": 5},
     "sic": {"weight": 5, "preferred": ["62012", "62020", "62030", "62090", "63110", "63120", "58290", "58210"]},
     "regions": [],
+    "valuation": {"margin_low": 8.0, "margin_high": 15.0, "multiple_low": 3.0, "multiple_high": 5.0},
     "exclude": {
         "statuses": ["dissolved", "liquidation", "administration", "receivership", "converted-closed"],
         "tiers": ["Dormant"],
@@ -187,7 +188,7 @@ def score_company(c: dict, criteria: dict, today: date | None = None) -> dict:
 
 FACTS_SQL = """
 with latest as (
-    select distinct on (company_number) company_number, employees, net_assets, period_end
+    select distinct on (company_number) company_number, employees, net_assets, period_end, operating_profit, cash
     from financial_period where not period_inferred
     order by company_number, period_end desc
 ), prev as (
@@ -200,7 +201,7 @@ with latest as (
 )
 select c.company_number, c.name, c.status, c.review_tier, c.incorporation_date, c.sic_codes,
        c.nature_of_business, c.region, c.address_flag,
-       l.employees, l.net_assets, p.net_assets as net_assets_prev,
+       l.employees, l.net_assets, l.operating_profit, l.cash, p.net_assets as net_assets_prev,
        e.revenue_low, e.revenue_high, e.basis as revenue_basis,
        o.ownership_type, o.flags as ownership_flags, o.oldest_birth_year,
        rt.txt as research_text
@@ -221,7 +222,7 @@ def load_facts(conn, company_number: str | None = None) -> list[dict]:
     out = []
     for r in rows:
         r = dict(r)
-        for k in ("net_assets", "net_assets_prev", "revenue_low", "revenue_high"):
+        for k in ("net_assets", "net_assets_prev", "revenue_low", "revenue_high", "operating_profit", "cash"):
             if r.get(k) is not None:
                 r[k] = float(r[k])
         out.append(r)
@@ -247,18 +248,26 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
     today = date.today()
     if company_number is None:
         conn.execute("delete from score where buy_box_id = %s", (bb["id"],))
+    from . import valuation
+
+    va = valuation.assumptions(bb["criteria"])
     with conn.cursor() as cur:
         rows = []
         for f in facts:
             s = score_company(f, bb["criteria"], today)
+            v = valuation.value(f, va)
             rows.append((bb["id"], f["company_number"], s["score"], s["coverage"], s["excluded"],
-                         s["exclusion"], json.dumps(s["reasons"])))
+                         s["exclusion"], json.dumps(s["reasons"]), v["ebitda_low"], v["ebitda_high"],
+                         v["value_low"], v["value_high"], v["basis"]))
         cur.executemany(
-            """insert into score (buy_box_id, company_number, score, coverage, excluded, exclusion, reasons)
-               values (%s, %s, %s, %s, %s, %s, %s)
+            """insert into score (buy_box_id, company_number, score, coverage, excluded, exclusion, reasons,
+                   ebitda_low, ebitda_high, value_low, value_high, value_basis)
+               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                on conflict (buy_box_id, company_number) do update set score = excluded.score,
                  coverage = excluded.coverage, excluded = excluded.excluded, exclusion = excluded.exclusion,
-                 reasons = excluded.reasons, computed_at = now()""",
+                 reasons = excluded.reasons, ebitda_low = excluded.ebitda_low, ebitda_high = excluded.ebitda_high,
+                 value_low = excluded.value_low, value_high = excluded.value_high, value_basis = excluded.value_basis,
+                 computed_at = now()""",
             rows,
         )
     return len(facts)

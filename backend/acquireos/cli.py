@@ -20,9 +20,11 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("migrate", help="Create or update the database tables")
 
-    p = sub.add_parser("import-companies", help="Import a company list (CSV or Excel)")
+    p = sub.add_parser("import-companies", help="Import or refresh a company list (CSV or Excel)")
     p.add_argument("files", nargs="+", type=Path)
     p.add_argument("--sheet")
+    p.add_argument("--only-existing", action="store_true",
+                   help="Only update companies already in your list (use with the full Companies House bulk file)")
 
     p = sub.add_parser("import-notes", help="Import your notes, ratings and decisions (CSV or Excel)")
     p.add_argument("files", nargs="+", type=Path)
@@ -53,7 +55,7 @@ def main(argv=None):
     with db.conn() as c:
         if a.cmd == "import-companies":
             for f in a.files:
-                _print(f, companies.run(c, f, sheet=a.sheet))
+                _print(f, companies.run(c, f, sheet=a.sheet, only_existing=a.only_existing))
             rebuild(c)
         elif a.cmd == "import-notes":
             for f in a.files:
@@ -70,6 +72,8 @@ def main(argv=None):
             _print(d / "companies.csv", companies.run(c, d / "companies.csv", source="demo data"))
             _print(d / "psc.jsonl", psc.run(c, [d / "psc.jsonl"]))
             _print(d / "notes.csv", notes.run(c, d / "notes.csv", source="demo notes"))
+            _print(d / "companies_update.csv", companies.run(c, d / "companies_update.csv", source="demo refresh",
+                                                             only_existing=True))
         elif a.cmd == "rebuild":
             print(rebuild(c))
         n = scoring.rescore(c)

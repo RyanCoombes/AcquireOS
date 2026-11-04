@@ -7,7 +7,8 @@ export interface Meta {
   address_flags: Record<string, string>;
   regions: string[];
   tiers: string[];
-  counts: { companies: number; in_scope: number; tracked: number; owner_records: number; last_import: string | null };
+  counts: { companies: number; in_scope: number; tracked: number; owner_records: number; last_import: string | null; changed_30d: number };
+  company_statuses: string[];
   buy_box: { id: number; name: string };
 }
 
@@ -38,7 +39,27 @@ export interface Row {
   rating: number | null;
   next_action: string | null;
   next_action_on: string | null;
+  value_low: string | null;
+  value_high: string | null;
+  value_basis: string | null;
+  last_change: string | null;
+  last_kinds: string[] | null;
 }
+
+export interface Change {
+  id: number; company_number: string; kind: string; field: string | null; old_value: string | null;
+  new_value: string | null; detected_at: string; filename?: string | null;
+  name?: string; company_status?: string | null; status?: Status; score?: string | null; excluded?: boolean | null;
+}
+
+export interface Valuation {
+  ebitda_low: number | null; ebitda_high: number | null; value_low: number | null; value_high: number | null;
+  basis: string | null; steps: string[]; cash: number | string | null;
+  assumptions: Assumptions; defaults: Assumptions; override: Partial<Assumptions>;
+}
+export interface Assumptions { margin_low: number; margin_high: number; multiple_low: number; multiple_high: number }
+
+export interface SavedSearch { id: number; name: string; params: Record<string, string> }
 
 export interface Reason { key: string; label: string; points: number; max: number; status: "good" | "partial" | "miss" | "unknown"; text: string }
 
@@ -61,7 +82,7 @@ export interface CompanyDetail {
     incorporation_date: string | null; sic_codes: string[]; nature_of_business: string | null;
     registered_address: string | null; postcode: string | null; address_flag: string | null;
     region: string | null; review_tier: string | null; extra: Record<string, unknown>; source: string | null;
-    updated_at: string;
+    updated_at: string; dissolution_date: string | null; status_changed_at: string | null; last_accounts_date: string | null;
   };
   financials: {
     period_end: string; period_inferred: boolean; employees: number | null; turnover: string | null;
@@ -80,7 +101,9 @@ export interface CompanyDetail {
   }[];
   links: Link[];
   score: { score: string; coverage: string; excluded: boolean; exclusion: string | null; reasons: Reason[] } | null;
-  state: { status: Status; rating: number | null; tags: string[]; next_action?: string | null; next_action_on?: string | null };
+  state: { status: Status; rating: number | null; tags: string[]; next_action?: string | null; next_action_on?: string | null; valuation?: Partial<Assumptions> };
+  changes: Change[];
+  valuation: Valuation;
   notes: Note[];
   research: { id: number; kind: string; content: string; source_url: string | null; source_label: string | null; retrieved_at: string }[];
   outreach: Outreach[];
@@ -130,15 +153,21 @@ export const api = {
     return req<Preview>("/api/import/preview", { method: "POST", body: fd });
   },
   commit: (body: Record<string, unknown>) =>
-    req<{ rows_in: number; rows_ok: number; rows_skipped: number; notes_added?: number; messages: string[] }>(
+    req<{ rows_in: number; rows_ok: number; rows_skipped: number; notes_added?: number; changes?: number; messages: string[] }>(
       "/api/import/commit", { method: "POST", body: JSON.stringify(body) }),
   imports: () => req<any[]>("/api/imports"),
+  changes: (params: Record<string, string>) =>
+    req<{ rows: Change[]; summary: { kind: string; n: number }[] }>("/api/changes?" + new URLSearchParams(params)),
+  searches: () => req<SavedSearch[]>("/api/searches"),
+  saveSearch: (name: string, params: Record<string, string>) =>
+    req<SavedSearch>("/api/searches", { method: "POST", body: JSON.stringify({ name, params }) }),
+  deleteSearch: (id: number) => req(`/api/searches/${id}`, { method: "DELETE" }),
 };
 
 export interface GNode { id: string; name: string; depth: number; in_list: boolean }
 export interface GEdge { source: string; target: string; kind: Link["kind"]; via: string; confidence: Link["confidence"]; evidence: string }
 
 export interface Preview {
-  headers: string[]; mapping: Record<string, any>; row_count: number; sample: Record<string, unknown>[];
+  headers: string[]; mapping: Record<string, any>; row_count: number | null; sample: Record<string, unknown>[];
   fields: string[]; problems: string[]; token: string; suffix: string; filename: string; sheets: string[]; unmapped?: string[];
 }

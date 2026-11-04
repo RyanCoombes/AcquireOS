@@ -11,22 +11,23 @@ from datetime import date
 from pathlib import Path
 
 from .. import normalise as n
-from .tables import detect, read_rows
+from .tables import detect, head_rows, open_table
 
 ALIASES: dict[str, list[str]] = {
     "company_number": ["company_number", "companynumber", "company_no", "crn", "number", "~company_number", "~company_no"],
     "name": ["company_name", "companyname", "name", "~company_name"],
-    "status": ["company_status", "status"],
-    "company_type": ["company_type", "type"],
+    "status": ["company_status", "companystatus", "status"],
+    "dissolution_date": ["dissolution_date", "dissolutiondate", "date_of_cessation"],
+    "company_type": ["company_type", "companycategory", "company_category", "type"],
     "company_subtype": ["company_subtype", "subtype"],
-    "incorporation_date": ["incorporation_date", "date_of_creation", "incorporated", "~incorporat"],
+    "incorporation_date": ["incorporation_date", "incorporationdate", "date_of_creation", "incorporated", "~incorporat"],
     "sic": ["nature_of_business", "sic_codes", "sic", "siccode_sictext_1", "~sic"],
     "address": ["registered_office_address", "registered_address", "address", "~registered_office"],
-    "postcode": ["postcode", "post_code", "registeredaddress_postcode"],
+    "postcode": ["postcode", "post_code", "regaddress_postcode", "registeredaddress_postcode"],
     "wales_flag": ["wales_flag", "in_wales", "wales"],
     "region": ["region"],
     "review_tier": ["review_tier", "tier"],
-    "accounts_made_up_to": ["accounts_made_up_to", "period_end", "accounts_date", "last_accounts"],
+    "accounts_made_up_to": ["accounts_made_up_to", "accounts_lastmadeupdate", "period_end", "accounts_date", "last_accounts"],
     "employees": ["employees", "staff", "headcount", "average_employees"],
     "employees_prev": ["employees_prev", "staff_prev", "employees_previous"],
     "turnover": ["turnover", "revenue"],
@@ -46,44 +47,113 @@ ALIASES: dict[str, list[str]] = {
 REVENUE_PER_HEAD = (80_000, 150_000)
 
 
-def preview(path: Path, sheet: str | None = None) -> dict:
-    headers, rows = read_rows(path, sheet)
+MULTI = {
+    # field: header prefixes whose columns are joined, in order
+    "sic": ["siccode_sictext_"],
+    "address": ["regaddress_careof", "regaddress_pobox", "regaddress_addressline1", "regaddress_addressline2",
+                "regaddress_posttown", "regaddress_county", "regaddress_postcode"],
+}
+
+
+def detect_mapping(headers: list[str]) -> dict:
+    """Single columns by alias, plus the bulk file's split columns as lists."""
+    from .tables import norm_header
+
     mapping = detect(headers, ALIASES)
+    normed = {h: norm_header(h) for h in headers}
+    for field, prefixes in MULTI.items():
+        cols = [h for p in prefixes for h, nh in normed.items() if nh.startswith(p)]
+        if len(cols) > 1 and (not mapping.get(field) or mapping[field] in cols):
+            mapping[field] = cols
+    return mapping
+
+
+def preview(path: Path, sheet: str | None = None) -> dict:
+    headers, rows, count = head_rows(path, sheet)
+    mapping = detect_mapping(headers)
     return {
         "headers": headers,
         "mapping": mapping,
-        "row_count": len(rows),
+        "row_count": count,
         "sample": rows[:5],
-        "unmapped": [h for h in headers if h not in mapping.values()],
+        "unmapped": [h for h in headers if h not in _used(mapping)],
         "fields": list(ALIASES.keys()),
         "problems": [] if mapping.get("company_number") else ["No company number column found."],
     }
 
 
-def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None, source: str | None = None) -> dict:
-    headers, rows = read_rows(path, sheet)
-    mapping = mapping or detect(headers, ALIASES)
+def _used(mapping: dict) -> set[str]:
+    out = set()
+    for v in mapping.values():
+        if isinstance(v, list):
+            out.update(v)
+        elif v:
+            out.add(v)
+    return out
+
+
+TRACKED = {"name": "name", "status": "status", "registered_address": "address", "sic_codes": "sic"}
+
+
+def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None, source: str | None = None,
+        only_existing: bool = False) -> dict:
+    """Import or refresh companies.
+
+    only_existing: update companies already in the database and ignore the
+    rest (use this with the full Companies House bulk file).
+    Differences from what was stored before are recorded in company_change.
+    """
+    headers, rows = open_table(path, sheet)
+    mapping = mapping or detect_mapping(headers)
     if not mapping.get("company_number"):
         raise ValueError("No company number column found. Map one before importing.")
     source = source or path.name
-    mapped_headers = {h for h in mapping.values() if h}
+    mapped_headers = _used(mapping)
     run_id = conn.execute(
-        "insert into import_run (kind, filename, rows_in) values ('companies', %s, %s) returning id",
-        (source, len(rows)),
+        "insert into import_run (kind, filename) values ('companies', %s) returning id", (source,),
     ).fetchone()["id"]
+
+    before = {
+        r["company_number"]: r
+        for r in conn.execute(
+            "select company_number, name, status, registered_address, address_key, sic_codes from company"
+        )
+    }
+    latest_period = {
+        r["company_number"]: r
+        for r in conn.execute(
+            """select c.company_number,
+                      greatest(c.last_accounts_date, fp.period_end) as period_end, fp.employees
+               from company c
+               left join lateral (
+                   select period_end, employees from financial_period f
+                   where f.company_number = c.company_number and not f.period_inferred
+                   order by period_end desc limit 1) fp on true
+               where c.last_accounts_date is not null or fp.period_end is not null"""
+        )
+    }
+    first_import = not before
 
     def get(row, field):
         h = mapping.get(field)
+        if isinstance(h, list):
+            parts = [str(row.get(x)).strip() for x in h if row.get(x) not in (None, "")]
+            return ", ".join(p for p in parts if p) or None
         return row.get(h) if h else None
 
-    ok, skipped, messages = 0, 0, []
+    ok, skipped, not_in_list, messages, changes = 0, 0, 0, [], 0
+    rows_in = 0
     for i, row in enumerate(rows, start=2):
+        rows_in += 1
         num = n.company_number(get(row, "company_number"))
         name = n.text(get(row, "name"))
         if not num:
             skipped += 1
             if len(messages) < 50:
                 messages.append(f"Row {i}: no company number, skipped.")
+            continue
+        if only_existing and num not in before:
+            not_in_list += 1
             continue
         address = n.text(get(row, "address"))
         pc = n.text(get(row, "postcode")) or n.postcode(address)
@@ -95,19 +165,51 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
         extra = {
             h: _jsonable(v) for h, v in row.items() if h not in mapped_headers and v not in (None, "")
         }
+        status = (n.text(get(row, "status")) or "").lower() or None
+        new = {
+            "name": name,
+            "status": status,
+            "registered_address": address,
+            "sic_codes": n.sic_codes(get(row, "sic")),
+        }
+        old = before.get(num)
+        status_changed = False
+        if old is None and not first_import:
+            _change(conn, num, run_id, "new_company", None, None, "Added to your list")
+            changes += 1
+        elif old is not None:
+            for col, kind in TRACKED.items():
+                nv, ov = new[col], old[col]
+                if not nv:
+                    continue
+                if col == "registered_address":
+                    if n.address_key(nv) == old["address_key"]:
+                        continue
+                elif col == "sic_codes":
+                    if sorted(nv) == sorted(ov or []):
+                        continue
+                    nv, ov = ", ".join(nv), ", ".join(ov or [])
+                elif (ov or "").strip().lower() == str(nv).strip().lower():
+                    continue
+                _change(conn, num, run_id, kind, col, ov, nv)
+                changes += 1
+                status_changed = status_changed or col == "status"
+
         conn.execute(
             """
             insert into company (company_number, name, status, company_type, company_subtype,
-                incorporation_date, sic_codes, nature_of_business, registered_address, postcode,
-                address_key, address_flag, region, review_tier, extra, source)
-            values (%(num)s, %(name)s, %(status)s, %(type)s, %(subtype)s, %(inc)s, %(sic)s,
-                %(nob)s, %(addr)s, %(pc)s, %(akey)s, %(flag)s, %(region)s, %(tier)s, %(extra)s, %(source)s)
+                incorporation_date, dissolution_date, sic_codes, nature_of_business, registered_address, postcode,
+                address_key, address_flag, region, review_tier, extra, source, last_accounts_date)
+            values (%(num)s, %(name)s, %(status)s, %(type)s, %(subtype)s, %(inc)s, %(dis)s, %(sic)s,
+                %(nob)s, %(addr)s, %(pc)s, %(akey)s, %(flag)s, %(region)s, %(tier)s, %(extra)s, %(source)s, %(acc)s)
             on conflict (company_number) do update set
                 name = coalesce(excluded.name, company.name),
                 status = coalesce(excluded.status, company.status),
+                status_changed_at = case when %(status_changed)s then now() else company.status_changed_at end,
                 company_type = coalesce(excluded.company_type, company.company_type),
                 company_subtype = coalesce(excluded.company_subtype, company.company_subtype),
                 incorporation_date = coalesce(excluded.incorporation_date, company.incorporation_date),
+                dissolution_date = coalesce(excluded.dissolution_date, company.dissolution_date),
                 sic_codes = case when cardinality(excluded.sic_codes) > 0 then excluded.sic_codes else company.sic_codes end,
                 nature_of_business = coalesce(excluded.nature_of_business, company.nature_of_business),
                 registered_address = coalesce(excluded.registered_address, company.registered_address),
@@ -118,16 +220,19 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
                 review_tier = coalesce(excluded.review_tier, company.review_tier),
                 extra = company.extra || excluded.extra,
                 source = excluded.source,
+                last_accounts_date = greatest(company.last_accounts_date, excluded.last_accounts_date),
                 updated_at = now()
             """,
             {
                 "num": num,
                 "name": name or num,
-                "status": (n.text(get(row, "status")) or "").lower() or None,
+                "status": status,
+                "status_changed": status_changed,
                 "type": n.text(get(row, "company_type")),
                 "subtype": n.text(get(row, "company_subtype")),
                 "inc": n.parse_date(get(row, "incorporation_date")),
-                "sic": n.sic_codes(get(row, "sic")),
+                "dis": n.parse_date(get(row, "dissolution_date")),
+                "sic": new["sic_codes"],
                 "nob": n.text(get(row, "sic")),
                 "addr": address,
                 "pc": pc,
@@ -137,21 +242,35 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
                 "tier": n.text(get(row, "review_tier")),
                 "extra": json.dumps(extra),
                 "source": source,
+                "acc": n.parse_date(get(row, "accounts_made_up_to")),
             },
         )
-        _financials(conn, num, row, get, source)
+        changes += _financials(conn, num, row, get, source, latest_period.get(num) if old else None, run_id)
         ok += 1
 
+    if not_in_list:
+        messages.insert(0, f"{not_in_list:,} rows were for companies not in your list and were ignored.")
     conn.execute(
-        "update import_run set rows_ok=%s, rows_skipped=%s, messages=%s, finished_at=now() where id=%s",
-        (ok, skipped, json.dumps(messages), run_id),
+        "update import_run set rows_in=%s, rows_ok=%s, rows_skipped=%s, messages=%s, finished_at=now() where id=%s",
+        (rows_in, ok, skipped + not_in_list, json.dumps(messages), run_id),
     )
     refresh_estimates(conn)
     flag_mass_addresses(conn)
-    return {"run_id": run_id, "rows_in": len(rows), "rows_ok": ok, "rows_skipped": skipped, "messages": messages}
+    return {"run_id": run_id, "rows_in": rows_in, "rows_ok": ok, "rows_skipped": skipped + not_in_list,
+            "changes": changes, "messages": messages}
 
 
-def _financials(conn, num, row, get, source):
+def _change(conn, num, run_id, kind, field, old, new):
+    conn.execute(
+        """insert into company_change (company_number, import_run_id, kind, field, old_value, new_value)
+           values (%s, %s, %s, %s, %s, %s)""",
+        (num, run_id, kind, field, None if old is None else str(old), None if new is None else str(new)),
+    )
+
+
+def _financials(conn, num, row, get, source, latest=None, run_id=None) -> int:
+    """Store the period(s) in this row. Returns the number of changes noted."""
+    noted = 0
     period = n.parse_date(get(row, "accounts_made_up_to"))
     values = {
         "employees": n.integer(get(row, "employees")),
@@ -163,6 +282,12 @@ def _financials(conn, num, row, get, source):
         "debtors": n.number(get(row, "debtors")),
         "dividends": n.number(get(row, "dividends")),
     }
+    if period and latest and period > latest["period_end"]:
+        _change(conn, num, run_id, "accounts", "period_end", latest["period_end"], period)
+        noted += 1
+        if values["employees"] is not None and latest["employees"] is not None and values["employees"] != latest["employees"]:
+            _change(conn, num, run_id, "staff", "employees", latest["employees"], values["employees"])
+            noted += 1
     if period and any(v is not None for v in values.values()):
         _upsert_period(conn, num, period, False, values, source)
     prev = {
@@ -187,6 +312,7 @@ def _financials(conn, num, row, get, source):
                  revenue_high=excluded.revenue_high, basis=excluded.basis, method=excluded.method, updated_at=now()""",
             (num, low, high, "Imported estimate from your search file"),
         )
+    return noted
 
 
 def _upsert_period(conn, num, period, inferred, values, source):

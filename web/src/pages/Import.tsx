@@ -7,7 +7,7 @@ import { dateTime } from "../format";
 const KINDS = {
   companies: {
     title: "Company data",
-    text: "Your ranked Companies House file, the audit workbook, or any CSV or Excel list with a company number column. Re-importing updates figures and never touches your notes.",
+    text: "Your ranked Companies House file, the audit workbook, a Companies House bulk extract, or any CSV or Excel list with a company number column. Re-importing updates figures, records what changed (new accounts, dissolved, renamed, moved) and never touches your notes.",
   },
   notes: {
     title: "My notes and decisions",
@@ -35,6 +35,7 @@ export default function Import() {
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
   const [over, setOver] = useState(false);
+  const [onlyExisting, setOnlyExisting] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const history = useAsync(() => api.imports(), [result]);
 
@@ -50,7 +51,7 @@ export default function Import() {
     if (!pv) return;
     setBusy(true); setErr(null);
     try {
-      setResult(await api.commit({ kind, token: pv.token, suffix: pv.suffix, filename: pv.filename, mapping, sheet }));
+      setResult(await api.commit({ kind, token: pv.token, suffix: pv.suffix, filename: pv.filename, mapping, sheet, only_existing: onlyExisting }));
       setPv(null); setFile(null);
     } catch (e: any) { setErr(e.message); }
     setBusy(false);
@@ -79,7 +80,7 @@ export default function Import() {
              onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
              onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files[0]; if (f) load(f); }}>
           {busy ? "Reading…" : file ? <><b>{file.name}</b> · choose a different file</> : <><b>Drop a CSV or Excel file here</b>, or click to choose</>}
-          <input ref={input} type="file" accept=".csv,.xlsx,.xlsm,.txt" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) load(f); e.target.value = ""; }} />
+          <input ref={input} type="file" accept=".csv,.xlsx,.xlsm,.txt,.zip" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) load(f); e.target.value = ""; }} />
         </div>
         <ErrorLine error={err} />
       </section>
@@ -88,8 +89,9 @@ export default function Import() {
         <div className="callout">
           <b>Imported {result.rows_ok.toLocaleString("en-GB")} of {result.rows_in.toLocaleString("en-GB")} rows</b>
           {result.notes_added !== undefined ? `, ${result.notes_added} notes added` : ""}
-          {result.rows_skipped ? `, ${result.rows_skipped} skipped` : ""}. Ownership, links and scores have been recalculated.{" "}
-          <Link to="/">See targets</Link>
+          {result.rows_skipped ? `, ${result.rows_skipped.toLocaleString("en-GB")} skipped` : ""}
+          {result.changes !== undefined ? `, ${result.changes.toLocaleString("en-GB")} changes found` : ""}. Ownership, links and scores have been recalculated.{" "}
+          {result.changes ? <Link to="/changes?days=7">See what changed</Link> : <Link to="/">See targets</Link>}
           {result.messages?.length > 0 && (
             <ul className="small" style={{ margin: "8px 0 0", paddingLeft: 18 }}>{result.messages.slice(0, 8).map((m: string, i: number) => <li key={i}>{m}</li>)}</ul>
           )}
@@ -99,7 +101,7 @@ export default function Import() {
       {pv && (
         <section>
           <div className="sechead">
-            <h2>{pv.filename}: {pv.row_count.toLocaleString("en-GB")} rows</h2>
+            <h2>{pv.filename}: {pv.row_count === null ? "large file" : `${pv.row_count.toLocaleString("en-GB")} rows`}</h2>
             {pv.sheets.length > 1 && (
               <span className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <span className="label">Sheet</span>
@@ -109,7 +111,15 @@ export default function Import() {
                 </select>
               </span>
             )}
-            <span className="right"><button className="btn primary" disabled={busy || !mapping.company_number} onClick={() => commit(sheet)}>{busy ? "Importing…" : "Import"}</button></span>
+            <span className="right" style={{ display: "flex", gap: 16, alignItems: "center" }}>
+              {kind === "companies" && (
+                <label className="check" title="Use this with the full Companies House bulk file">
+                  <input type="checkbox" checked={onlyExisting} onChange={(e) => setOnlyExisting(e.target.checked)} />
+                  Only update companies already in my list
+                </label>
+              )}
+              <button className="btn primary" disabled={busy || !mapping.company_number} onClick={() => commit(sheet)}>{busy ? "Importing…" : "Import"}</button>
+            </span>
           </div>
           {pv.problems.map((p) => <div key={p} className="callout red">{p} Choose the right column below.</div>)}
           <table className="mapping">
@@ -119,12 +129,16 @@ export default function Import() {
                 <tr key={f}>
                   <td>{FIELD_LABELS[f] ?? f}{f === "company_number" && <span className="neg"> *</span>}</td>
                   <td>
-                    <select value={mapping[f] ?? ""} onChange={(e) => setMapping({ ...mapping, [f]: e.target.value || null })}>
-                      <option value="">Not in this file</option>
-                      {pv.headers.map((h) => <option key={h} value={h}>{h}</option>)}
-                    </select>
+                    {Array.isArray(mapping[f]) ? (
+                      <span className="small">Joined from {mapping[f].length} columns <button className="btn quiet" onClick={() => setMapping({ ...mapping, [f]: mapping[f][0] })}>Use one</button></span>
+                    ) : (
+                      <select value={mapping[f] ?? ""} onChange={(e) => setMapping({ ...mapping, [f]: e.target.value || null })}>
+                        <option value="">Not in this file</option>
+                        {pv.headers.map((h) => <option key={h} value={h}>{h}</option>)}
+                      </select>
+                    )}
                   </td>
-                  <td className="muted small">{mapping[f] ? pv.sample.slice(0, 3).map((r) => String(r[mapping[f]] ?? "")).filter(Boolean).join(" · ") : ""}</td>
+                  <td className="muted small">{mapping[f] ? pv.sample.slice(0, 3).map((r) => Array.isArray(mapping[f]) ? mapping[f].map((h: string) => r[h]).filter(Boolean).join(", ") : String(r[mapping[f]] ?? "")).filter(Boolean).join(" · ") : ""}</td>
                 </tr>
               ))}
               {kind === "notes" && (
@@ -150,13 +164,23 @@ export default function Import() {
       )}
 
       <section>
+        <h2>Monthly refresh from Companies House</h2>
+        <p className="muted" style={{ maxWidth: "75ch" }}>
+          The free <a href="https://download.companieshouse.gov.uk/en_output.html" target="_blank" rel="noreferrer">basic company data file ↗</a> covers
+          every UK company and is updated monthly. It is too large for the browser, so put it in the <code>data</code> folder and run the command
+          below. It updates only companies already in your list and records what changed, including dissolutions and new accounts.
+        </p>
+        <pre className="cmd">docker exec -it acquireos sh -c 'acquireos import-companies --only-existing /data/BasicCompanyDataAsOneFile-*.zip'</pre>
+      </section>
+
+      <section>
         <h2>Owners: Companies House PSC snapshot</h2>
         <p className="muted" style={{ maxWidth: "75ch" }}>
           The free owner (PSC) snapshot is several gigabytes, too large to upload through a browser. Download it from{" "}
           <a href="https://download.companieshouse.gov.uk/en_pscdata.html" target="_blank" rel="noreferrer">Companies House ↗</a>,
           put the zip in the <code>data</code> folder on the server, then run:
         </p>
-        <pre style={{ background: "var(--paper-2)", padding: "10px 14px", overflowX: "auto", borderLeft: "3px solid var(--ink)" }}>
+        <pre className="cmd">
 docker exec -it acquireos sh -c 'acquireos import-psc /data/persons-with-significant-control-snapshot*.zip'</pre>
         <p className="muted small">It keeps only companies in your list, then follows parent companies to find the people behind them.</p>
       </section>

@@ -128,6 +128,33 @@ def generate(out: Path, n: int = 320, seed: int = 7):
     with (out / "companies.csv").open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(companies[0].keys()))
         w.writeheader(); w.writerows(companies)
+
+    # A later refresh: some companies file new accounts, some are dissolved,
+    # renamed or move office. Imported second, it produces change history.
+    upd = []
+    for c in rnd.sample(companies, 40):
+        c = dict(c)
+        roll = rnd.random()
+        if roll < 0.15:
+            c["company_status"] = rnd.choice(["dissolved", "liquidation", "active - proposal to strike off"])
+        elif roll < 0.65:
+            old = date.fromisoformat(c["accounts_made_up_to"])
+            c["accounts_made_up_to"] = date(old.year + 1, old.month, old.day).isoformat()
+            c["employees_prev"] = c["employees"]
+            c["employees"] = max(0, int(c["employees"]) + rnd.randint(-6, 8))
+            c["net_assets_prev"] = c["net_assets"]
+            c["net_assets"] = round(float(c["net_assets"]) * rnd.uniform(0.8, 1.3), -2)
+            c["est_revenue_low"] = c["employees"] * 80_000 if c["employees"] else ""
+            c["est_revenue_high"] = c["employees"] * 150_000 if c["employees"] else ""
+        elif roll < 0.8:
+            c["company_name"] = c["company_name"].replace(" LIMITED", " GROUP LIMITED")
+        else:
+            town, pc_out, _ = rnd.choice(TOWNS)
+            c["registered_office_address"] = f"{rnd.randint(1, 99)} New Street, {town}, {pc_out} 1AB"
+        upd.append(c)
+    with (out / "companies_update.csv").open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(companies[0].keys()))
+        w.writeheader(); w.writerows(upd)
     with (out / "psc.jsonl").open("w") as f:
         for p in psc:
             f.write(json.dumps(p) + "\n")

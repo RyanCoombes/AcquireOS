@@ -4,9 +4,19 @@ Acquisition research for UK private companies, built on free Companies House
 data. It turns your search files into a ranked, explained and trackable list
 of targets.
 
-- **Targets**: every company scored against your buy box, with filters for
-  staff, owner age, ownership type, region, tier and status. Keyboard: `/`
-  search, `j`/`k` move, `Enter` open.
+- **Targets**: three views (fits my buy box, all companies, changed
+  recently), filters for staff, owner age, ownership, region, status, score,
+  company status, SIC code, years trading, indicative value, changes and
+  flags, and **saved searches**. Keyboard: `/` search, `j`/`k` move,
+  `Enter` open.
+- **Changes**: every re-import is compared with what was stored before.
+  New accounts, staff changes, status changes (dissolved, liquidation,
+  proposal to strike off), renames, office moves, SIC changes and owner
+  changes are recorded, listed by date and marked in the targets list.
+- **Indicative value**: profit from filed operating profit, or revenue ×
+  margin; value = profit × multiple. Assumptions are set in the buy box and
+  can be overridden per company. A funding check works out debt cover for a
+  given price, equity, vendor loan and bank terms.
 - **Company page**: why it scored what it did (a reason for every point),
   financial history charts, owners traced through holding companies,
   connections to other companies, research with sources, and your own call:
@@ -94,11 +104,33 @@ Open **Import**, in this order:
 To try the app without your data: `acquireos demo` in the container console
 loads 320 invented companies.
 
+## Monthly refresh from Companies House
+
+Download the free [basic company data](https://download.companieshouse.gov.uk/en_output.html)
+zip (all UK companies, updated monthly) into `DATA_DIR` and run, in the
+container console:
+
+```bash
+acquireos import-companies --only-existing /data/BasicCompanyDataAsOneFile-*.zip
+```
+
+It streams the file (no need to unzip, and it never loads the whole thing
+into memory), updates only companies already in your list, and records what
+changed. Smaller CSV extracts can be uploaded on the Import page with “Only
+update companies already in my list” ticked. Note that the bulk file has
+accounts dates but no figures, so it flags new accounts without updating
+staff or net assets; re-import your accounts-derived file for those.
+
 ## What the scores and flags mean
 
 - **Score** is points earned ÷ points possible, out of 100. A criterion with
   no data scores nothing but is shown as "no data", not as a miss, and the
   **coverage** figure says how much of the score could be checked.
+- **Indicative value** is a screening estimate, not a valuation. Profit is
+  filed operating profit where available (without a depreciation add-back,
+  so understated), otherwise revenue × margin (default 8 to 15%). Value is
+  profit × multiple (default 3 to 5 times). Cash is shown separately and
+  debt is not netted off.
 - **Revenue** uses filed turnover when it exists, otherwise staff × £80k to
   £150k per head, and is labelled as an estimate.
 - **Prior-year figures** from the ranked file have no date of their own; they
@@ -137,12 +169,13 @@ Inside the container (`docker exec -it acquireos sh`):
 
 | Command | What it does |
 |---|---|
-| `acquireos import-companies FILE…` | Import company lists (CSV or Excel) |
+| `acquireos import-companies FILE…` | Import or refresh company lists (CSV, zipped CSV or Excel) |
+| `acquireos import-companies --only-existing FILE` | Refresh only companies already in your list |
 | `acquireos import-notes FILE…` | Import your notes and decisions |
 | `acquireos import-psc FILE` | Import owners from the PSC snapshot |
 | `acquireos preview companies FILE` | Show how a file's columns will be read |
 | `acquireos rebuild` | Recompute ownership, links and scores |
-| `acquireos demo` | Load fictional demo data |
+| `acquireos demo` | Load fictional demo data, including a later refresh so changes show |
 
 ## Backups
 
