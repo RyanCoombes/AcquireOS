@@ -174,13 +174,15 @@ def add_note(company_number: str, text: str) -> str:
                values (1, %s, %s, 'claude', %s) returning id, body, created_at""", (num, text.strip(), h)).fetchone())
 
 
-@server.tool(description="Change the user's pipeline status for a company (" + "|".join(STATUSES) + "), "
-                         "optionally with a next action. Only when the user asks you to.")
-def set_status(company_number: str, status: str, next_action: str | None = None) -> str:
+@server.tool(description="Move a company to a stage of the user's acquisition process (" + "|".join(STATUSES) + "; "
+                         "assess: new, watching, researching=Assessing, approach=Shortlisted; engage: contacted, in_talks, nda; "
+                         "deal: offer, heads (heads of terms), diligence, spa, completion; then handover; or passed/rejected). "
+                         "The move is logged with an optional note. Only when the user asks you to.")
+def set_status(company_number: str, status: str, next_action: str | None = None, note: str | None = None) -> str:
     if status not in STATUSES:
         return f"status must be one of {STATUSES}"
     num = company_number.strip().upper()
-    body: dict = {"status": status}
+    body: dict = {"status": status, "stage_note": note}
     if next_action:
         body["next_action"] = next_action
     return _j(_api().set_state(num, _api().StateIn(**body)))

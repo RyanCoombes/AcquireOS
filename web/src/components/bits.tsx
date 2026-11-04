@@ -3,8 +3,10 @@ import type { Status } from "../api";
 import { FLAGS, toNum } from "../format";
 
 export const STATUS_LABEL: Record<Status, string> = {
-  new: "New", watching: "Watching", researching: "Researching", approach: "To approach",
-  contacted: "Contacted", in_talks: "In talks", passed: "Passed", rejected: "Rejected",
+  new: "New", watching: "Watching", researching: "Assessing", approach: "Shortlisted",
+  contacted: "First contact", in_talks: "Getting to know", nda: "NDA and accounts", offer: "Indicative offer",
+  heads: "Heads of terms", diligence: "Due diligence", spa: "SPA and disclosure", completion: "Completion",
+  handover: "Handover", passed: "Passed", rejected: "Rejected",
 };
 
 export function StatusMark({ s }: { s: Status }) {

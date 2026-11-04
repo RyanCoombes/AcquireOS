@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, config, db, scoring, valuation
+from . import __version__, config, db, scoring, stages, valuation
 from .importers import companies as company_importer
 from .importers import notes as notes_importer
 from .importers.notes import STATUS_LABELS, STATUSES
@@ -100,7 +100,9 @@ def meta():
         company_statuses = [r["status"] for r in c.execute("select status, count(*) from company where status is not null group by 1 order by 2 desc")]
     return {
         "version": __version__,
-        "statuses": [{"value": s, "label": STATUS_LABELS[s]} for s in STATUSES],
+        "statuses": [{"value": s["value"], "label": s["label"], "phase": s["phase"]} for s in stages.as_json()],
+        "stages": stages.as_json(),
+        "phases": [{"value": k, "label": v} for k, v in stages.PHASES],
         "ownership_types": [{"value": k, "label": v} for k, v in TYPE_LABELS.items()],
         "address_flags": ADDRESS_FLAG_LABELS,
         "regions": regions,
@@ -287,13 +289,73 @@ def company(num: str):
         enr = c.execute("select * from enrichment where company_number = %s", (num,)).fetchone()
         issues = c.execute("select * from data_issue where company_number = %s order by status, created_at desc",
                            (num,)).fetchall()
+        deal = _deal(c, num, (state or {}).get("status") or "new")
     return {
+        "deal": deal,
         "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
         "changes": changes, "valuation": val,
         "company": row, "financials": fin, "estimate": est, "ownership": own, "people": people,
         "links": links, "score": sc, "state": state or {"status": "new", "rating": None, "tags": []},
         "notes": notes, "research": research, "outreach": outreach,
     }
+
+
+def _deal(c, num, status):
+    history = c.execute(
+        """select from_status, to_status, note, created_at from stage_event
+           where user_id = %s and company_number = %s order by created_at, id""", (UID, num)).fetchall()
+    saved = {(r["stage"], r["item_key"]): r for r in c.execute(
+        "select * from deal_task where user_id = %s and company_number = %s", (UID, num))}
+    tasks = {}
+    for st in stages.STATUSES:
+        items = []
+        for label in stages.CHECKLISTS[st]:
+            k = stages.item_key(label)
+            row = saved.pop((st, k), None)
+            items.append({"item_key": k, "label": label, "custom": False, "done": bool(row and row["done"]),
+                          "done_at": row["done_at"] if row else None, "note": row["note"] if row else None})
+        tasks[st] = items
+    for (st, k), row in saved.items():  # custom items
+        tasks.setdefault(st, []).append({"item_key": k, "label": row["label"], "custom": True, "done": row["done"],
+                                         "done_at": row["done_at"], "note": row["note"]})
+    entered = next((h["created_at"] for h in reversed(history) if h["to_status"] == status), None)
+    return {"history": history, "tasks": tasks, "stage_entered_at": entered}
+
+
+class TaskIn(BaseModel):
+    stage: str
+    label: str
+    item_key: str | None = None
+    done: bool = False
+    note: str | None = None
+    delete: bool = False
+
+
+@app.post("/api/companies/{num}/tasks")
+def set_task(num: str, t: TaskIn):
+    if t.stage not in stages.STATUSES:
+        raise HTTPException(400, "Unknown stage")
+    key = t.item_key or stages.item_key(t.label)
+    custom = stages.item_key(t.label) not in {stages.item_key(x) for x in stages.CHECKLISTS[t.stage]}
+    with db.conn() as c:
+        if not c.execute("select 1 from company where company_number = %s", (num,)).fetchone():
+            raise HTTPException(404, "Company not found")
+        if t.delete:
+            c.execute("delete from deal_task where user_id=%s and company_number=%s and stage=%s and item_key=%s and custom",
+                      (UID, num, t.stage, key))
+        else:
+            c.execute(
+                """insert into deal_task (user_id, company_number, stage, item_key, label, custom, done, done_at, note)
+                   values (%s, %s, %s, %s, %s, %s, %s, case when %s then now() end, %s)
+                   on conflict (user_id, company_number, stage, item_key) do update set done = excluded.done,
+                     done_at = case when excluded.done and not deal_task.done then now()
+                                    when not excluded.done then null else deal_task.done_at end,
+                     note = coalesce(excluded.note, deal_task.note)""",
+                (UID, num, t.stage, key, t.label.strip(), custom, t.done, t.done, t.note),
+            )
+            c.execute("insert into user_company (user_id, company_number) values (%s, %s) on conflict do nothing", (UID, num))
+        return _deal(c, num, c.execute("select status from user_company where user_id=%s and company_number=%s",
+                                       (UID, num)).fetchone()["status"])
 
 
 def _map_points(c, where, params):
@@ -382,6 +444,7 @@ class StateIn(BaseModel):
     next_action_on: date | None = None
     tags: list[str] | None = None
     valuation: dict | None = None
+    stage_note: str | None = None
     clear_rating: bool = False
 
 
@@ -398,6 +461,14 @@ def set_state(num: str, body: StateIn):
             "insert into user_company (user_id, company_number) values (%s, %s) on conflict do nothing",
             (UID, num),
         )
+        before = c.execute("select status from user_company where user_id = %s and company_number = %s",
+                           (UID, num)).fetchone()["status"]
+        if body.status and body.status != before:
+            c.execute(
+                """insert into stage_event (user_id, company_number, from_status, to_status, note)
+                   values (%s, %s, %s, %s, %s)""",
+                (UID, num, before, body.status, body.stage_note),
+            )
         sets, params = ["updated_at = now()"], []
         fields = body.model_dump(exclude_unset=True)
         for k in ("status", "rating", "next_action", "next_action_on", "tags"):
@@ -508,7 +579,7 @@ def dashboard():
                  (select count(*) from score where buy_box_id = %(bb)s and not excluded) as in_scope,
                  (select count(*) from score where buy_box_id = %(bb)s and not excluded and score >= 70) as strong,
                  (select count(*) from user_company where user_id = %(uid)s and status not in ('new','rejected','passed')) as pipeline,
-                 (select count(*) from user_company where user_id = %(uid)s and status in ('contacted','in_talks')) as talking,
+                 (select count(*) from user_company where user_id = %(uid)s and status in ('contacted','in_talks','nda','offer','heads','diligence','spa','completion')) as talking,
                  (select count(distinct company_number) from company_change where detected_at > now() - interval '7 days') as changed_7d,
                  (select count(distinct company_number) from company_change where detected_at > now() - interval '30 days') as changed_30d,
                  (select count(*) from company_change where kind = 'status' and detected_at > now() - interval '30 days') as status_30d,
@@ -780,7 +851,11 @@ def pipeline():
     with db.conn() as c:
         bb = scoring.active_buy_box(c)
         rows = c.execute(
-            """select uc.*, c.name, c.region, s.score,
+            """select uc.*, c.name, c.region, s.score, s.value_low, s.value_high,
+                      (select max(created_at) from stage_event e where e.company_number = uc.company_number
+                         and e.user_id = uc.user_id and e.to_status = uc.status) as stage_entered_at,
+                      (select count(*) filter (where done) from deal_task t where t.company_number = uc.company_number
+                         and t.user_id = uc.user_id and t.stage = uc.status) as tasks_done,
                       (select max(created_at) from user_note n where n.company_number = uc.company_number) as last_note
                from user_company uc join company c on c.company_number = uc.company_number
                left join score s on s.company_number = uc.company_number and s.buy_box_id = %s
@@ -788,7 +863,10 @@ def pipeline():
                order by uc.next_action_on nulls last, s.score desc nulls last""",
             (bb["id"], UID),
         ).fetchall()
-    return {"statuses": [{"value": s, "label": STATUS_LABELS[s]} for s in STATUSES if s != "new"], "rows": rows}
+    for r in rows:
+        r["tasks_total"] = len(stages.CHECKLISTS.get(r["status"], []))
+    return {"statuses": [x for x in stages.as_json() if x["value"] != "new"],
+            "phases": [{"value": k, "label": v} for k, v in stages.PHASES], "rows": rows}
 
 
 @app.get("/api/reports")

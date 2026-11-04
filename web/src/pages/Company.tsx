@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, type CompanyDetail, type Status } from "../api";
-import { ErrorLine, Flags, Score, STATUS_LABEL, Toast, useAsync } from "../components/bits";
+import { api, type CompanyDetail } from "../api";
+import { ErrorLine, Flags, Score, Toast, useAsync } from "../components/bits";
 import { AreaChart as SmallLine } from "../components/charts";
 import Valuation from "../components/Valuation";
+import DealProgress from "../components/DealProgress";
 import { Enrichment, Location } from "../components/CompanyExtras";
 import { ageFrom, CHANGE_KIND, chUrl, date, dateTime, describeChange, int, isBadStatus, LINK_KIND, money, MONTHS, OWNERSHIP, range, relDays, toNum, years } from "../format";
 
-const STATUSES: Status[] = ["new", "watching", "researching", "approach", "contacted", "in_talks", "passed", "rejected"];
 
 export default function Company() {
   const { num = "" } = useParams();
@@ -268,15 +268,12 @@ function MyCall({ data, num, setState, onNote, onOutreach }: {
 
   return (
     <>
-      <section style={{ paddingTop: 0 }}>
-        <h2>My call</h2>
-        <div className="label" style={{ marginBottom: 4 }}>Status</div>
-        <div className="seg">
-          {STATUSES.map((st) => (
-            <button key={st} className={s.status === st ? "on" : ""} onClick={() => setState({ status: st })}>{STATUS_LABEL[st]}</button>
-          ))}
-        </div>
-        <div className="label" style={{ margin: "14px 0 4px" }}>Rating <span className="faint">(keys 1–5)</span></div>
+      <section>
+        <DealProgress data={data} num={num} setState={setState} />
+      </section>
+
+      <section>
+        <div className="label" style={{ margin: "0 0 4px" }}>Rating <span className="faint">(keys 1–5)</span></div>
         <div className="rating">
           {[1, 2, 3, 4, 5].map((n) => (
             <button key={n} className={s.rating === n ? "on" : ""} onClick={() => setState(s.rating === n ? { clear_rating: true } : { rating: n })}>{n}</button>

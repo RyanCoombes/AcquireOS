@@ -1,8 +1,19 @@
-export type Status = "new" | "watching" | "researching" | "approach" | "contacted" | "in_talks" | "passed" | "rejected";
+export type Status = "new" | "watching" | "researching" | "approach" | "contacted" | "in_talks" | "nda" | "offer"
+  | "heads" | "diligence" | "spa" | "completion" | "handover" | "passed" | "rejected";
+
+export interface Stage { value: Status; label: string; phase: string; description: string; checklist: string[] }
+export interface Task { item_key: string; label: string; custom: boolean; done: boolean; done_at: string | null; note: string | null }
+export interface Deal {
+  history: { from_status: Status | null; to_status: Status; note: string | null; created_at: string }[];
+  tasks: Record<string, Task[]>;
+  stage_entered_at: string | null;
+}
 
 export interface Meta {
   version: string;
-  statuses: { value: Status; label: string }[];
+  statuses: { value: Status; label: string; phase?: string }[];
+  stages: Stage[];
+  phases: { value: string; label: string }[];
   ownership_types: { value: string; label: string }[];
   address_flags: Record<string, string>;
   regions: string[];
@@ -109,6 +120,7 @@ export interface CompanyDetail {
   state: { status: Status; rating: number | null; tags: string[]; next_action?: string | null; next_action_on?: string | null; valuation?: Partial<Assumptions> };
   changes: Change[];
   valuation: Valuation;
+  deal: Deal;
   geo: { lat: number; lon: number; precision: string } | null;
   sics: { code: string; description: string }[];
   enrichment: {
@@ -150,7 +162,10 @@ export const api = {
     req<Note>(`/api/companies/${encodeURIComponent(n)}/notes`, { method: "POST", body: JSON.stringify({ body }) }),
   addResearch: (n: string, body: Record<string, unknown>) =>
     req(`/api/companies/${encodeURIComponent(n)}/research`, { method: "POST", body: JSON.stringify(body) }),
-  pipeline: () => req<{ statuses: { value: Status; label: string }[]; rows: (Row & { last_note: string | null })[] }>("/api/pipeline"),
+  pipeline: () => req<{ statuses: Stage[]; phases: { value: string; label: string }[];
+    rows: (Row & { last_note: string | null; stage_entered_at: string | null; tasks_done: number; tasks_total: number })[] }>("/api/pipeline"),
+  setTask: (n: string, body: Record<string, unknown>) =>
+    req<Deal>(`/api/companies/${encodeURIComponent(n)}/tasks`, { method: "POST", body: JSON.stringify(body) }),
   outreach: () => req<Outreach[]>("/api/outreach"),
   addOutreach: (body: Record<string, unknown>) => req<Outreach>("/api/outreach", { method: "POST", body: JSON.stringify(body) }),
   reports: () => req<Record<string, any>>("/api/reports"),

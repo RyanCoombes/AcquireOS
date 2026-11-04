@@ -14,11 +14,7 @@ from .. import config
 from .. import normalise as n
 from .tables import detect, norm_header, read_rows
 
-STATUSES = ["new", "watching", "researching", "approach", "contacted", "in_talks", "passed", "rejected"]
-STATUS_LABELS = {
-    "new": "New", "watching": "Watching", "researching": "Researching", "approach": "To approach",
-    "contacted": "Contacted", "in_talks": "In talks", "passed": "Passed", "rejected": "Rejected",
-}
+from ..stages import LABELS as STATUS_LABELS, STATUSES  # noqa: E402,F401
 
 ALIASES = {
     "company_number": ["company_number", "companynumber", "company_no", "crn", "number", "~company_number"],
@@ -32,7 +28,11 @@ NOTE_HINTS = ("note", "assess", "comment", "review", "thought", "why", "reason",
 STATUS_WORDS = [
     (("reject", "no go", "nogo", "exclude", "not a fit", "drop", "kill"), "rejected"),
     (("pass", "skip", "park"), "passed"),
-    (("in talks", "meeting", "nda", "loi"), "in_talks"),
+    (("heads of terms", "hot", "exclusiv"), "heads"),
+    (("due diligence", "diligence"), "diligence"),
+    (("offer", "loi"), "offer"),
+    (("nda",), "nda"),
+    (("in talks", "meeting"), "in_talks"),
     (("contacted", "letter sent", "emailed", "called"), "contacted"),
     (("approach", "contact", "shortlist", "yes", "go"), "approach"),
     (("research", "check", "maybe", "unclear", "investigate"), "researching"),

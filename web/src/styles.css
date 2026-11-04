@@ -252,8 +252,12 @@ td .sub { font-size: 12.5px; color: var(--ink-3); margin-top: 1px; }
 .status.approach::before { background: var(--teal); }
 .status.contacted { background: var(--blue-soft); color: var(--blue); border-color: transparent; }
 .status.contacted::before { background: var(--blue); }
-.status.in_talks { background: var(--ink); color: #fff; border-color: var(--ink); }
-.status.in_talks::before { background: #6ee7c8; }
+.status.in_talks, .status.nda { background: var(--blue-soft); color: var(--blue); border-color: transparent; }
+.status.in_talks::before, .status.nda::before { background: var(--blue); }
+.status.offer, .status.heads, .status.diligence, .status.spa, .status.completion { background: var(--ink); color: #fff; border-color: var(--ink); }
+.status.offer::before, .status.heads::before, .status.diligence::before, .status.spa::before, .status.completion::before { background: #6ee7c8; }
+.status.handover { background: var(--teal); color: #fff; border-color: var(--teal); }
+.status.handover::before { background: #fff; }
 .status.passed, .status.rejected { color: var(--ink-3); }
 .status.rejected::before { background: var(--line-2); }
 
@@ -508,3 +512,48 @@ section .mapbox { border-radius: 0; }
 .enr .label { display: block; margin-bottom: 2px; }
 .yes { color: var(--teal-2); font-weight: 600; } .no { color: var(--ink-2); font-weight: 600; } .partly { color: var(--amber); font-weight: 600; }
 @media (max-width: 860px) { .loc-grid, .enr { grid-template-columns: 1fr; } }
+
+/* ---------------------------------------------------------------- deal progress */
+.stepper { list-style: none; margin: 0; padding: 0; }
+.stepper .phase { font-size: 11.5px; font-weight: 600; color: var(--ink-3); padding: 10px 0 4px; text-transform: none; }
+.stepper li.step {
+  display: flex; align-items: center; gap: 10px; padding: 5px 8px; border-radius: 7px; cursor: pointer; color: var(--ink-2);
+  position: relative;
+}
+.stepper li.step:hover { background: var(--panel-2); color: var(--ink); }
+.stepper li.step .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line-2); background: var(--panel); flex: none; }
+.stepper li.step.past .dot { background: var(--teal); border-color: var(--teal); }
+.stepper li.step.past { color: var(--ink); }
+.stepper li.step.current { background: var(--teal-soft); color: var(--teal-2); font-weight: 600; }
+.stepper li.step.current .dot { border-color: var(--teal); box-shadow: 0 0 0 3px var(--teal-tint); background: var(--panel); }
+.stepper li.step .when { margin-left: auto; font-size: 11.5px; color: var(--ink-3); font-weight: 400; }
+.stepper .closed { display: flex; gap: 6px; padding-top: 8px; }
+.checklist { list-style: none; margin: 8px 0 0; padding: 0; }
+.checklist li { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; }
+.checklist input { accent-color: var(--teal); width: 16px; height: 16px; margin-top: 2px; flex: none; }
+.checklist li.done span { color: var(--ink-3); text-decoration: line-through; }
+.checklist .x { margin-left: auto; border: 0; background: none; color: var(--ink-3); cursor: pointer; }
+.progressbar { height: 6px; border-radius: 99px; background: var(--line); overflow: hidden; margin: 6px 0 2px; }
+.progressbar i { display: block; height: 100%; background: var(--teal); border-radius: 99px; }
+.timeline { list-style: none; margin: 8px 0 0; padding: 0 0 0 14px; border-left: 2px solid var(--line); }
+.timeline li { position: relative; padding: 0 0 10px 10px; font-size: 13px; }
+.timeline li::before { content: ""; position: absolute; left: -20px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--teal); border: 2px solid var(--panel); }
+.timeline .meta { font-size: 12px; color: var(--ink-3); }
+
+.board { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 10px; align-items: flex-start; }
+.col { flex: 0 0 248px; background: #eceef2; border-radius: var(--radius); padding: 10px; min-height: 120px; }
+.col.over { background: var(--teal-soft); outline: 2px dashed var(--teal); }
+.col h3 { display: flex; justify-content: space-between; align-items: baseline; color: var(--ink); font-size: 13px; margin: 2px 4px 2px; }
+.col h3 .count { color: var(--ink-3); font-weight: 500; }
+.col .desc { font-size: 11.5px; color: var(--ink-3); margin: 0 4px 8px; }
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 10px 11px; margin-bottom: 8px;
+  box-shadow: var(--shadow); cursor: grab;
+}
+.card:hover { border-color: var(--line-2); }
+.card.dragging { opacity: 0.4; }
+.card .name { font-weight: 560; font-size: 13px; line-height: 1.3; }
+.card .meta { display: flex; justify-content: space-between; gap: 6px; font-size: 11.5px; color: var(--ink-3); margin-top: 6px; }
+.card .next { font-size: 12px; color: var(--ink-2); margin-top: 6px; }
+.card .next.overdue { color: var(--red); }
+.phasebar { display: flex; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }

@@ -35,6 +35,26 @@ of targets.
 Your notes, ratings and decisions are stored apart from imported data.
 Re-importing or refreshing never overwrites them.
 
+## Deal stages
+
+Every company moves through your acquisition process, and each move is
+logged with its date and an optional note:
+
+| Phase | Stages |
+|---|---|
+| Assess | New → Watching → Assessing → Shortlisted |
+| Engage | First contact → Getting to know → NDA and accounts |
+| Deal | Indicative offer → Heads of terms → Due diligence → SPA and disclosure → Completion |
+| Owned | Handover |
+| Closed | Passed, Rejected |
+
+Each stage has a checklist (for example, Assessing: accounts reviewed,
+website checked, owners confirmed, recurring revenue estimated, no
+field-service red flags, rough value done), and you can add your own items.
+The **Pipeline** page is a board: drag a card to move it, with checklist
+progress and days in stage on each card. The company page shows the stage
+tracker, the checklist and the full history.
+
 ## Connect Claude (MCP) for questions, auditing and enrichment
 
 AcquireOS includes an MCP server at `http://<pi-address>:8090/mcp`, so Claude
@@ -117,8 +137,10 @@ Needs a 64-bit OS on the Pi (Raspberry Pi OS 64-bit, Ubuntu arm64 and so on).
 2. **Create the stack.** Portainer → **Stacks → Add stack → Web editor**.
    Name it `acquireos` and paste the whole of
    [`docker-compose.yml`](docker-compose.yml).
-3. **Set environment variables** (Environment variables → Advanced mode,
-   paste and edit):
+3. **Set environment variables** (optional: the stack deploys without any).
+   Environment variables → Advanced mode, paste and edit. Set `DB_PASSWORD`
+   **before the first deploy**: Postgres only reads it when the database is
+   first created, so changing it later breaks the connection.
 
    ```
    DB_PASSWORD=pick-a-long-random-password

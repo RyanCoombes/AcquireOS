@@ -166,7 +166,7 @@ export default function Home() {
         <section className="span-4">
           <div className="sechead"><h2>Search funnel</h2></div>
           <HBars rows={data.funnel.map((f: any) => ({ label: f.label, n: f.n, key: f.status }))}
-                 accent={(k) => ["contacted", "in_talks"].includes(k)} onPick={(k) => nav(`/targets?status=${k}&include_excluded=1`)} />
+                 accent={(k) => ["offer", "heads", "diligence", "spa", "completion"].includes(k)} onPick={(k) => nav(`/targets?status=${k}&include_excluded=1`)} />
         </section>
 
         <section className="span-4">
