@@ -257,3 +257,16 @@ def test_estimates_follow_the_latest_accounts(loaded):
     refresh_estimates(c)
     e2 = c.execute("select * from estimate where company_number = %s", (num,)).fetchone()
     assert float(e2["revenue_low"]) < float(e["revenue_low"])
+
+
+def test_ownership_rebuild_rewrites_only_changes(loaded):
+    from acquireos import ownership
+
+    c = loaded
+    before = {r["company_number"]: r["updated_at"] for r in c.execute("select company_number, updated_at from company_ownership")}
+    assert before
+    import time
+    time.sleep(0.05)
+    ownership.rebuild(c)
+    after = {r["company_number"]: r["updated_at"] for r in c.execute("select company_number, updated_at from company_ownership")}
+    assert after == before  # nothing changed, so nothing was rewritten

@@ -120,8 +120,9 @@ def _ownership_from_walk(conn, today):
 
     # A majority stake: more than 50% of shares or votes.
     majority = "exists (select 1 from unnest(natures) nn where nn ~ '(50-to-75|75-to-100)')"
-    conn.execute("delete from company_ownership")
+    conn.execute("drop table if exists own_new")
     conn.execute(rf"""
+        create temp table own_new as
         with agg as (
             select root,
               -- Employee ownership only when the trust holds a majority; a minority EBT is a flag.
@@ -185,15 +186,13 @@ def _ownership_from_walk(conn, today):
                 else 'unknown' end as otype
             from base
         )
-        insert into company_ownership (company_number, ownership_type, flags, owner_count, oldest_birth_year,
-                                       ultimate_owners, explanation)
-        select company_number, otype,
+        select company_number, otype as ownership_type,
                array_remove(array[
                    case when eot then 'eot' end, case when foreign_parent then 'foreign_parent' end,
                    case when investor then 'investor' end, case when recent then 'recent_change' end,
                    case when not has_active then 'no_psc_data' end, case when trust then 'trust' end,
-                   case when via_holdco then 'via_holdco' end, case when ebt then 'ebt' end], null)::text[],
-               individuals, oldest, owners,
+                   case when via_holdco then 'via_holdco' end, case when ebt then 'ebt' end], null)::text[] as flags,
+               individuals as owner_count, oldest as oldest_birth_year, owners as ultimate_owners,
                case otype
                    when 'owner_held' then individuals || ' individual owner(s), held '
                         || case when via_holdco then 'through a holding company' else 'directly' end || '.'
@@ -201,8 +200,26 @@ def _ownership_from_walk(conn, today):
                    else 'Classed as ' || lower(case otype when 'group_owned' then 'Group-owned'
                         when 'investor_backed' then 'Investor-backed' when 'eot' then 'Employee-owned (EOT)'
                         when 'trust' then 'Held in trust' when 'foreign_owned' then 'Foreign parent' end)
-                        || ' from the owner records.' end
+                        || ' from the owner records.' end as explanation
         from typed""", {"recent": today - RECENT, "uk_re": UK_PLACE_SQL})
+    # Write only what changed: most companies' owners are the same month to
+    # month, and rewriting 5.7 million rows of jsonb each time is the slow part.
+    conn.execute("create index on own_new (company_number)")
+    conn.execute("analyze own_new")
+    conn.execute("delete from company_ownership o where not exists (select 1 from own_new n where n.company_number = o.company_number)")
+    conn.execute("""
+        update company_ownership o set ownership_type = n.ownership_type, flags = n.flags, owner_count = n.owner_count,
+               oldest_birth_year = n.oldest_birth_year, ultimate_owners = n.ultimate_owners, explanation = n.explanation,
+               updated_at = now()
+        from own_new n where n.company_number = o.company_number
+          and (o.ownership_type, o.flags, o.owner_count, o.oldest_birth_year, o.ultimate_owners, o.explanation)
+              is distinct from (n.ownership_type, n.flags, n.owner_count, n.oldest_birth_year, n.ultimate_owners, n.explanation)""")
+    conn.execute("""
+        insert into company_ownership (company_number, ownership_type, flags, owner_count, oldest_birth_year,
+                                       ultimate_owners, explanation)
+        select n.company_number, n.ownership_type, n.flags, n.owner_count, n.oldest_birth_year, n.ultimate_owners, n.explanation
+        from own_new n where not exists (select 1 from company_ownership o where o.company_number = n.company_number)""")
+    conn.execute("drop table own_new")
 
 
 # Above this many companies, links wait until scores exist (so they can be
@@ -234,16 +251,25 @@ def rebuild_links(conn, walk_ready: bool = False, step=None, progress=None):
                'confirmed', 'Registration number on the PSC record'
         from own_walk w where w.depth = 0 and w.kind <> 'individual' and w.registration_number is not null
         on conflict do nothing""")
-    step("Matching parent companies by name where no number was filed")
-    conn.execute("""
-        insert into company_link (a, b, b_name, kind, via, confidence, evidence)
-        select distinct on (w.root, c.company_number) w.root, c.company_number, w.name, 'owned_by', '', 'likely',
-               'Parent name matches a company in your list; no registration number filed'
-        from own_walk w join company c on ao_company_name_key(c.name) = ao_company_name_key(w.name)
-        where w.depth = 0 and w.kind = 'corporate' and w.registration_number is null and c.company_number <> w.root
-        on conflict do nothing""")
     scope = """exists (select 1 from company_best sc where sc.company_number = x.root)
                or exists (select 1 from user_company uc where uc.company_number = x.root and uc.status <> 'new')""" if scored else "true"
+    step("Matching parent companies by name where no number was filed")
+    # Only an unambiguous match to one active company (an expression index
+    # on the name does the lookup; no scan of every company name).
+    conn.execute("""
+        with named as (
+            select distinct w.root, w.name from own_walk w
+            where w.depth = 0 and w.kind = 'corporate' and w.registration_number is null
+        ), hits as (
+            select nm.root, nm.name, c.company_number, count(*) over (partition by nm.root, nm.name) as n
+            from named nm join company c on ao_company_name_exact(c.name) = ao_company_name_exact(nm.name)
+            where c.status = 'active' and c.company_number <> nm.root
+        )
+        insert into company_link (a, b, b_name, kind, via, confidence, evidence)
+        select h.root, h.company_number, h.name, 'owned_by', '', 'likely',
+               'Parent name matches one active company on the register; no registration number filed'
+        from hits h where h.n = 1
+        on conflict do nothing""")
     step("Linking companies that share an owner")
     # Each individual owner and the companies they own. Owners of 2-25
     # companies only: more than that is a nominee or formation agent, not a
@@ -341,28 +367,36 @@ def _shared_owner_links(conn, ultimate_by_company):
 def rebuild_address_links(conn, scope_sql: str | None = None):
     """Pairs of companies at the same (ordinary) registered address.
     Addresses shared by more than MASS_ADDRESS_THRESHOLD companies are
-    accountants' or agents' offices and are skipped."""
+    accountants' or agents' offices and are skipped. With a scope, only
+    addresses of in-scope companies are looked at (not every address on
+    the register)."""
     conn.execute("delete from company_link where kind = 'shared_address'")
-    conn.execute("drop table if exists addr_members")
+    conn.execute("drop table if exists addr_members; drop table if exists addr_keys")
     in_scope = ("(" + scope_sql.replace("x.root", "c.company_number") + ")") if scope_sql else "true"
+    conn.execute(f"""
+        create temp table addr_keys as
+        select c.address_key from company c
+        where {in_scope} and c.address_key is not null and c.address_flag is null
+        group by c.address_key""")
+    conn.execute("analyze addr_keys")
     conn.execute(f"""
         create temp table addr_members as
         select c.company_number, c.address_key, c.name, c.registered_address, {in_scope} as in_scope
-        from company c
-        join (select address_key from company
-              where address_key is not null and address_flag is null
-              group by address_key having count(*) between 2 and %s) g on g.address_key = c.address_key
-        where c.address_flag is null""", (n.MASS_ADDRESS_THRESHOLD,))
+        from company c join addr_keys k on k.address_key = c.address_key
+        where c.address_flag is null""")
     conn.execute("create index on addr_members (address_key)")
     conn.execute("analyze addr_members")
     conn.execute("""
+        with sized as (select address_key from addr_members group by address_key having count(*) between 2 and %s)
         insert into company_link (a, b, b_name, kind, via, confidence, evidence)
         select x.company_number, y.company_number, y.name, 'shared_address', '', 'possible',
                'Same registered address: ' || x.registered_address
         from addr_members x join addr_members y
           on x.address_key = y.address_key and x.company_number < y.company_number
+        join sized s on s.address_key = x.address_key
         where x.in_scope or y.in_scope
-        on conflict do nothing""")
+        on conflict do nothing""", (n.MASS_ADDRESS_THRESHOLD,))
+    conn.execute("drop table addr_members; drop table addr_keys")
 
 
 def _json(v):
