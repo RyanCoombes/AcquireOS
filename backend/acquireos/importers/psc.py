@@ -8,7 +8,6 @@ holding companies.
 """
 from __future__ import annotations
 
-import io
 import json
 import re
 import zipfile
@@ -37,34 +36,68 @@ KIND_MAP = {
 
 
 def _open_lines(path: Path):
+    """Raw JSON lines (bytes) from a zip or a plain file."""
     if path.suffix.lower() == ".zip":
         z = zipfile.ZipFile(path)
         for name in z.namelist():
             with z.open(name) as f:
-                yield from io.TextIOWrapper(f, encoding="utf-8")
+                yield from f
     else:
-        with open(path, encoding="utf-8") as f:
+        with open(path, "rb") as f:
             yield from f
 
 
-def _records(paths: list[Path]):
+def _chunks(paths: list[Path], size: int = 4000):
+    buf: list[bytes] = []
     for p in paths:
         for line in _open_lines(p):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            num = n.company_number(rec.get("company_number"))
-            data = rec.get("data") or {}
-            if num and data.get("kind") in KIND_MAP:
-                yield num, data
+            buf.append(line)
+            if len(buf) >= size:
+                yield buf
+                buf = []
+    if buf:
+        yield buf
+
+
+def _row(line: bytes):
+    """One staged row from one JSON line, or None (not a PSC record)."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        rec = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    num = n.company_number(rec.get("company_number"))
+    data = rec.get("data") or {}
+    if not num or data.get("kind") not in KIND_MAP:
+        return None
+    p = person_from(data)
+    notified = n.parse_date(data.get("notified_on"))
+    return (num, p["person_key"], p["kind"], p["name"], p["birth_year"], p["birth_month"],
+            p["registration_number"], p["country_registered"], p["legal_form"], p["address"],
+            p["postcode"], data.get("natures_of_control") or [], notified,
+            n.parse_date(data.get("ceased_on")), f"psc:{num}:{p['person_key']}:{notified or ''}")
+
+
+def _parse_chunk(lines: list[bytes]) -> list[tuple]:
+    """Worker: parse a block of lines (the CPU-heavy part, run in parallel)."""
+    out = []
+    for line in lines:
+        r = _row(line)
+        if r is not None:
+            out.append(r)
+    return out
+
+
+def _records(paths: list[Path]):
+    for chunk in _chunks(paths):
+        for r in _parse_chunk(chunk):
+            yield r
 
 
 def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True, progress=None,
-        links: bool = True) -> dict:
+        links: bool = True, workers: int | None = None) -> dict:
     """Load every PSC record in the snapshot (all UK companies).
 
     One streaming pass into a staging table, then set-based merges, so tens of
@@ -87,25 +120,42 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
         natures text[], notified_on date, ceased_on date, row_key text, seq bigserial)""")
     total = 0
     est = _estimate_lines(paths)
+    import os
+    from multiprocessing import get_context
+
+    workers = workers if workers is not None else max(1, min(4, (os.cpu_count() or 2) - 1))
     with conn.cursor().copy(
         """copy psc_stage (company_number, person_key, kind, name, birth_year, birth_month, registration_number,
                country_registered, legal_form, address, postcode, natures, notified_on, ceased_on, row_key)
            from stdin""") as cp:
-        for num, data in _records(paths):
-            p = person_from(data)
-            notified = n.parse_date(data.get("notified_on"))
-            cp.write_row((num, p["person_key"], p["kind"], p["name"], p["birth_year"], p["birth_month"],
-                          p["registration_number"], p["country_registered"], p["legal_form"], p["address"],
-                          p["postcode"], data.get("natures_of_control") or [], notified,
-                          n.parse_date(data.get("ceased_on")), f"psc:{num}:{p['person_key']}:{notified or ''}"))
-            total += 1
-            if progress and total % 100_000 == 0:
+        def take(rows):
+            nonlocal total
+            for row in rows:
+                cp.write_row(row)
+            total += len(rows)
+            if progress and total // 100_000 != (total - len(rows)) // 100_000:
                 progress(f"Reading owners: {total:,} records", min(total / est, 1) * 0.6)
+
+        if workers > 1:
+            # Parsing JSON and tidying names is the slow part: spread it over
+            # the cores ("spawn" so workers start clean inside the web server).
+            # Ordered, so later lines still win when a record appears twice.
+            with get_context("spawn").Pool(workers) as pool:
+                for rows in pool.imap(_parse_chunk, _chunks(paths), chunksize=1):
+                    take(rows)
+        else:
+            for chunk in _chunks(paths):
+                take(_parse_chunk(chunk))
     if progress:
         progress(f"Saving {total:,} owner records", 0.65)
-    conn.execute("create index on psc_stage (row_key, seq)")
+    # Keep the last occurrence of each record: one sort, not a self-join of
+    # every staged row against every other.
+    conn.execute("""create temp table psc_latest as
+                    select distinct on (row_key) * from psc_stage order by row_key, seq desc""")
+    conn.execute("drop table psc_stage")
+    conn.execute("alter table psc_latest rename to psc_stage")
+    conn.execute("create index on psc_stage (row_key)")
     conn.execute("analyze psc_stage")
-    conn.execute("""delete from psc_stage a using psc_stage b where a.row_key = b.row_key and a.seq < b.seq""")
 
     conn.execute("""
         insert into person (person_key, kind, name, birth_year, birth_month, registration_number,
