@@ -148,9 +148,7 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
     conn.execute("drop table if exists psc_stage")
     from ..ownership import rebuild
 
-    if progress:
-        progress("Tracing owners through holding companies", 0.85)
-    stats = rebuild(conn)
+    stats = rebuild(conn, progress=progress)
     return {"run_id": run_id, "rows_ok": in_list, "parents_traced": parents, "changes": changes, **stats}
 
 

@@ -317,7 +317,7 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True, reread_old: bool =
         log(f"Accounts failed: {e}")
         out["accounts"] = {"error": str(e)}
     part("Scoring", lambda: scoring.rescore_all(conn, progress=_loader_progress))
-    part("Ownership links", lambda: rebuild_links(conn) or "done")
+    part("Ownership links", lambda: rebuild_links(conn, progress=_loader_progress) or "done")
 
     def locate():
         from . import geo

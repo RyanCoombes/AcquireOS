@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+import time
 from datetime import date, timedelta
 
 from . import normalise as n
@@ -35,15 +36,44 @@ TYPE_LABELS = {
 }
 
 
-def rebuild(conn, today: date | None = None) -> dict:
+class Steps:
+    """Named sub-steps of a long job: each start shows in the progress panel
+    and each finish is written to the activity log with how long it took, so
+    a long silent query is visibly working rather than looking stalled."""
+
+    def __init__(self, progress=None, lo: float = 0.0, hi: float = 1.0, total: int = 1):
+        self.progress, self.lo, self.hi, self.total = progress, lo, hi, max(total, 1)
+        self.i, self.cur, self.t = 0, None, 0.0
+
+    def __call__(self, label: str):
+        self.finish()
+        self.cur, self.t = label, time.time()
+        if self.progress:
+            self.progress(f"{label}…", self.lo + (self.hi - self.lo) * min(self.i, self.total) / self.total)
+        self.i += 1
+
+    def finish(self):
+        if self.cur:
+            from .fetch import log
+
+            secs = time.time() - self.t
+            log(f"{self.cur}: done in {secs / 60:.1f} min" if secs >= 60 else f"{self.cur}: done in {secs:.0f}s")
+            self.cur = None
+
+
+def rebuild(conn, today: date | None = None, progress=None, lo: float = 0.85, hi: float = 0.99) -> dict:
     """Recompute company_ownership and ownership links with set-based SQL, so
     it scales to every company on the register."""
     today = today or date.today()
+    step = Steps(progress, lo, hi, total=6)
+    step("Following ownership chains through holding companies")
     _build_walk(conn)
+    step("Classifying each company's owners")
     _ownership_from_walk(conn, today)
     counts = {r["ownership_type"]: r["n"] for r in conn.execute(
         "select ownership_type, count(*) as n from company_ownership group by 1")}
-    rebuild_links(conn, walk_ready=True)
+    rebuild_links(conn, walk_ready=True, step=step)
+    step.finish()
     return {"ownership": counts}
 
 
@@ -167,16 +197,20 @@ def _ownership_from_walk(conn, today):
 UNSCOPED_LINK_LIMIT = 100_000
 
 
-def rebuild_links(conn, walk_ready: bool = False):
+def rebuild_links(conn, walk_ready: bool = False, step=None, progress=None):
     """Ownership, shared-owner and shared-address links. Shared-owner and
     shared-address links are only built where at least one company is in the
     buy box (or for everything before any scoring has run), to keep the
     number of pairs sensible across the whole register."""
+    own_steps = step is None
+    step = step or Steps(progress, 0.0, 1.0, total=5)
     if not walk_ready:
+        step("Following ownership chains through holding companies")
         _build_walk(conn)
     scored = conn.execute("select 1 from score limit 1").fetchone() is not None
     if not scored and conn.execute("select count(*) as n from company").fetchone()["n"] > UNSCOPED_LINK_LIMIT:
         return  # built after scoring, limited to the buy box
+    step("Linking companies to their parent companies")
     conn.execute("delete from company_link where kind in ('owned_by', 'shared_owner')")
     conn.execute("""
         insert into company_link (a, b, b_name, kind, via, confidence, evidence)
@@ -184,6 +218,7 @@ def rebuild_links(conn, walk_ready: bool = False):
                'confirmed', 'Registration number on the PSC record'
         from own_walk w where w.depth = 0 and w.kind <> 'individual' and w.registration_number is not null
         on conflict do nothing""")
+    step("Matching parent companies by name where no number was filed")
     conn.execute("""
         insert into company_link (a, b, b_name, kind, via, confidence, evidence)
         select distinct on (w.root, c.company_number) w.root, c.company_number, w.name, 'owned_by', '', 'likely',
@@ -193,6 +228,7 @@ def rebuild_links(conn, walk_ready: bool = False):
         on conflict do nothing""")
     scope = """exists (select 1 from score sc where sc.company_number = x.root and not sc.excluded)
                or exists (select 1 from user_company uc where uc.company_number = x.root and uc.status <> 'new')""" if scored else "true"
+    step("Linking companies that share an owner")
     conn.execute(f"""
         with owners as (
             select distinct w.root, w.person_id, w.name, w.birth_year, w.birth_month
@@ -212,7 +248,10 @@ def rebuild_links(conn, walk_ready: bool = False):
                     else 'Same owner name; no birth date to confirm' end
         from pairs p join company c on c.company_number = p.b
         on conflict do nothing""")
+    step("Linking companies registered at the same address")
     rebuild_address_links(conn, scope_sql=scope if scored else None)
+    if own_steps:
+        step.finish()
 
 
 def _looks_like_group(individuals, ultimate) -> bool:
