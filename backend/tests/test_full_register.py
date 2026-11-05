@@ -143,3 +143,15 @@ def test_job_progress_and_cancel(loaded):
     row = loaded.execute("select * from job where id = %s", (j.id,)).fetchone()
     assert row["status"] == "cancelled" and row["finished_at"] is not None
     assert jobs.current(loaded)["id"] == j.id
+
+
+def test_already_loaded_snapshots_are_skipped(loaded, monkeypatch):
+    c = loaded
+    monkeypatch.setattr(fetch, "links", lambda kind, pages=None: {
+        "company": [("2026-11-01x", "https://x/BasicCompanyDataAsOneFile-2026-11-01.zip")],
+        "psc": [("2026-11-03p", "https://x/persons-with-significant-control-snapshot-2026-11-03.zip")]}[kind])
+    monkeypatch.setattr(fetch, "download", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not download")))
+    c.execute("insert into import_run (kind, filename, finished_at) values ('register', 'BasicCompanyDataAsOneFile-2026-11-01.zip', now())")
+    c.execute("insert into import_run (kind, filename, finished_at) values ('psc', 'persons-with-significant-control-snapshot-2026-11-03.zip', now())")
+    assert fetch.fetch_company_data(c) == {"skipped": "BasicCompanyDataAsOneFile-2026-11-01.zip"}
+    assert "skipped" in fetch.fetch_psc(c)

@@ -166,6 +166,11 @@ def fetch_company_data(conn, keep: bool = False) -> dict:
         raise RuntimeError("No company data file found on the Companies House download page")
     from .importers import register
 
+    name = found[0][1].rsplit("/", 1)[-1]
+    if conn.execute("select 1 from import_run where kind = 'register' and filename = %s and finished_at is not null",
+                    (name,)).fetchone():
+        log(f"Skipping {name}: this register snapshot is already loaded")
+        return {"skipped": name}
     path = download(found[0][1])
     try:
         return register.load(conn, path, full=True, progress=_scaled(0.15))
@@ -237,6 +242,11 @@ def fetch_psc(conn, keep: bool = False) -> dict:
         raise RuntimeError("No PSC snapshot found on the Companies House download page")
     newest = found[0][0][:10]
     parts = [url for key, url in found if key.startswith(newest)]
+    names = ", ".join(sorted(u.rsplit("/", 1)[-1] for u in parts))
+    if conn.execute("select 1 from import_run where kind = 'psc' and filename = %s and finished_at is not null",
+                    (names,)).fetchone():
+        log(f"Skipping owners: snapshot {newest} is already loaded")
+        return {"skipped": names}
     paths = [download(u) for u in sorted(parts)]
     try:
         return psc.run(conn, paths, progress=_scaled(0.15))
