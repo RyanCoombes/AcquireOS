@@ -254,7 +254,8 @@ def fetch_psc(conn, keep: bool = False) -> dict:
         log(f"Skipping owners: snapshot {newest} is already loaded")
         return {"skipped": names}
     paths = [download(u) for u in sorted(parts)]
-    r = psc.run(conn, paths, progress=_scaled(0.15))
+    # Links are rebuilt in the refresh's own "Ownership links" step after scoring.
+    r = psc.run(conn, paths, progress=_scaled(0.15), links=JOB is None)
     if not keep:  # kept if loading failed, so a re-run does not download them again
         for p in paths:
             p.unlink(missing_ok=True)

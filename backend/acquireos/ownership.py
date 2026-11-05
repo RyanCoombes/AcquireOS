@@ -61,18 +61,20 @@ class Steps:
             self.cur = None
 
 
-def rebuild(conn, today: date | None = None, progress=None, lo: float = 0.85, hi: float = 0.99) -> dict:
+def rebuild(conn, today: date | None = None, progress=None, lo: float = 0.85, hi: float = 0.99,
+            links: bool = True) -> dict:
     """Recompute company_ownership and ownership links with set-based SQL, so
     it scales to every company on the register."""
     today = today or date.today()
-    step = Steps(progress, lo, hi, total=6)
+    step = Steps(progress, lo, hi, total=6 if links else 2)
     step("Following ownership chains through holding companies")
     _build_walk(conn)
     step("Classifying each company's owners")
     _ownership_from_walk(conn, today)
     counts = {r["ownership_type"]: r["n"] for r in conn.execute(
         "select ownership_type, count(*) as n from company_ownership group by 1")}
-    rebuild_links(conn, walk_ready=True, step=step)
+    if links:
+        rebuild_links(conn, walk_ready=True, step=step)
     step.finish()
     return {"ownership": counts}
 
@@ -229,16 +231,25 @@ def rebuild_links(conn, walk_ready: bool = False, step=None, progress=None):
     scope = """exists (select 1 from score sc where sc.company_number = x.root and not sc.excluded)
                or exists (select 1 from user_company uc where uc.company_number = x.root and uc.status <> 'new')""" if scored else "true"
     step("Linking companies that share an owner")
-    conn.execute(f"""
-        with owners as (
+    # Each individual owner and the companies they own. Owners of 2-25
+    # companies only: more than that is a nominee or formation agent, not a
+    # useful connection. Start from companies you care about (in a buy box or
+    # your pipeline) and look up each owner's other companies through an
+    # index, rather than pairing up the whole register and filtering after.
+    conn.execute("drop table if exists own_people; drop table if exists own_scope")
+    conn.execute("""
+        create temp table own_people as
+        select o.*, count(*) over (partition by person_id) as n from (
             select distinct w.root, w.person_id, w.name, w.birth_year, w.birth_month
-            from own_walk w where w.kind = 'individual'
-        ), sized as (
-            select o.*, count(*) over (partition by person_id) as n from owners o
-        ), pairs as (
-            select x.root as a, y.root as b, x.name, x.birth_year, x.birth_month
-            from sized x join sized y on x.person_id = y.person_id and x.root < y.root
-            where x.n between 2 and 25 and ({scope.replace('x.root', 'x.root')} or {scope.replace('x.root', 'y.root')})
+            from own_walk w where w.kind = 'individual') o""")
+    conn.execute("create index on own_people (person_id)")
+    conn.execute("analyze own_people")
+    conn.execute(f"create temp table own_scope as select * from own_people x where x.n between 2 and 25 and ({scope})")
+    conn.execute("analyze own_scope")
+    conn.execute("""
+        with pairs as (
+            select least(x.root, y.root) as a, greatest(x.root, y.root) as b, x.name, x.birth_year, x.birth_month
+            from own_scope x join own_people y on y.person_id = x.person_id and y.root <> x.root
         )
         insert into company_link (a, b, b_name, kind, via, confidence, evidence)
         select distinct on (p.a, p.b, p.name) p.a, p.b, c.name, 'shared_owner', p.name,
@@ -248,6 +259,7 @@ def rebuild_links(conn, walk_ready: bool = False, step=None, progress=None):
                     else 'Same owner name; no birth date to confirm' end
         from pairs p join company c on c.company_number = p.b
         on conflict do nothing""")
+    conn.execute("drop table own_people; drop table own_scope")
     step("Linking companies registered at the same address")
     rebuild_address_links(conn, scope_sql=scope if scored else None)
     if own_steps:

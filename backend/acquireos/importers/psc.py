@@ -59,7 +59,8 @@ def _records(paths: list[Path]):
                 yield num, data
 
 
-def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True, progress=None) -> dict:
+def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True, progress=None,
+        links: bool = True) -> dict:
     """Load every PSC record in the snapshot (all UK companies).
 
     One streaming pass into a staging table, then set-based merges, so tens of
@@ -148,7 +149,9 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
     conn.execute("drop table if exists psc_stage")
     from ..ownership import rebuild
 
-    stats = rebuild(conn, progress=progress)
+    # links=False when a later step rebuilds the links anyway (the monthly
+    # refresh does, after scoring), so the slowest part is not done twice.
+    stats = rebuild(conn, progress=progress, links=links)
     return {"run_id": run_id, "rows_ok": in_list, "parents_traced": parents, "changes": changes, **stats}
 
 
