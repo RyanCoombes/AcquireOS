@@ -38,6 +38,7 @@ class Job:
         self._last = 0.0
         self._lock = __import__("threading").Lock()
         self._alive = True
+        self.history = self._history()
         __import__("threading").Thread(target=self._heartbeat, daemon=True).start()
 
     def _heartbeat(self):
@@ -113,6 +114,53 @@ class Job:
             raise Cancelled("Stopped by you")
 
     # -- internals ---------------------------------------------------------
+    @staticmethod
+    def _kind(name: str) -> str:
+        """Stages of the same kind take about as long each time: every
+        accounts month is "Accounts", every buy box is "Scoring"."""
+        return name.split(":")[0].split(" “")[0]
+
+    def _history(self) -> dict[str, float]:
+        """Typical seconds per stage kind from the last few finished jobs."""
+        hist: dict[str, list[float]] = {}
+        try:
+            with self._lock:
+                rows = self.conn.execute(
+                    "select stages from job where status = 'done' order by id desc limit 8").fetchall()
+        except Exception:
+            return {}
+        for r in rows:
+            for st in r["stages"] or []:
+                if st.get("status") == "done" and st.get("seconds"):
+                    hist.setdefault(self._kind(st["name"]), []).append(float(st["seconds"]))
+        return {k: sorted(v)[len(v) // 2] for k, v in hist.items()}
+
+    def eta(self, now: float) -> int | None:
+        """Seconds left: what stages of each kind took last time, plus what is
+        left of the current stage. None until something is known."""
+        left = 0.0
+        known = False
+        for i, st in enumerate(self.stages):
+            if st["status"] in ("done", "skipped", "already loaded"):
+                continue
+            typical = self.history.get(self._kind(st["name"]))
+            if i == self.index and st["status"] == "running":
+                spent = now - self.stage_started
+                if self.frac > 0.05 and spent > 20:
+                    left += spent / self.frac * (1 - self.frac)
+                    known = True
+                elif typical is not None:
+                    left += max(typical - spent, 0)
+                    known = True
+                else:
+                    left += spent  # no idea: at least as long again
+            elif typical is not None:
+                left += typical
+                known = True
+            else:
+                return None if not known else int(left)  # an unknown stage ahead: give up
+        return int(left) if known else None
+
     def overall(self) -> float:
         done = sum(1 for s in self.stages if s["status"] in ("done", "skipped", "already loaded"))
         current = self.frac if 0 <= self.index < len(self.stages) and self.stages[self.index]["status"] == "running" else 0
@@ -125,7 +173,9 @@ class Job:
         self._last = now
         pct = self.overall()
         elapsed = now - self.started
-        eta = int(elapsed / pct * (1 - pct)) if pct > 0.02 and elapsed > 30 else None
+        eta = self.eta(now)
+        if eta is None and pct > 0.02 and elapsed > 30:
+            eta = int(elapsed / pct * (1 - pct))
         with self._lock:
           self.conn.execute(
             """update job set stage = %s, stage_index = %s, stage_total = %s, stage_pct = %s, pct = %s,

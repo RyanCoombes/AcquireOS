@@ -12,8 +12,43 @@ def connect(url: str | None = None) -> psycopg.Connection:
     return psycopg.connect(url or config.DATABASE_URL, row_factory=dict_row)
 
 
+_POOL = None
+
+
+def pool():
+    """A shared pool for web requests: opening a fresh connection for every
+    request costs 15-30 ms on a Pi over Docker. None if psycopg_pool is not
+    installed (then every call opens its own connection, as before)."""
+    global _POOL
+    if _POOL is None:
+        try:
+            from psycopg_pool import ConnectionPool
+        except ImportError:
+            return None
+        _POOL = ConnectionPool(config.DATABASE_URL, min_size=2, max_size=8, open=True, timeout=30,
+                               kwargs={"row_factory": dict_row}, check=ConnectionPool.check_connection)
+    return _POOL
+
+
+def close_pool():
+    global _POOL
+    if _POOL is not None:
+        _POOL.close()
+        _POOL = None
+
+
 @contextmanager
-def conn(url: str | None = None):
+def conn(url: str | None = None, dedicated: bool = False):
+    """A connection, committed on success and rolled back on error.
+
+    Web requests share the pool. Long jobs (data loads, scoring) must pass
+    dedicated=True: they change session settings and leave temp tables
+    behind, which must not come back to a request through the pool."""
+    p = None if (url or dedicated) else pool()
+    if p is not None:
+        with p.connection() as c:
+            yield c
+        return
     c = connect(url)
     try:
         yield c

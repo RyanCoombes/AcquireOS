@@ -354,7 +354,7 @@ def run_job(kind: str = "refresh", accounts_months: int = 1, reread_old: bool = 
     JOB = Job(kind, ["Company register", "Owners (PSC)", "Scoring", "Ownership links", "Map locations"])
     try:
         db.migrate()
-        with db.conn() as c:
+        with db.conn(dedicated=True) as c:
             result = refresh(c, accounts_months=accounts_months, reread_old=reread_old)
         failed = [k for k, v in result.items() if isinstance(v, dict) and v.get("error")]
         JOB.finish(result, status="done", error=("Some parts failed: " + ", ".join(failed)) if failed else None)

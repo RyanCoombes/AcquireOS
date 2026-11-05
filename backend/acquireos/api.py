@@ -38,6 +38,7 @@ async def lifespan(_app):
     manager = _install_mcp()
     async with manager.run():
         yield
+    db.close_pool()
 
 
 app = FastAPI(title="AcquireOS", version=__version__, lifespan=lifespan)
@@ -970,7 +971,7 @@ def start_geocode():
         from . import geo
 
         try:
-            with db.conn() as c:
+            with db.conn(dedicated=True) as c:
                 _geo_state["result"] = geo.geocode(c)
         except Exception as e:
             _geo_state["result"] = {"error": str(e)}
@@ -1326,7 +1327,7 @@ def _start_scoring(bb_id: int | None = None) -> bool:
     def work():
         job = None
         try:
-            with db.conn() as c:
+            with db.conn(dedicated=True) as c:
                 pending = [dict(r) for r in c.execute(
                     "select * from buy_box where user_id = %s and scored_at is null order by id", (UID,))]
                 if not pending:
@@ -1573,7 +1574,7 @@ def import_commit(body: CommitIn):
     path = config.UPLOAD_DIR / f"{body.token}{body.suffix}"
     if not path.exists():
         raise HTTPException(410, "Upload expired. Choose the file again.")
-    with db.conn() as c:
+    with db.conn(dedicated=True) as c:
         try:
             from .importers import register
             from .importers.tables import open_table

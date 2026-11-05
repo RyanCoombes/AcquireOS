@@ -75,7 +75,7 @@ def main(argv=None):
         r = mod.preview(a.file, a.sheet)
         print(json.dumps({"rows": r["row_count"], "mapping": r["mapping"], "problems": r["problems"]}, indent=2, default=str))
         return
-    with db.conn() as c:
+    with db.conn(dedicated=True) as c:
         if a.cmd == "import-companies":
             for f in a.files:
                 _print(f, companies.run(c, f, sheet=a.sheet, only_existing=a.only_existing))
