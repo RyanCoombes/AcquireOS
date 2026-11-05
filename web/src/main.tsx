@@ -108,7 +108,7 @@ function TopBar() {
         ref.current?.blur();
       }}>
         <svg viewBox="0 0 24 24" aria-hidden><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-        <input ref={ref} type="search" placeholder="Search companies by name, number or postcode" aria-label="Search companies" />
+        <input ref={ref} type="search" placeholder="Search by company, number, postcode or owner's name" aria-label="Search companies" />
         <span className="kbd" aria-hidden>/</span>
       </form>
       <div className="right"><JobBar /></div>

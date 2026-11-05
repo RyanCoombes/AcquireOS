@@ -188,7 +188,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const search = (
     <div className="field">
       <label htmlFor="f-q">Search</label>
-      <input id="f-q" type="search" value={qText} placeholder="Name, number or postcode" autoComplete="off"
+      <input id="f-q" type="search" value={qText} placeholder="Name, number, postcode or owner" autoComplete="off"
              onChange={(e) => setQText(e.target.value)}
              onKeyDown={(e) => { if (e.key === "Enter") set("q", qText.trim()); }} />
     </div>
@@ -464,6 +464,7 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
         {r.postcode ? ` · ${r.postcode}` : ""}
         {r.region ? ` · ${r.region}` : ""}
         {dim && r.exclusion ? <span className="flag red">{r.exclusion}</span> : null}
+        {r.matched_owner ? <span className="flag" title="Matched by owner's name">owner: {r.matched_owner}</span> : null}
         {r.accounts_overdue ? <span className="flag red">accounts overdue</span> : r.confirmation_overdue ? <span className="flag red">confirmation overdue</span> : null}
         {r.charges_outstanding ? <span className="flag">{r.charges_outstanding} charge{r.charges_outstanding === 1 ? "" : "s"}</span> : null}
         {" "}<Flags flags={r.flags} address={r.address_flag} />

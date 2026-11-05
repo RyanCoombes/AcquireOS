@@ -65,6 +65,7 @@ export interface Row {
   box_name?: string | null;
   boxes?: string[] | null;
   accounts_category?: string | null;
+  matched_owner?: string | null;
   charges_outstanding?: number | null;
   accounts_overdue?: boolean | null;
   confirmation_overdue?: boolean | null;

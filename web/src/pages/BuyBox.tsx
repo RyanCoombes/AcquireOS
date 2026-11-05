@@ -55,8 +55,10 @@ export default function BuyBox() {
           <h1 style={{ fontSize: 22 }}>Editing: {data.name}</h1>
           <div className="lede">
             {data.description ? <>{data.description} </> : null}
-            Each criterion earns points up to its weight; the score is the share of all points earned.
-            Missing data is neutral: it earns half the points (neither a hit nor a miss) and lowers the coverage figure.
+            A buy box works in three steps. <b>Universe</b>: which companies are even in the running (industry, area, age).{" "}
+            <b>Exclusions</b>: hard no's that drop a company out of the box. <b>Scoring</b>: everything still in is scored
+            0–100 by the criteria below; each criterion earns points up to its weight, and the score is the share of all
+            points earned. Missing data is neutral (half the points) and lowers the coverage figure.
           </div>
         </div>
         <div className="right">
@@ -91,6 +93,11 @@ export default function BuyBox() {
         }}>Add a criterion</button>
       </section>
 
+      <section style={{ paddingBottom: 0 }}>
+        <h2>Scoring criteria</h2>
+        <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}><b>Step 3: rank what is in.</b> These do not keep anything out; they decide the score. A company below the
+          acceptable range on a criterion scores 0 on it, within the ideal range scores full points, and in between scores in proportion.</p>
+      </section>
       <table>
         <thead><tr><th>Criterion</th><th className="num">Weight</th><th className="num">Share</th><th>Settings</th></tr></thead>
         <tbody>
@@ -140,10 +147,12 @@ export default function BuyBox() {
       <section>
         <h2>Universe</h2>
         <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}>
-          AcquireOS keeps every company on the Companies House register. The universe decides which of them count as
-          targets: a company is in scope if it is active, old enough, in your postcode areas (if any), and either has a SIC
-          code below or has a keyword in its name plus one of the secondary SIC codes (to catch tech firms filed as
-          consultancies). Everything else is still searchable under All companies, marked “outside your universe”.
+          <b>Step 1: which companies are in the running at all.</b> AcquireOS keeps every company on the register (5.7 million),
+          but only the universe gets scored: a company is in if it is active, old enough, in your postcode areas (if any), and
+          either has one of the SIC codes below, or has a keyword in its name plus one of the secondary SIC codes (to catch,
+          say, a software firm filed as a consultancy). The scoring criteria above then rank what is inside. Keep the universe
+          wide and let the scores do the sorting; make it narrow only to keep whole industries out. Everything outside is still
+          in Companies, marked “outside your universe”.
         </p>
         <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
           <dt>SIC codes starting with</dt><dd><SicPicker value={c.universe?.sic_prefixes ?? []} onChange={(v) => upd(["universe", "sic_prefixes"], v)} /></dd>
@@ -184,7 +193,8 @@ export default function BuyBox() {
 
       <section>
         <h2>Exclusions</h2>
-        <p className="muted" style={{ marginTop: -4 }}>Excluded companies are not in this buy box. On Targets they still show under All companies, in grey with the reason, when you filter by this box.</p>
+        <p className="muted" style={{ marginTop: -4 }}><b>Step 2: hard no's.</b> A company that is in the universe but matches one of these is dropped from the box
+          rather than scored low: a keyword like “scaffold”, an excluded ownership type, a dormant tier. In Companies it still shows, in grey with the reason.</p>
         <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
           <dt>Keywords in name, SIC or research</dt>
           <dd>

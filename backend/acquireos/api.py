@@ -404,6 +404,10 @@ def companies(
             order by p.rn
         """
         rows = c.execute(sql, params).fetchall()
+        if "qcands" in params:
+            hits = _OWNER_HITS.get({})
+            for r in rows:
+                r["matched_owner"] = hits.get(r["company_number"])
         # Counting millions of matches is slow, so counts stop at COUNT_CAP
         # ("100,000+"). With no filters at all the total is the register size.
         capped = False
@@ -453,6 +457,11 @@ def _like_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+import contextvars
+
+_OWNER_HITS: contextvars.ContextVar[dict] = contextvars.ContextVar("owner_hits", default={})
+
+
 def _search_candidates(c, q: str) -> tuple[list[str], bool]:
     """Company numbers matching a search, found with indexes rather than a
     scan of millions of rows: the exact company number, postcodes starting
@@ -494,6 +503,18 @@ def _search_candidates(c, q: str) -> tuple[list[str], bool]:
         limited = limited or len(rows) > SEARCH_CAP
         for r in rows[:SEARCH_CAP]:
             found[r["company_number"]] = None
+    # ...and companies whose owner (person with significant control) has that name.
+    owner_of: dict[str, str] = {}
+    if len(qs) >= 3:
+        words = [w for w in qu.split(" ") if w]
+        conds = " and ".join(["p.name ilike %s"] * len(words))
+        for r in c.execute(
+                f"""select cp.company_number, p.name from company_person cp join person p on p.id = cp.person_id
+                    where cp.ceased_on is null and {conds} limit %s""",
+                (*[f"%{_like_escape(w)}%" for w in words], SEARCH_CAP)):
+            owner_of.setdefault(r["company_number"], r["name"])
+            found[r["company_number"]] = None
+    _OWNER_HITS.set(owner_of)
     return list(found)[: SEARCH_CAP * 2], limited
 
 

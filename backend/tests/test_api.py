@@ -242,3 +242,13 @@ def test_owner_search_and_page(loaded):
         assert "01000001" in nums
         assert cl.get("/api/owners", params={"q": "zz"}).json()["rows"] == []
         assert cl.get("/api/owners/999999").status_code == 404
+
+
+def test_search_finds_companies_by_owner(loaded):
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        rows = cl.get("/api/companies", params={"q": "alex example", "sort": "relevance"}).json()["rows"]
+        nums = {r["company_number"]: r for r in rows}
+        assert "01000001" in nums and nums["01000001"]["matched_owner"] == "Mr Alex Example"
