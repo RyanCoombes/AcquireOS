@@ -43,6 +43,28 @@ export default function BuyBox() {
     } catch (e: any) { setToast(e.message); }
     setSaving(false);
   };
+  // Exclusions: every tick means "leave these out", shown with a cross.
+  const xchecks = (opts: [string, string][], path: string[]) => {
+    const list: string[] = get(c, path) ?? [];
+    return opts.map(([k, label]) => {
+      const on = list.includes(k);
+      return (
+        <label key={k} className={`xcheck ${on ? "on" : ""}`}>
+          <input type="checkbox" checked={on} aria-label={`Exclude ${label}`}
+                 onChange={(e) => upd(path, e.target.checked ? [...list, k] : list.filter((x) => x !== k))} />
+          <span className="mark" aria-hidden>{on ? "✕" : ""}</span>{label}
+        </label>
+      );
+    });
+  };
+  const ex = c.exclude ?? {};
+  const exList = [
+    ...(ex.keywords ?? []).map((k: string) => `“${k}”`),
+    ...(ex.regions ?? []),
+    ...(ex.ownership ?? []).map((k: string) => OWNERSHIP[k] ?? k),
+    ...(ex.address_flags ?? []).map((k: string) => meta.data?.address_flags?.[k] ?? k),
+    ...(ex.tiers ?? []).map((t: string) => `tier ${t}`),
+  ];
   const n = (path: string[], props: Record<string, unknown> = {}) => (
     <input type="number" value={get(c, path) ?? ""} onChange={(e) => upd(path, e.target.value === "" ? 0 : Number(e.target.value))} {...props} />
   );
@@ -148,7 +170,7 @@ export default function BuyBox() {
       <section>
         <h2>Universe</h2>
         <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}>
-          <b>Step 1: which companies are in the running at all.</b> AcquireOS keeps every company on the register (5.7 million),
+          <b>Step 1: which companies are in the running at all. Anything listed here is included</b>; everything else is left out. AcquireOS keeps every company on the register (5.7 million),
           but only the universe gets scored: a company is in if it is active, old enough, in your postcode areas (if any), and
           either has one of the SIC codes below, or has a keyword in its name plus one of the secondary SIC codes (to catch,
           say, a software firm filed as a consultancy). The scoring criteria above then rank what is inside. Keep the universe
@@ -156,28 +178,13 @@ export default function BuyBox() {
           in Companies, marked “outside your universe”.
         </p>
         <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
-          <dt>SIC codes starting with</dt><dd><SicPicker value={c.universe?.sic_prefixes ?? []} onChange={(v) => upd(["universe", "sic_prefixes"], v)} /></dd>
-          <dt>Name keywords</dt><dd><input type="text" style={{ width: "100%", maxWidth: 620 }} placeholder="software, data, digital" value={(c.universe?.name_keywords ?? []).join(", ")}
+          <dt>Include SIC codes starting with</dt><dd><SicPicker value={c.universe?.sic_prefixes ?? []} onChange={(v) => upd(["universe", "sic_prefixes"], v)} /></dd>
+          <dt>…or names containing</dt><dd><input type="text" style={{ width: "100%", maxWidth: 620 }} placeholder="software, data, digital" value={(c.universe?.name_keywords ?? []).join(", ")}
                    onChange={(e) => upd(["universe", "name_keywords"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
-          <dt>…with SIC codes starting</dt><dd><SicPicker value={c.universe?.keyword_sic_prefixes ?? []} onChange={(v) => upd(["universe", "keyword_sic_prefixes"], v)} /></dd>
-          <dt>Postcode areas</dt><dd><input type="text" style={{ width: "100%", maxWidth: 360 }} placeholder="e.g. CF, SA, NP, LL (blank for all of the UK)" value={(c.universe?.postcode_areas ?? []).join(", ")}
+          <dt>…when the SIC code starts with</dt><dd><SicPicker value={c.universe?.keyword_sic_prefixes ?? []} onChange={(v) => upd(["universe", "keyword_sic_prefixes"], v)} /></dd>
+          <dt>Only these postcode areas</dt><dd><input type="text" style={{ width: "100%", maxWidth: 360 }} placeholder="e.g. CF, SA, NP, LL (blank for all of the UK)" value={(c.universe?.postcode_areas ?? []).join(", ")}
                    onChange={(e) => upd(["universe", "postcode_areas"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
           <dt>Trading at least</dt><dd className="range">{n(["universe", "min_years"])}<span className="faint">years</span></dd>
-          <dt>Only companies in</dt>
-          <dd>
-            {meta.data?.regions.length ? meta.data.regions.map((r) => (
-              <label key={r} className="check" style={{ display: "inline-flex", marginRight: 12 }}>
-                <input type="checkbox" checked={c.regions.includes(r)}
-                       onChange={(e) => upd(["regions"], e.target.checked ? [...c.regions, r] : c.regions.filter((x: string) => x !== r))} />
-                {r}
-              </label>
-            )) : <span className="faint">No regions in the data yet.</span>}
-            <div className={c.regions.length ? "small" : "faint small"} style={{ marginTop: 4 }}>
-              {c.regions.length
-                ? <><b>Keeping only:</b> {c.regions.join(", ")}. Every other region is left out.</>
-                : "Nothing ticked: all of the UK. Tick a region to keep only that region."}
-            </div>
-          </dd>
           <dt>Holding companies</dt>
           <dd>
             <label className="check" style={{ height: "auto" }}>
@@ -209,47 +216,31 @@ export default function BuyBox() {
 
       <section>
         <h2>Exclusions</h2>
-        <p className="muted" style={{ marginTop: -4 }}><b>Step 2: hard no's.</b> A company that is in the universe but matches one of these is dropped from the box
-          rather than scored low: a keyword like “scaffold”, an excluded ownership type, a dormant tier. In Companies it still shows, in grey with the reason.</p>
-        <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
-          <dt>Keywords in name, SIC or research</dt>
+        <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}><b>Step 2: hard no's.</b> <b>Anything you tick or list here is excluded</b>:
+          a company that matches it is dropped from this buy box rather than scored low. In Companies it still shows, in grey with the reason.</p>
+        <div className={`exsummary ${exList.length ? "" : "none"}`}>
+          {exList.length ? <><b>Excluding:</b> {exList.join(" · ")}</> : "Nothing excluded yet."}
+        </div>
+        <dl className="facts exclusions" style={{ gridTemplateColumns: "240px 1fr" }}>
+          <dt>Exclude names, SIC or research mentioning</dt>
           <dd>
             <textarea style={{ minHeight: 56 }} value={c.exclude.keywords.join(", ")}
                       onChange={(e) => upd(["exclude", "keywords"], e.target.value.split(",").map((s) => s.trim()).filter(Boolean))} />
             <div className="faint small">Comma separated. Whole words only, so “van” does not exclude “Vanguard”.</div>
           </dd>
-          <dt>Review tiers</dt>
-          <dd>
-            {meta.data?.tiers.map((t) => (
-              <label key={t} className="check" style={{ display: "inline-flex", marginRight: 12 }}>
-                <input type="checkbox" checked={c.exclude.tiers.includes(t)}
-                       onChange={(e) => upd(["exclude", "tiers"], e.target.checked ? [...c.exclude.tiers, t] : c.exclude.tiers.filter((x: string) => x !== t))} />
-                {t}
-              </label>
-            ))}
-          </dd>
-          <dt>Ownership types</dt>
-          <dd>
-            {Object.entries(OWNERSHIP).map(([k, v]) => (
-              <label key={k} className="check" style={{ display: "inline-flex", marginRight: 12 }}>
-                <input type="checkbox" checked={c.exclude.ownership.includes(k)}
-                       onChange={(e) => upd(["exclude", "ownership"], e.target.checked ? [...c.exclude.ownership, k] : c.exclude.ownership.filter((x: string) => x !== k))} />
-                {v}
-              </label>
-            ))}
-          </dd>
-          <dt>Registered address</dt>
-          <dd>
-            {Object.entries(meta.data?.address_flags ?? {}).map(([k, v]) => (
-              <label key={k} className="check" style={{ display: "inline-flex", marginRight: 12 }}>
-                <input type="checkbox" checked={c.exclude.address_flags.includes(k)}
-                       onChange={(e) => upd(["exclude", "address_flags"], e.target.checked ? [...c.exclude.address_flags, k] : c.exclude.address_flags.filter((x: string) => x !== k))} />
-                {v}
-              </label>
-            ))}
-          </dd>
-          <dt>Company status</dt>
-          <dd>{c.exclude.statuses.join(", ")}</dd>
+          <dt>Exclude regions</dt>
+          <dd>{xchecks(meta.data?.regions.map((r) => [r, r]) ?? [], ["exclude", "regions"])}
+            {!meta.data?.regions.length && <span className="faint">No regions in the data yet.</span>}</dd>
+          <dt>Exclude ownership types</dt>
+          <dd>{xchecks(Object.entries(OWNERSHIP), ["exclude", "ownership"])}</dd>
+          <dt>Exclude registered addresses</dt>
+          <dd>{xchecks(Object.entries(meta.data?.address_flags ?? {}), ["exclude", "address_flags"])}</dd>
+          <dt>Exclude review tiers</dt>
+          <dd>{xchecks((meta.data?.tiers ?? []).map((t) => [t, t]), ["exclude", "tiers"])}
+            <div className="faint small">Tiers from a ranked file you imported, if any.</div></dd>
+          <dt>Always excluded</dt>
+          <dd className="muted">Companies that are dissolved, in liquidation, administration or receivership, under a voluntary
+            arrangement, being struck off, or removed from the register.</dd>
         </dl>
       </section>
       <Toast msg={toast} onDone={() => setToast(null)} />

@@ -1,5 +1,6 @@
 import json
 from datetime import date
+from pathlib import Path
 
 from acquireos import normalise as n
 from acquireos import scoring
@@ -297,3 +298,23 @@ def test_rescore_is_incremental(loaded):
     scoring.rescore(c)
     after3 = {r["company_number"]: r["computed_at"] for r in c.execute("select company_number, computed_at from score")}
     assert all(after3[k] > after2[k] for k in after2)
+
+
+def test_excluded_regions_are_left_out():
+    crit = scoring.merged({"exclude": {"regions": ["England", "Scotland"]}})
+    wales = scoring.score_company({"name": "X", "region": "Wales"}, crit, date(2026, 11, 4))
+    england = scoring.score_company({"name": "Y", "region": "England"}, crit, date(2026, 11, 4))
+    assert not wales["excluded"]
+    assert england["excluded"] and "England" in england["exclusion"]
+
+
+def test_old_regions_only_setting_becomes_an_exclusion(c):
+    import json as _j
+
+    c.execute("insert into buy_box (user_id, name, criteria, is_active) values (1, 'Old', %s, false)",
+              (_j.dumps({"regions": ["England", "Scotland"], "exclude": {"keywords": ["van"]}}),))
+    sql = (Path(scoring.__file__).parent / "migrations" / "019_exclude_regions.sql").read_text()
+    c.execute(sql)
+    crit = c.execute("select criteria from buy_box where name = 'Old'").fetchone()["criteria"]
+    assert "regions" not in crit and crit["exclude"]["regions"] == ["England", "Scotland"]
+    assert crit["exclude"]["keywords"] == ["van"]

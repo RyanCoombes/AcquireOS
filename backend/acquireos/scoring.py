@@ -19,7 +19,6 @@ DEFAULT_CRITERIA = {
     "ownership": {"weight": 15, "good": ["owner_held"], "neutral": ["unknown", "trust"]},
     "net_asset_growth": {"weight": 5},
     "sic": {"weight": 5, "preferred": ["62012", "62020", "62030", "62090", "63110", "63120", "58290", "58210"]},
-    "regions": [],
     "valuation": {"margin_low": 8.0, "margin_high": 15.0, "multiple_low": 3.0, "multiple_high": 5.0},
     # Your own criteria, scored 0-5 on each company. Keys are shared across
     # buy boxes, so a company is never scored twice for the same thing.
@@ -55,6 +54,7 @@ DEFAULT_CRITERIA = {
         "ownership": ["eot"],
         "keywords": ["electrical", "plumbing", "heating", "cctv", "fire alarm", "scaffold", "roofing", "cleaning"],
         "address_flags": [],
+        "regions": [],  # regions to leave out
         # Exclude companies that research has found to be field-service or
         # van-based (from the enrichment field_service = yes).
         "field_service": True,
@@ -211,9 +211,9 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
             if kw and re.search(r"\b" + re.escape(kw.lower()) + r"\b", hay):
                 exclusion = f"Matches excluded keyword “{kw}”"
                 break
-    regions = cr.get("regions") or []
-    if not exclusion and regions and (c.get("region") or "") not in regions:
-        exclusion = f"Outside chosen regions ({', '.join(regions)})"
+    out_regions = ex.get("regions") or []
+    if not exclusion and c.get("region") and c["region"] in out_regions:
+        exclusion = f"Region excluded: {c['region']}"
 
     s = cr["staff"]
     if c.get("employees") is None:
