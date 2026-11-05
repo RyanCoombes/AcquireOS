@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { ErrorLine, Toast, useAsync } from "../components/bits";
 import { money, OWNERSHIP } from "../format";
+import SicPicker from "../components/SicPicker";
 
 type C = any;
 
@@ -92,8 +93,9 @@ export default function BuyBox() {
           </Crit>
           <Crit label="Industry code" w={["sic", "weight"]} c={c} n={n} total={totalWeight}>
             Preferred SIC codes{" "}
-            <input type="text" style={{ width: 420 }} value={c.sic.preferred.join(", ")}
-                   onChange={(e) => upd(["sic", "preferred"], e.target.value.split(/[\s,]+/).filter(Boolean))} />
+            <div style={{ marginTop: 6 }}>
+              <SicPicker value={c.sic.preferred} onChange={(v) => upd(["sic", "preferred"], v)} />
+            </div>
           </Crit>
         </tbody>
       </table>
@@ -107,12 +109,10 @@ export default function BuyBox() {
           consultancies). Everything else is still searchable under All companies, marked “outside your universe”.
         </p>
         <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
-          <dt>SIC codes starting with</dt><dd><input type="text" style={{ width: 460 }} placeholder="e.g. 620, 631, 5829" value={(c.universe?.sic_prefixes ?? []).join(", ")}
-                   onChange={(e) => upd(["universe", "sic_prefixes"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
+          <dt>SIC codes starting with</dt><dd><SicPicker value={c.universe?.sic_prefixes ?? []} onChange={(v) => upd(["universe", "sic_prefixes"], v)} /></dd>
           <dt>Name keywords</dt><dd><input type="text" style={{ width: 620 }} placeholder="software, data, digital" value={(c.universe?.name_keywords ?? []).join(", ")}
                    onChange={(e) => upd(["universe", "name_keywords"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
-          <dt>…with SIC codes starting</dt><dd><input type="text" style={{ width: 460 }} placeholder="e.g. 70229, 74909" value={(c.universe?.keyword_sic_prefixes ?? []).join(", ")}
-                   onChange={(e) => upd(["universe", "keyword_sic_prefixes"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
+          <dt>…with SIC codes starting</dt><dd><SicPicker value={c.universe?.keyword_sic_prefixes ?? []} onChange={(v) => upd(["universe", "keyword_sic_prefixes"], v)} /></dd>
           <dt>Postcode areas</dt><dd><input type="text" style={{ width: 360 }} placeholder="e.g. CF, SA, NP, LL (blank for all of the UK)" value={(c.universe?.postcode_areas ?? []).join(", ")}
                    onChange={(e) => upd(["universe", "postcode_areas"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
           <dt>Trading at least</dt><dd className="range">{n(["universe", "min_years"])}<span className="faint">years</span></dd>

@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { ErrorLine, useAsync } from "../components/bits";
 import MapView, { type MapLink, type MapPoint } from "../components/MapView";
+import SicPicker from "../components/SicPicker";
 import { int, OWNERSHIP } from "../format";
 
 export default function MapPage() {
@@ -73,9 +74,9 @@ export default function MapPage() {
             {meta.data?.statuses.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
         </div>
-        <div className="field">
-          <label htmlFor="m-sic">SIC starts</label>
-          <input id="m-sic" type="text" style={{ width: 90 }} defaultValue={params.get("sic") ?? ""} onBlur={(e) => set("sic", e.target.value)} />
+        <div className="field" style={{ minWidth: 320 }}>
+          <label>Industry (SIC)</label>
+          <SicPicker value={(params.get("sic") ?? "").split(",").filter(Boolean)} onChange={(v) => set("sic", v.join(","))} />
         </div>
         <label className="check"><input type="checkbox" checked={showLinks} onChange={(e) => setShowLinks(e.target.checked)} />Ownership links</label>
         <div className="band-actions faint small">

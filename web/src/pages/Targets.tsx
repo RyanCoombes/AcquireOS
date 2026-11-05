@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Row } from "../api";
 import { ErrorLine, Flags, Score, StatusMark, Toast, useAsync } from "../components/bits";
 import { Spark } from "../components/charts";
+import SicPicker from "../components/SicPicker";
 import { ageFrom, cap, CHANGE_KIND, int, isBadStatus, OWNERSHIP, range, relDays, years } from "../format";
 
 const PAGE = 100;
@@ -33,7 +34,6 @@ export default function Targets() {
   const nav = useNavigate();
   const meta = useAsync(() => api.meta(), []);
   const saved = useAsync(() => api.searches(), []);
-  const sicList = useAsync(() => api.sic(), []);
   const query = useMemo(() => Object.fromEntries(params.entries()), [params]);
   const page = Number(query.page ?? 0);
   const apiParams: Record<string, string> = { ...query, limit: String(PAGE), offset: String(page * PAGE) };
@@ -165,11 +165,10 @@ export default function Targets() {
             {more && (
               <div className="band-more">
                 <Select label="Company status" k="company_status" query={query} set={set} options={(m?.company_statuses ?? []).map((s) => [s, cap(s)])} />
-                <div className="field">
-                  <label htmlFor="f-sic">SIC code starts</label>
-                  <datalist id="sic-codes">{sicList.data?.slice(0, 300).map((x) => <option key={x.code} value={x.code}>{`${x.description} (${x.n})`}</option>)}</datalist>
-                  <input id="f-sic" type="text" list="sic-codes" style={{ width: 120 }} key={`sic-${query.sic ?? ""}`} defaultValue={query.sic ?? ""} placeholder="e.g. 620"
-                         onBlur={(e) => set("sic", e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") set("sic", (e.target as HTMLInputElement).value); }} />
+                <div className="field" style={{ flexBasis: "100%" }}>
+                  <label>Industry (SIC)</label>
+                  <SicPicker value={(query.sic ?? "").split(",").filter(Boolean)} width="100%"
+                             onChange={(v) => set("sic", v.join(","))} />
                 </div>
                 <NumField label="Years trading" k="min_years" placeholder="at least" query={query} set={set} />
                 <NumRange label="Indicative value, £" lo="min_value" hi="max_value" query={query} set={set} wide />

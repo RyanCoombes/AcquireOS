@@ -195,8 +195,11 @@ def companies(
         if company_status:
             where.append("c.status = %(cstatus)s"); params["cstatus"] = company_status
         if sic:
-            where.append("exists (select 1 from unnest(c.sic_codes) x where x like %(sic)s)")
-            params["sic"] = sic.strip().rstrip("*") + "%"
+            # One or more codes or prefixes, comma separated: "62, 63110".
+            prefixes = [x.strip().rstrip("*") + "%" for x in sic.split(",") if x.strip()]
+            if prefixes:
+                where.append("exists (select 1 from unnest(c.sic_codes) x where x like any(%(sic)s))")
+                params["sic"] = prefixes
         if changed_days:
             where.append("exists (select 1 from company_change x where x.company_number = c.company_number "
                          "and x.detected_at > now() - make_interval(days => %(cdays)s))"); params["cdays"] = changed_days
@@ -732,18 +735,29 @@ def sic_list():
 
 
 def _sic_list():
+    """Every SIC code we know (from Companies House data and the built-in
+    list) plus the two-digit divisions, with how many companies have each."""
     from . import sic as sic_mod
 
     with db.conn() as c:
         bb = scoring.active_buy_box(c)
-        rows = c.execute(
+        counts = {r["code"]: r for r in c.execute(
             """select code, count(*) as n,
                       count(*) filter (where not coalesce(s.excluded, false)) as in_scope
                from company c cross join unnest(c.sic_codes) code
                left join score s on s.company_number = c.company_number and s.buy_box_id = %s
-               group by code order by n desc""", (bb["id"],)).fetchall()
+               group by code""", (bb["id"],))}
         known = {r["code"]: r["description"] for r in c.execute("select code, description from sic_code")}
-    return [{**r, "description": sic_mod.describe(r["code"], known)} for r in rows]
+    codes = set(known) | set(counts)
+    out = [{"code": code, "description": sic_mod.describe(code, known), "level": "code",
+            "n": counts[code]["n"] if code in counts else 0,
+            "in_scope": counts[code]["in_scope"] if code in counts else 0} for code in codes]
+    for div, name in sic_mod.DIVISIONS.items():
+        n = sum(r["n"] for k, r in counts.items() if k.startswith(div))
+        ins = sum(r["in_scope"] for k, r in counts.items() if k.startswith(div))
+        out.append({"code": div, "description": name, "level": "division", "n": n, "in_scope": ins})
+    out.sort(key=lambda r: (-r["n"], r["code"]))
+    return out
 
 
 class EnrichIn(BaseModel):
