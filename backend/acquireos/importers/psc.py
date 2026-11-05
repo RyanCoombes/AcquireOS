@@ -146,8 +146,10 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
         else:
             for chunk in _chunks(paths):
                 take(_parse_chunk(chunk))
-    if progress:
-        progress(f"Saving {total:,} owner records", 0.65)
+    from ..ownership import Steps
+
+    step = Steps(progress, 0.62, 0.85, total=5)
+    step(f"Removing duplicate owner records ({total:,} read)")
     # Keep the last occurrence of each record: one sort, not a self-join of
     # every staged row against every other.
     conn.execute("""create temp table psc_latest as
@@ -157,6 +159,7 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
     conn.execute("create index on psc_stage (row_key)")
     conn.execute("analyze psc_stage")
 
+    step("Saving people and companies named as owners")
     conn.execute("""
         insert into person (person_key, kind, name, birth_year, birth_month, registration_number,
                             country_registered, legal_form, address, postcode)
@@ -173,6 +176,7 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
               is distinct from (excluded.name, excluded.registration_number, excluded.country_registered)
            or (excluded.address is not null and person.address is distinct from excluded.address)""")
 
+    step("Recording owner changes and linking owners to companies")
     changes = 0
     if record_changes and not first:
         changes += conn.execute("""
@@ -198,6 +202,7 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
     in_list = conn.execute("select count(*) as n from psc_stage s join company c using (company_number)").fetchone()["n"]
     retired = 0
     if total >= FULL_SNAPSHOT_MIN:
+        step("Removing owner records no longer at Companies House")
         # A full snapshot is the whole truth: owner records no longer in it
         # (removed or corrected at Companies House) are dropped, so they do
         # not linger as duplicate or out-of-date owners.
@@ -205,6 +210,7 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
         retired = conn.execute("""
             delete from company_person cp where cp.source = 'psc_snapshot'
               and not exists (select 1 from psc_stage s where s.row_key = cp.row_key)""").rowcount
+    step("Saving owners of parent companies outside the register")
     parents = conn.execute("""
         insert into parent_psc (parent_number, person_id, natures, ceased_on)
         select distinct on (s.company_number, p.id) s.company_number, p.id, s.natures, s.ceased_on
@@ -225,6 +231,7 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
 
     # links=False when a later step rebuilds the links anyway (the monthly
     # refresh does, after scoring), so the slowest part is not done twice.
+    step.finish()
     stats = rebuild(conn, progress=progress, links=links)
     return {"run_id": run_id, "rows_ok": in_list, "parents_traced": parents, "changes": changes, **stats}
 
