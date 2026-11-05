@@ -304,11 +304,7 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True, reread_old: bool =
             log(f"{label} failed: {e}")
             out[label] = {"error": str(e)}
 
-    part("Company register", lambda: fetch_company_data(conn))
-    # Owners before accounts: one snapshot covers every company, whereas
-    # accounts take a file per month.
-    if psc:
-        part("Owners (PSC)", lambda: fetch_psc(conn))
+    # Work out the accounts months first, so every step shows from the start.
     try:
         plan = accounts_plan(conn, accounts_months, reread_old=reread_old)
     except Exception as e:
@@ -322,6 +318,11 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True, reread_old: bool =
             if label not in names:
                 JOB.stages.insert(at, {"name": label, "status": "waiting", "seconds": None})
                 at += 1
+    part("Company register", lambda: fetch_company_data(conn))
+    # Owners before accounts: one snapshot covers every company, whereas
+    # accounts take a file per month.
+    if psc:
+        part("Owners (PSC)", lambda: fetch_psc(conn))
     try:
         out["accounts"] = fetch_accounts(conn, plan=plan)
     except Exception as e:
