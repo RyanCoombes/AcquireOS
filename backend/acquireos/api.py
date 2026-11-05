@@ -227,7 +227,7 @@ def companies(
     min_years: int | None = None, format: str = "list", business_type: str | None = None,
     has_website: bool | None = None, bb: str = "all", in_box: bool | None = None,
     accounts_size: str | None = None, overdue: str | None = None, charges: str | None = None,
-    numbers: str | None = None, count: bool = True,
+    numbers: str | None = None, count: bool = True, mine: str | None = None,
 ):
     """All companies, with scores from one buy box (bb=<id>) or each company's
     best score across buy boxes (bb=all). in_box limits to companies inside
@@ -300,6 +300,12 @@ def companies(
             params["btype"] = business_type
         if has_website is not None:
             where.append(("" if has_website else "not ") + "exists (select 1 from enrichment en where en.company_number = c.company_number and en.website is not null)")
+        if mine == "hide_closed":   # hide companies you have passed on or rejected
+            where.append("coalesce(uc.status, 'new') not in ('passed', 'rejected')")
+        elif mine == "pipeline":    # only ones you are working on
+            where.append("coalesce(uc.status, 'new') not in ('new', 'passed', 'rejected')")
+        elif mine == "untouched":   # only ones you have not given a status yet
+            where.append("coalesce(uc.status, 'new') = 'new'")
         if numbers:
             # an explicit selection (e.g. "export the ones I ticked")
             where.append("c.company_number = any(%(nums)s)")

@@ -47,9 +47,9 @@ const VIEWS: Record<Mode, { key: string; label: string; params: Record<string, s
 };
 const DEFAULTS: Record<Mode, Record<string, string>> = {
   directory: { sort: "name", dir: "asc" },
-  targets: { sort: "score", dir: "desc", in_box: "true" },
+  targets: { sort: "score", dir: "desc", in_box: "true", mine: "hide_closed" },
 };
-const FILTER_KEYS = ["accounts_size", "overdue", "charges", "bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
+const FILTER_KEYS = ["mine", "accounts_size", "overdue", "charges", "bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
   "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
 const MORE_KEYS = ["overdue", "charges", "business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
 
@@ -68,6 +68,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   // Old links and saved searches used include_excluded / in_box=1.
   delete apiParams.include_excluded;
   delete apiParams.list;
+  if (apiParams.mine === "all") delete apiParams.mine;
   if (mode === "targets") apiParams.in_box = "true";
   else if (apiParams.in_box === "1") apiParams.in_box = "true";
   // Rows first (fast), the count separately (it can take a moment on millions of rows).
@@ -207,6 +208,21 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const ownerAge = <NumField label="Owner aged" k="min_owner_age" placeholder="at least" query={query} set={set} />;
   const ownership = <Select label="Ownership" k="ownership" query={query} set={set} options={Object.entries(OWNERSHIP).map(([v, l]) => [v, l])} />;
   const myStatus = <Select label="My status" k="status" query={query} set={set} options={(m?.statuses ?? []).map((x) => [x.value, x.label])} />;
+  // What to show by your own decisions. Targets hides passed and rejected by default.
+  const mineDefault = DEFAULTS[mode].mine ?? "all";
+  const mineValue = query.mine ?? mineDefault;
+  const show = (
+    <div className="field">
+      <label htmlFor="f-mine">Show</label>
+      <select id="f-mine" value={mineValue} className={mineValue !== "all" ? "set" : ""}
+              onChange={(e) => set("mine", e.target.value === mineDefault ? null : e.target.value)}>
+        <option value="all">Everything</option>
+        <option value="hide_closed">Hide passed and rejected</option>
+        <option value="pipeline">Only my pipeline</option>
+        <option value="untouched">Only not looked at yet</option>
+      </select>
+    </div>
+  );
   const accountsSize = <Select label="Accounts filed" k="accounts_size" query={query} set={set}
                               options={(m?.account_sizes ?? []).map((g) => [g.value, g.label] as [string, string])} />;
   const overdueSel = <Select label="Overdue filings" k="overdue" query={query} set={set}
@@ -290,8 +306,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
             </button>
             {mode === "targets" && boxSelect}
             {search}
-            {mode === "directory" ? <>{companyStatus}{industry}{region}{staff}{yearsTrading}{accountsSize}</>
-              : <>{staff}{ownerAge}{ownership}{region}{myStatus}{score}</>}
+            {mode === "directory" ? <>{companyStatus}{industry}{region}{staff}{yearsTrading}{accountsSize}{show}</>
+              : <>{show}{staff}{ownerAge}{ownership}{region}{myStatus}{score}</>}
             <button className="btn quiet" onClick={() => setMore(!more)} aria-expanded={more}>{more ? "Fewer filters" : "More filters"}</button>
             <div className="band-actions">
               {activeFilters > 0 && <button className="btn quiet" onClick={() => setParams(new URLSearchParams(VIEWS[mode].find((v) => v.key === view)?.params ?? {}), { replace: true })}>Clear</button>}

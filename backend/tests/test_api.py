@@ -262,3 +262,19 @@ def test_funding_assumptions_are_kept_per_company(loaded):
         r = cl.put("/api/companies/01000001/state", json={"funding": {"price": 2500000, "investor_equity": 500000, "investor_stake": 30, "bogus": 1}})
         assert r.status_code == 200 and r.json()["funding"] == {"price": 2500000.0, "investor_equity": 500000.0, "investor_stake": 30.0}
         assert cl.get("/api/companies/01000001").json()["state"]["funding"]["investor_stake"] == 30
+
+
+def test_show_filter_hides_decided_companies(loaded):
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        cl.put("/api/companies/01000005/state", json={"status": "rejected"})
+        cl.put("/api/companies/01000004/state", json={"status": "watching"})
+        allc = {r["company_number"] for r in cl.get("/api/companies?limit=50").json()["rows"]}
+        hidden = {r["company_number"] for r in cl.get("/api/companies?limit=50&mine=hide_closed").json()["rows"]}
+        pipe = {r["company_number"] for r in cl.get("/api/companies?limit=50&mine=pipeline").json()["rows"]}
+        fresh = {r["company_number"] for r in cl.get("/api/companies?limit=50&mine=untouched").json()["rows"]}
+        assert "01000005" in allc and "01000005" not in hidden
+        assert "01000004" in pipe and "01000005" not in pipe
+        assert "01000004" not in fresh and "01000005" not in fresh
