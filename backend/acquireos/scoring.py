@@ -6,6 +6,7 @@ the share of the possible points that could actually be assessed.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import date
@@ -393,11 +394,14 @@ def _fact(r) -> dict:
     return r
 
 
-def load_facts(conn, company_number: str | None = None) -> list[dict]:
+def load_facts(conn, company_number: str | None = None, with_hash: bool = False) -> list[dict]:
     where = "where c.company_number = %s" if company_number else ""
     rwhere = "where company_number = %s" if company_number else ""
     params = (company_number, company_number) if company_number else ()
-    return [_fact(r) for r in conn.execute(FACTS_SQL.format(where=where, rwhere=rwhere), params).fetchall()]
+    sql = FACTS_SQL.format(where=where, rwhere=rwhere)
+    if with_hash:
+        sql = f"select f.*, md5(f::text) as facts_hash from ({sql}) f"
+    return [_fact(r) for r in conn.execute(sql, params).fetchall()]
 
 
 def template_criteria(key: str) -> dict:
@@ -443,6 +447,9 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
            union select company_number from manual_score""")}
 
     parent_of = parents_in_universe(conn, criteria, company_number)
+    # What the scores depend on besides each company's own facts: the
+    # criteria, the valuation assumptions and the year (ages, years trading).
+    crit_hash = hashlib.md5(json.dumps([criteria, va, today.year], sort_keys=True, default=str).encode()).hexdigest()
 
     def rows_for(facts, store_all=False):
         for f in facts:
@@ -455,20 +462,20 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
             v = valuation.value(f, va)
             yield (bb["id"], f["company_number"], sc["score"], sc["coverage"], sc["excluded"], sc["exclusion"],
                    json.dumps(sc["reasons"]), v["ebitda_low"], v["ebitda_high"], v["value_low"], v["value_high"],
-                   v["basis"])
+                   v["basis"], f.get("facts_hash"))
 
     upsert = """insert into score (buy_box_id, company_number, score, coverage, excluded, exclusion, reasons,
-                   ebitda_low, ebitda_high, value_low, value_high, value_basis)
-               select * from score_stage
+                   ebitda_low, ebitda_high, value_low, value_high, value_basis, facts_hash, computed_at)
+               select *, clock_timestamp() from score_stage
                on conflict (buy_box_id, company_number) do update set score = excluded.score,
                  coverage = excluded.coverage, excluded = excluded.excluded, exclusion = excluded.exclusion,
                  reasons = excluded.reasons, ebitda_low = excluded.ebitda_low, ebitda_high = excluded.ebitda_high,
                  value_low = excluded.value_low, value_high = excluded.value_high, value_basis = excluded.value_basis,
-                 computed_at = now()"""
+                 facts_hash = excluded.facts_hash, computed_at = clock_timestamp()"""
     conn.execute("drop table if exists score_stage")
     conn.execute("""create temp table score_stage (buy_box_id int, company_number text, score numeric, coverage numeric,
                     excluded boolean, exclusion text, reasons jsonb, ebitda_low numeric, ebitda_high numeric,
-                    value_low numeric, value_high numeric, value_basis text)""")
+                    value_low numeric, value_high numeric, value_basis text, facts_hash text)""")
 
     def flush(buf):
         if not buf:
@@ -481,7 +488,7 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
 
     if company_number:
         refresh_latest(conn, [company_number])
-        rows = list(rows_for(load_facts(conn, company_number)))
+        rows = list(rows_for(load_facts(conn, company_number, with_hash=True)))
         conn.execute("delete from score where buy_box_id = %s and company_number = %s", (bb["id"], company_number))
         flush(rows)
         return 1
@@ -499,23 +506,52 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
     if parent_of:
         where_sql = where_sql[:-1] + " or c.company_number = any(%(u_parents)s))"
         wparams["u_parents"] = list(parent_of)
-    total = conn.execute(f"select count(*) as n from company c {where_sql}", wparams).fetchone()["n"] or 1
-    conn.execute("delete from score where buy_box_id = %s", (bb["id"],))
+    wparams["bb"] = bb["id"]
+    scored_hash = conn.execute("select scored_hash from buy_box where id = %(bb)s", wparams).fetchone()["scored_hash"]
+    full = scored_hash != crit_hash or conn.execute(
+        "select 1 from score where buy_box_id = %(bb)s and facts_hash is not null limit 1", wparams).fetchone() is None
+    if full:
+        # Criteria changed (or never scored this way): every candidate again.
+        total = conn.execute(f"select count(*) as n from company c {where_sql}", wparams).fetchone()["n"] or 1
+        conn.execute("delete from score where buy_box_id = %(bb)s", wparams)
+        changed_sql = "true"
+    else:
+        # Same criteria: only companies whose facts changed since they were
+        # scored, plus parents (their reason depends on other companies), and
+        # drop rows for companies that have left the candidate set.
+        conn.execute(f"""delete from score s where s.buy_box_id = %(bb)s
+                         and not exists (select 1 from company c {where_sql} and c.company_number = s.company_number)""",
+                     wparams)
+        changed_sql = """(s.facts_hash is distinct from md5(f::text)
+                          or f.company_number = any(%(u_parents)s) or s.reasons @> '[{"key": "parent"}]')"""
+        wparams.setdefault("u_parents", list(parent_of))
+        total = None
+    sql = f"""select f.*, md5(f::text) as facts_hash
+              from ({FACTS_SQL.format(where=where_sql, rwhere="")}) f
+              left join score s on s.buy_box_id = %(bb)s and s.company_number = f.company_number
+              where {changed_sql}"""
+    if total is None:
+        # Not counted first (that would run the comparison twice): progress
+        # is reported as a running count instead.
+        if progress:
+            progress("Scoring companies whose facts changed", 0.03)
     n = 0
     buf: list = []
     with conn.cursor(name="score_facts") as cur:
         cur.itersize = batch
-        cur.execute(FACTS_SQL.format(where=where_sql, rwhere=""), wparams)
+        cur.execute(sql, wparams)
         for r in cur:
             buf.extend(rows_for([_fact(r)]))
             n += 1
             if len(buf) >= batch:
                 flush(buf)
                 buf = []
-                if progress:
+                if progress and full:
                     progress(f"Scored {n:,} of {total:,} companies", 0.05 + 0.95 * n / total)
+                elif progress:
+                    progress(f"Rescored {n:,} companies whose facts changed", None)
     flush(buf)
-    conn.execute("update buy_box set scored_at = now() where id = %s", (bb["id"],))
+    conn.execute("update buy_box set scored_at = now(), scored_hash = %s where id = %s", (crit_hash, bb["id"]))
     if best:
         refresh_best(conn, company_number)  # one company's change only touches its own row
     return n
@@ -575,24 +611,36 @@ def universe_sql(criteria: dict, keep: bool = True) -> tuple[str, dict]:
 
 
 def refresh_best(conn, company_number: str | None = None):
-    """Rebuild company_best (best score across buy boxes) for all or one company."""
+    """Bring company_best (best score across buy boxes) up to date for all or
+    one company, writing only the rows that differ."""
     where = "and s.company_number = %(n)s" if company_number else ""
-    if company_number:
-        conn.execute("delete from company_best where company_number = %s", (company_number,))
-    else:
-        # delete, not truncate: truncate locks every reader out of the
-        # directory until the whole scoring job commits.
-        conn.execute("delete from company_best")
+    conn.execute("drop table if exists best_new")
     conn.execute(f"""
-        insert into company_best (company_number, buy_box_id, box_name, score, coverage, value_low, value_high,
-                                  value_basis, boxes)
-        select distinct on (s.company_number) s.company_number, s.buy_box_id, b.name, s.score, s.coverage,
+        create temp table best_new as
+        select distinct on (s.company_number) s.company_number, s.buy_box_id, b.name as box_name, s.score, s.coverage,
                s.value_low, s.value_high, s.value_basis,
                array(select b2.name from score s2 join buy_box b2 on b2.id = s2.buy_box_id
-                     where s2.company_number = s.company_number and not s2.excluded order by s2.score desc)
+                     where s2.company_number = s.company_number and not s2.excluded order by s2.score desc) as boxes
         from score s join buy_box b on b.id = s.buy_box_id
         where not s.excluded {where}
         order by s.company_number, s.score desc""", {"n": company_number})
+    conn.execute("create index on best_new (company_number)")
+    conn.execute("analyze best_new")
+    scope = "and cb.company_number = %(n)s" if company_number else ""
+    conn.execute(f"""delete from company_best cb where true {scope}
+                     and not exists (select 1 from best_new n where n.company_number = cb.company_number)""",
+                 {"n": company_number})
+    conn.execute("""
+        update company_best cb set buy_box_id = n.buy_box_id, box_name = n.box_name, score = n.score, coverage = n.coverage,
+               value_low = n.value_low, value_high = n.value_high, value_basis = n.value_basis, boxes = n.boxes
+        from best_new n where n.company_number = cb.company_number
+          and (cb.buy_box_id, cb.box_name, cb.score, cb.coverage, cb.value_low, cb.value_high, cb.value_basis, cb.boxes)
+              is distinct from (n.buy_box_id, n.box_name, n.score, n.coverage, n.value_low, n.value_high, n.value_basis, n.boxes)""")
+    conn.execute("""
+        insert into company_best (company_number, buy_box_id, box_name, score, coverage, value_low, value_high, value_basis, boxes)
+        select n.company_number, n.buy_box_id, n.box_name, n.score, n.coverage, n.value_low, n.value_high, n.value_basis, n.boxes
+        from best_new n where not exists (select 1 from company_best cb where cb.company_number = n.company_number)""")
+    conn.execute("drop table best_new")
 
 
 def rescore_all(conn, progress=None) -> int:

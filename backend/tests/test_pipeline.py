@@ -1,3 +1,4 @@
+import json
 from datetime import date
 
 from acquireos import normalise as n
@@ -270,3 +271,29 @@ def test_ownership_rebuild_rewrites_only_changes(loaded):
     ownership.rebuild(c)
     after = {r["company_number"]: r["updated_at"] for r in c.execute("select company_number, updated_at from company_ownership")}
     assert after == before  # nothing changed, so nothing was rewritten
+
+
+def test_rescore_is_incremental(loaded):
+    c = loaded
+    bb = scoring.active_buy_box(c)
+    before = {r["company_number"]: r["computed_at"] for r in c.execute("select company_number, computed_at from score")}
+    assert before
+    import time
+    time.sleep(0.05)
+    scoring.rescore(c)  # nothing changed: nothing recomputed (parents are always redone; they are few)
+    after = {r["company_number"]: r["computed_at"] for r in c.execute("select company_number, computed_at from score")}
+    parents = {"01000003"}
+    assert {k: v for k, v in after.items() if k not in parents} == {k: v for k, v in before.items() if k not in parents}
+    # one company's facts change: only it is rescored
+    c.execute("update company_latest set employees = 55 where company_number = '01000001'")
+    scoring.rescore(c)
+    after2 = {r["company_number"]: r["computed_at"] for r in c.execute("select company_number, computed_at from score")}
+    assert after2["01000001"] > before["01000001"]
+    assert all(after2[k] == before[k] for k in before if k not in parents | {"01000001"})
+    assert "55 staff" in json.dumps(c.execute("select reasons from score where company_number = '01000001'").fetchone()["reasons"])
+    # a changed criterion rescores everything
+    crit = bb["criteria"]; crit["staff"]["weight"] = 99
+    c.execute("update buy_box set criteria = %s where id = %s", (json.dumps(crit), bb["id"]))
+    scoring.rescore(c)
+    after3 = {r["company_number"]: r["computed_at"] for r in c.execute("select company_number, computed_at from score")}
+    assert all(after3[k] > after2[k] for k in after2)
