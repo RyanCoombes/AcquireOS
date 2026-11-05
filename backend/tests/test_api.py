@@ -35,6 +35,11 @@ def test_api_flow(c):
         bb["criteria"]["regions"] = ["Wales"]
         assert cl.put("/api/buybox", json={"criteria": bb["criteria"]}).json()["rescored"] == 6  # the 70100 holding company is outside the universe and skipped
         assert cl.get("/api/export.csv").status_code == 200
+        # export follows the filters you are looking at
+        all_rows = cl.get("/api/export.csv").text.lstrip("\ufeff").strip().splitlines()
+        wales = cl.get("/api/export.csv?region=Wales&sort=name&dir=asc").text.lstrip("\ufeff").strip().splitlines()
+        assert all_rows[0].startswith("Company number,Name") and 1 < len(wales) < len(all_rows)
+        assert all(",Wales," in line for line in wales[1:])
         assert cl.get("/api/pipeline").json()["rows"]
         d = cl.get("/api/dashboard")
         assert d.status_code == 200, d.text

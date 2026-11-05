@@ -832,7 +832,11 @@ def _dashboard(which: str = "all"):
                  (select count(*) from company_latest l join dscope d using (company_number)
                     where cardinality(l.staff_trend) >= 3) as with_history,
                  (select sum((d.value_low + d.value_high) / 2) from dscope d join user_company uc using (company_number)
-                    where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed')) as pipeline_value""",
+                    where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed')) as pipeline_value,
+                 (select sum(d.value_low) from dscope d join user_company uc using (company_number)
+                    where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed')) as pipeline_value_low,
+                 (select sum(d.value_high) from dscope d join user_company uc using (company_number)
+                    where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed')) as pipeline_value_high""",
             p,
         ).fetchone()
         hist = c.execute("select width_bucket(score, 0, 100.0001, 10) as b, count(*) as n from dscope group by 1 order by 1").fetchall()
@@ -1626,29 +1630,66 @@ def imports():
     return _rows("select * from import_run order by id desc limit 50")
 
 
+EXPORT_CAP = 50_000
+_EXPORT_COLS = [
+    ("Company number", "company_number"), ("Name", "name"), ("Company status", "company_status"),
+    ("Postcode", "postcode"), ("Region", "region"), ("SIC codes", "sic_codes"), ("Incorporated", "incorporation_date"),
+    ("Accounts filed", "accounts_category"), ("Latest accounts to", "period_end"), ("Staff", "employees"),
+    ("Revenue low", "revenue_low"), ("Revenue high", "revenue_high"), ("Revenue basis", "revenue_basis"),
+    ("Net assets", "net_assets"), ("Ownership", "ownership_type"), ("Oldest owner born", "oldest_birth_year"),
+    ("Charges outstanding", "charges_outstanding"), ("Score", "score"), ("Buy box", "box_name"),
+    ("Indicative value low", "value_low"), ("Indicative value high", "value_high"), ("Value basis", "value_basis"),
+    ("My status", "status"), ("My rating", "rating"), ("Next action", "next_action"), ("Next action on", "next_action_on"),
+]
+
+
 @app.get("/api/export.csv")
-def export_csv():
-    data = companies(limit=1000, include_excluded=True)["rows"]
-    with db.conn() as c:
-        more = c.execute("select count(*) as n from company").fetchone()["n"]
-    if more > 1000:
-        data = []
-        offset = 0
-        while True:
-            chunk = companies(limit=1000, offset=offset, include_excluded=True)["rows"]
+def export_csv(request: Request):
+    """The list you are looking at, with the same filters and sort, as CSV
+    (up to EXPORT_CAP rows), streamed so a large export never sits in memory."""
+    import inspect
+
+    sig = inspect.signature(companies)
+    kw: dict = {}
+    for k, v in request.query_params.items():
+        if k not in sig.parameters or k in ("limit", "offset", "format") or v == "":
+            continue
+        ann = str(sig.parameters[k].annotation)
+        try:
+            kw[k] = (v.lower() in ("1", "true", "yes") if "bool" in ann else int(v) if "int" in ann
+                     else float(v) if "float" in ann else v)
+        except ValueError:
+            continue
+
+    def rows():
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow([h for h, _ in _EXPORT_COLS] + ["My latest note", "Companies House"])
+        yield "\ufeff" + buf.getvalue()  # BOM so Excel reads £ and accents correctly
+        sent = 0
+        while sent < EXPORT_CAP:
+            chunk = companies(**kw, limit=1000, offset=sent)["rows"]
             if not chunk:
                 break
-            data += chunk
-            offset += 1000
-    buf = io.StringIO()
-    if data:
-        w = csv.DictWriter(buf, fieldnames=list(data[0].keys()))
-        w.writeheader()
-        for r in data:
-            w.writerow({k: (",".join(map(str, v)) if isinstance(v, list) else v) for k, v in r.items()})
-    buf.seek(0)
-    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
-                             headers={"Content-Disposition": "attachment; filename=acquireos-export.csv"})
+            with db.conn() as c:
+                notes = {r["company_number"]: r["body"] for r in c.execute(
+                    """select distinct on (company_number) company_number, body from user_note
+                       where user_id = %s and company_number = any(%s) order by company_number, created_at desc""",
+                    (UID, [r["company_number"] for r in chunk]))}
+            buf = io.StringIO()
+            w = csv.writer(buf)
+            for r in chunk[: EXPORT_CAP - sent]:
+                w.writerow([(", ".join(map(str, r.get(k) or [])) if isinstance(r.get(k), list) else r.get(k))
+                            for _, k in _EXPORT_COLS]
+                           + [notes.get(r["company_number"]),
+                              f"https://find-and-update.company-information.service.gov.uk/company/{r['company_number']}"])
+            sent += len(chunk)
+            yield buf.getvalue()
+            if len(chunk) < 1000:
+                break
+
+    return StreamingResponse(rows(), media_type="text/csv; charset=utf-8",
+                             headers={"Content-Disposition": f"attachment; filename=acquireos-{date.today()}.csv"})
 
 
 def _cell(v):

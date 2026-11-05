@@ -36,7 +36,7 @@ export default function Changes() {
           <h1>Changes</h1>
           <div className="lede">
             What moved between imports: new accounts, status changes such as dissolution, new names and addresses, and owner changes.
-            Re-import a newer Companies House file (or the monthly bulk file with “only companies already in my list”) to refresh.
+            Changes appear after each monthly Companies House refresh (Refresh data on Home, or the Data page).
           </div>
         </div>
       </div>
@@ -85,7 +85,7 @@ export default function Changes() {
               {rows.map((r) => (
                 <tr key={r.id} onClick={() => nav(`/c/${r.company_number}`)} className={r.excluded ? "excluded" : ""}>
                   <td style={{ width: 120 }}><Score value={r.score ?? null} /></td>
-                  <td style={{ width: "34%" }}><div className="name">{r.name}</div><div className="sub">{r.company_number}</div></td>
+                  <td style={{ width: "34%" }}><div className="name"><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div><div className="sub">{r.company_number}</div></td>
                   <td style={{ width: 130 }}><b>{CHANGE_KIND[r.kind] ?? r.kind}</b></td>
                   <td className={(r.kind === "status" && isBadStatus(r.new_value)) ? "neg" : ""}>{describeChange(r)}</td>
                   <td style={{ width: 140 }}>{r.status && r.status !== "new" ? <StatusMark s={r.status} /> : ""}</td>

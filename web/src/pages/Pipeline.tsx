@@ -58,7 +58,7 @@ export default function Pipeline() {
       </div>
 
       {rows.length === 0 ? (
-        <div className="empty"><b>Nothing in your pipeline yet.</b> Open a company from <Link to="/targets">Targets</Link> and move it to Watching or Assessing.</div>
+        <div className="empty"><b>Nothing in your pipeline yet.</b> Open a company from <Link to="/companies">Companies</Link> or <Link to="/targets">Targets</Link> and move it to Watching or Assessing.</div>
       ) : (
         <div className="board">
           {cols.map((s) => {
@@ -76,7 +76,7 @@ export default function Pipeline() {
                     <div key={r.company_number} className={`card ${dragging === r.company_number ? "dragging" : ""}`} draggable
                          onDragStart={() => setDragging(r.company_number)} onDragEnd={() => { setDragging(null); setOver(null); }}
                          onClick={() => nav(`/c/${r.company_number}`)}>
-                      <div className="name">{r.name}</div>
+                      <div className="name"><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div>
                       <div className="meta">
                         <Score value={r.score} />
                         <span>{r.value_low ? range(r.value_low, r.value_high) : ""}</span>

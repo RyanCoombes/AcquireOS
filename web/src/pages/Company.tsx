@@ -20,9 +20,11 @@ export default function Company() {
 
   const setState = async (patch: Record<string, unknown>) => {
     if (!data) return;
-    const state = await api.setState(num, patch);
-    setData({ ...data, state: state as CompanyDetail["state"] });
-    setToast("Saved");
+    try {
+      const state = await api.setState(num, patch);
+      setData({ ...data, state: state as CompanyDetail["state"] });
+      setToast(patch.rating ? `Rating set to ${patch.rating}/5` : "Saved");
+    } catch (e: any) { setToast(`Not saved: ${e.message}`); }
   };
 
   useEffect(() => {
@@ -54,7 +56,7 @@ export default function Company() {
       <div className="pagehead">
         <div>
           <div className="crumb">
-            <Link to="/targets">Targets</Link> / {c.company_number}
+            <a href="/companies" onClick={(e) => { if (window.history.length > 1) { e.preventDefault(); nav(-1); } }}>← Back</a> / {c.company_number}
           </div>
           <h1>{c.name}</h1>
           <div className="lede">
@@ -123,7 +125,7 @@ export default function Company() {
           <Enrichment key={JSON.stringify(data.enrichment)} data={data} num={num} onSaved={reload} />
 
           <section>
-            <div className="sechead"><h2>Financial history</h2><span className="faint small">{fin.filter((f) => !f.period_inferred).length} years from filed accounts{fin.some((f) => f.period_inferred) ? "; dashed points are prior-year figures with an inferred date" : ""}</span></div>
+            <div className="sechead"><h2>Financial history</h2><span className="faint small">{(() => { const n = fin.filter((f) => !f.period_inferred).length; return `${n} ${n === 1 ? "year" : "years"} from filed accounts`; })()}{fin.some((f) => f.period_inferred) ? "; dashed points are prior-year figures with an inferred date" : ""}</span></div>
             {fin.length ? (
               <>
                 <div className="multiples">
@@ -199,7 +201,7 @@ export default function Company() {
                 )}
               </>
             ) : (
-              <div className="faint">No owner data yet. Import the Companies House PSC snapshot to trace owners (see the Import page).</div>
+              <div className="faint">No owner data yet. Owners load with the Companies House refresh (see the Data page). Some companies file no owner details.</div>
             )}
           </section>
 
@@ -244,7 +246,7 @@ export default function Company() {
                   ))}
                 </tbody>
               </table>
-            ) : <div className="faint">No changes recorded. Re-import a newer Companies House file to see what moves.</div>}
+            ) : <div className="faint">No changes recorded yet. Changes show up after each monthly Companies House refresh.</div>}
           </section>
 
           <section>
@@ -272,10 +274,13 @@ export default function Company() {
                 {c.previous_names.map((p, i) => <div key={i}>{p.name}{p.until ? <span className="faint"> · until {date(p.until)}</span> : null}</div>)}
               </dd></>}
               <dt>Source</dt><dd>{c.source ?? "—"} · updated {dateTime(c.updated_at)} ({relDays(c.updated_at)})</dd>
-              {Object.entries(c.extra ?? {}).map(([k, v]) => (
-                <FactRow key={k} k={k} v={v} />
-              ))}
             </dl>
+            {Object.keys(c.extra ?? {}).length > 0 && (
+              <details className="small" style={{ marginTop: 8 }}>
+                <summary className="faint">Fields from your imported file ({Object.keys(c.extra).length})</summary>
+                <dl className="facts">{Object.entries(c.extra).map(([k, v]) => <FactRow key={k} k={k} v={v} />)}</dl>
+              </details>
+            )}
           </section>
         </div>
 
@@ -298,6 +303,14 @@ function MyCall({ data, num, setState, onNote, onOutreach, onScored }: {
 }) {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [noteErr, setNoteErr] = useState<string | null>(null);
+  const addNote = async () => {
+    if (!note.trim()) return;
+    setSaving(true); setNoteErr(null);
+    try { onNote(await api.addNote(num, note)); setNote(""); }
+    catch (e: any) { setNoteErr(`Not saved: ${e.message}`); }
+    finally { setSaving(false); }
+  };
   const [next, setNext] = useState(data.state.next_action ?? "");
   const [nextOn, setNextOn] = useState(data.state.next_action_on ?? "");
   const [contact, setContact] = useState({ contact_name: "", contact_role: "owner", channel: "letter", summary: "" });
@@ -335,12 +348,13 @@ function MyCall({ data, num, setState, onNote, onOutreach, onScored }: {
         <textarea value={note} placeholder="What do you think? Ctrl+Enter to save." onChange={(e) => setNote(e.target.value)}
                   onKeyDown={async (e) => {
                     if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && note.trim()) {
-                      setSaving(true); onNote(await api.addNote(num, note)); setNote(""); setSaving(false);
+                      addNote();
                     }
                   }} />
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
           <button className="btn primary" disabled={!note.trim() || saving}
-                  onClick={async () => { setSaving(true); onNote(await api.addNote(num, note)); setNote(""); setSaving(false); }}>Add note</button>
+                  onClick={addNote}>Add note</button>
+          {noteErr && <span className="neg small" style={{ marginLeft: 8, alignSelf: "center" }}>{noteErr}</span>}
         </div>
         <ul className="notes">
           {data.notes.map((n) => (
@@ -431,7 +445,7 @@ function Research({ data, num, onAdded }: { data: CompanyDetail; num: string; on
             </li>
           ))}
         </ul>
-      ) : !open && <div className="faint">Nothing recorded yet. AI research with sources is planned for Q2; until then add findings by hand.</div>}
+      ) : !open && <div className="faint">Nothing recorded yet. Ask Claude to research this company (see Connect Claude), or add a finding by hand.</div>}
     </section>
   );
 }

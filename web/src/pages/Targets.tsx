@@ -129,7 +129,9 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const cols = mode === "directory" ? DIR_COLS : COLS;
   const boxName = boxId ? m?.buy_boxes.find((b) => b.id === boxId)?.name : null;
   const empty = m && m.counts.companies === 0;
-  const exportHref = "/api/export.csv";
+  // Export exactly the list on screen: same filters and sort (up to 50,000 rows).
+  const exportHref = "/api/export.csv?" + new URLSearchParams(
+    Object.fromEntries(Object.entries(apiParams).filter(([k]) => k !== "limit" && k !== "offset"))).toString();
 
   const saveCurrent = async () => {
     const name = window.prompt("Name this search", currentSaved?.name ?? "");
@@ -217,14 +219,14 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
           </div>
         </div>
         <div className="right">
-          <a className="btn" href={exportHref}>Export CSV</a>
+          <a className="btn" href={exportHref} title="Download this list, with your filters, as a spreadsheet (up to 50,000 rows)">Export this list</a>
         </div>
       </div>
 
       {empty ? (
         <div className="empty">
-          <b>No companies yet.</b> Start by importing your ranked Companies House file or audit workbook on the{" "}
-          <Link to="/import">Import</Link> page.
+          <b>No companies yet.</b> Load the Companies House data, or your own file, on the{" "}
+          <Link to="/import">Data</Link> page.
         </div>
       ) : (
         <>
@@ -333,6 +335,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
             </thead>
             <tbody>
               {rows.map((r, i) => <TargetRow key={r.company_number} r={r} cursor={i === cursor} showBox={!boxId} mode={mode} sics={sics} dim={!!boxId && !!r.excluded}
+                                             href={`/c/${r.company_number}${boxId ? `?bb=${boxId}` : ""}`}
                                              onOpen={() => nav(`/c/${r.company_number}${boxId ? `?bb=${boxId}` : ""}`)} />)}
             </tbody>
           </table>
@@ -393,8 +396,8 @@ function NumRange({ label, lo, hi, query, set, wide }: { label: string; lo: stri
   );
 }
 
-function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim }: {
-  r: Row; cursor: boolean; onOpen: () => void; showBox: boolean; mode: Mode; sics: SicOption[]; dim: boolean;
+function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href }: {
+  r: Row; cursor: boolean; onOpen: () => void; showBox: boolean; mode: Mode; sics: SicOption[]; dim: boolean; href: string;
 }) {
   const age = ageFrom(r.oldest_birth_year);
   const bad = isBadStatus(r.company_status);
@@ -412,7 +415,7 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim }: {
   const nameCell = (
     <td>
       <div className="name">
-        {r.name}
+        <Link className="rowlink" to={href} onClick={(e) => e.stopPropagation()}>{r.name}</Link>
         {bad && <span className="tag red">{cap(r.company_status)}</span>}
         {recent && r.last_kinds?.length ? <span className="tag" title={`Changed ${relDays(r.last_change)}`}>{r.last_kinds.map((k) => CHANGE_KIND[k] ?? k).join(", ")}</span> : null}
       </div>
@@ -420,9 +423,9 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim }: {
         {r.company_number}
         {r.postcode ? ` · ${r.postcode}` : ""}
         {r.region ? ` · ${r.region}` : ""}
-        {dim && r.exclusion ? <span className="flag red"> · {r.exclusion}</span> : null}
-        {r.accounts_overdue ? <span className="flag red"> · accounts overdue</span> : r.confirmation_overdue ? <span className="flag red"> · confirmation overdue</span> : null}
-        {r.charges_outstanding ? <span className="flag"> · {r.charges_outstanding} charge{r.charges_outstanding === 1 ? "" : "s"}</span> : null}
+        {dim && r.exclusion ? <span className="flag red">{r.exclusion}</span> : null}
+        {r.accounts_overdue ? <span className="flag red">accounts overdue</span> : r.confirmation_overdue ? <span className="flag red">confirmation overdue</span> : null}
+        {r.charges_outstanding ? <span className="flag">{r.charges_outstanding} charge{r.charges_outstanding === 1 ? "" : "s"}</span> : null}
         {" "}<Flags flags={r.flags} address={r.address_flag} />
       </div>
     </td>

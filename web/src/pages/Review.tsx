@@ -49,8 +49,10 @@ export default function Review() {
 
   const act = useCallback(async (st: Status) => {
     if (!cur) return;
-    await api.setState(cur.company_number, { status: st, stage_note: note ? note : "Set in review" });
-    if (note.trim()) await api.addNote(cur.company_number, note.trim());
+    try {
+      await api.setState(cur.company_number, { status: st, stage_note: "Set in review" });
+      if (note.trim()) await api.addNote(cur.company_number, note.trim());
+    } catch (e: any) { setToast(`Not saved: ${e.message}`); return; }  // stay on this company
     setDone((x) => ({ ...x, [cur.company_number]: st }));
     setToast(`${cur.name}: ${meta.data?.statuses.find((s) => s.value === st)?.label ?? st}`);
     setI((x) => Math.min(x + 1, rows.length));

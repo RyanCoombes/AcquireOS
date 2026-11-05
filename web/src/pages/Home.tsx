@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { ErrorLine, Score, StatusMark, useAsync } from "../components/bits";
 import { Columns, HBars, TrendLine } from "../components/charts";
-import { ageFrom, CHANGE_KIND, date, describeChange, int, isBadStatus, money, OWNERSHIP, range, relDays } from "../format";
+import { ageFrom, CHANGE_KIND, date, describeChange, int, isBadStatus, OWNERSHIP, range, relDays } from "../format";
 
 function greeting() {
   const h = new Date().getHours();
@@ -118,8 +118,8 @@ export default function Home() {
         </Link>
         <Link className="kpi" to="/pipeline">
           <span className="k"><i style={{ background: "#141820" }} />Pipeline value</span>
-          <span className="v">{h.pipeline_value ? money(h.pipeline_value) : "—"}</span>
-          <span className="s">Midpoint of indicative values</span>
+          <span className="v">{h.pipeline_value_low ? range(h.pipeline_value_low, h.pipeline_value_high) : "—"}</span>
+          <span className="s">Indicative range: screening estimates, not valuations</span>
         </Link>
       </div>
 
@@ -132,7 +132,7 @@ export default function Home() {
               {data.top.map((t: any) => (
                 <tr key={t.company_number} style={{ cursor: "pointer" }} onClick={() => nav(`/c/${t.company_number}${which === "all" ? "" : `?bb=${which}`}`)}>
                   <td style={{ width: 110 }}><Score value={t.score} /></td>
-                  <td><div className="name">{t.name}</div><div className="sub">{which === "all" && t.box ? <><b>{t.box}</b> · </> : null}{t.region ?? "Region not set"} · {t.ownership_type ? OWNERSHIP[t.ownership_type] : "owners not traced"}</div></td>
+                  <td><div className="name"><Link className="rowlink" to={`/c/${t.company_number}${which === "all" ? "" : `?bb=${which}`}`} onClick={(e) => e.stopPropagation()}>{t.name}</Link></div><div className="sub">{which === "all" && t.box ? <><b>{t.box}</b> · </> : null}{t.region ?? "Region not set"} · {t.ownership_type ? OWNERSHIP[t.ownership_type] : "owners not traced"}</div></td>
                   <td className="num hide-sm">{int(t.employees)} staff</td>
                   <td className="num hide-sm">{ageFrom(t.oldest_birth_year) ? `Owner ${ageFrom(t.oldest_birth_year)}` : ""}</td>
                   <td className="num">{range(t.value_low, t.value_high)}</td>
