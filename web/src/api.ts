@@ -234,6 +234,8 @@ export const api = {
   activateBuybox: (id: number) => req<{ ok: boolean; scoring: boolean }>(`/api/buyboxes/${id}/activate`, { method: "POST" }),
   renameBuybox: (id: number, body: Record<string, unknown>) => req(`/api/buyboxes/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteBuybox: (id: number) => req(`/api/buyboxes/${id}`, { method: "DELETE" }),
+  bulkState: (body: Record<string, unknown>) =>
+    req<{ updated: number }>("/api/companies/state", { method: "PUT", body: JSON.stringify(body) }),
   setManual: (n: string, key: string, value: number | null, note?: string) =>
     req<{ score: any; values: Record<string, ManualValue> }>(`/api/companies/${encodeURIComponent(n)}/manual`,
       { method: "PUT", body: JSON.stringify({ key, value, note }) }),

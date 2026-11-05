@@ -23,14 +23,19 @@ export default function Pipeline() {
   const cols = data.statuses.filter((s) => s.phase !== "closed" && (phase === "all" || s.phase === phase));
   const closed = rows.filter((r) => ["passed", "rejected"].includes(r.status));
 
+  const move = async (num: string | null, to: Status) => {
+    const row = rows.find((r) => r.company_number === num);
+    if (!num || !row || row.status === to) return;
+    try {
+      await api.setState(num, { status: to, stage_note: "Moved on the pipeline board" });
+      setToast(`${row.name} moved to ${data.statuses.find((s) => s.value === to)?.label}`);
+    } catch (e: any) { setToast(`Not moved: ${e.message}`); }
+    reload();
+  };
   const drop = async (to: Status) => {
     const num = dragging;
     setDragging(null); setOver(null);
-    const row = rows.find((r) => r.company_number === num);
-    if (!num || !row || row.status === to) return;
-    await api.setState(num, { status: to, stage_note: "Moved on the pipeline board" });
-    setToast(`${row.name} moved to ${data.statuses.find((s) => s.value === to)?.label}`);
-    reload();
+    await move(num, to);
   };
 
   return (
@@ -38,7 +43,7 @@ export default function Pipeline() {
       <div className="pagehead">
         <div>
           <h1>Pipeline</h1>
-          <div className="lede">Your acquisition process from first look to handover. Drag a card to move it; every move is logged on the company.</div>
+          <div className="lede">Your acquisition process from first look to handover. Drag a card, or use its Move to… menu; every move is logged on the company.</div>
         </div>
       </div>
       {due.length > 0 && (
@@ -89,6 +94,12 @@ export default function Pipeline() {
                       )}
                       {!r.tasks_total && d !== null && <div className="meta"><span>{d} days in stage</span>{r.rating ? <span>{r.rating}/5</span> : null}</div>}
                       {r.next_action && <div className={`next ${overdue ? "overdue" : ""}`}>→ {r.next_action}{r.next_action_on ? ` · ${date(r.next_action_on)}` : ""}</div>}
+                      {/* Works without dragging: phones, keyboard */}
+                      <select className="movesel" value="" aria-label={`Move ${r.name} to another stage`}
+                              onClick={(e) => e.stopPropagation()} onChange={(e) => move(r.company_number, e.target.value as Status)}>
+                        <option value="">Move to…</option>
+                        {data.statuses.filter((x) => x.value !== r.status).map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+                      </select>
                     </div>
                   );
                 })}

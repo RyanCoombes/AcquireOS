@@ -313,22 +313,19 @@ function MyCall({ data, num, setState, onNote, onOutreach, onScored }: {
   };
   const [next, setNext] = useState(data.state.next_action ?? "");
   const [nextOn, setNextOn] = useState(data.state.next_action_on ?? "");
-  const [contact, setContact] = useState({ contact_name: "", contact_role: "owner", channel: "letter", summary: "" });
+  const owner = data.ownership?.ultimate_owners?.find((u) => !u.unresolved && u.kind !== "corporate")?.name ?? "";
+  const today = new Date().toISOString().slice(0, 10);
+  const [contact, setContact] = useState({ contact_name: owner, contact_role: "owner", channel: "letter", summary: "", happened_on: today, follow_up_on: "" });
+  const [outErr, setOutErr] = useState<string | null>(null);
   const s = data.state;
 
   return (
     <>
       <section>
-        <DealProgress data={data} num={num} setState={setState} />
-      </section>
-
-      <section>
-        <h2>Your scores</h2>
-        <MyScores num={num} criteria={data.manual.criteria} values={data.manual.values} onChange={() => onScored()} />
-      </section>
-
-      <section>
-        <div className="label" style={{ margin: "0 0 4px" }}>Rating <span className="faint">(keys 1–5)</span></div>
+        <h2>Your call</h2>
+        <div className="label" style={{ margin: "0 0 4px" }}>Stage</div>
+        <StageSelect value={s.status} onChange={(v) => setState({ status: v, stage_note: "Changed on the company page" })} />
+        <div className="label" style={{ margin: "14px 0 4px" }}>Rating <span className="faint">(keys 1–5)</span></div>
         <div className="rating">
           {[1, 2, 3, 4, 5].map((n) => (
             <button key={n} className={s.rating === n ? "on" : ""} onClick={() => setState(s.rating === n ? { clear_rating: true } : { rating: n })}>{n}</button>
@@ -336,9 +333,9 @@ function MyCall({ data, num, setState, onNote, onOutreach, onScored }: {
         </div>
         <div className="label" style={{ margin: "14px 0 4px" }}>Next action</div>
         <div style={{ display: "flex", gap: 6 }}>
-          <input type="text" style={{ flex: 1 }} value={next} placeholder="e.g. Send approach letter" onChange={(e) => setNext(e.target.value)}
+          <input type="text" style={{ flex: 1 }} value={next} placeholder="e.g. Send approach letter" aria-label="Next action" onChange={(e) => setNext(e.target.value)}
                  onBlur={() => next !== (s.next_action ?? "") && setState({ next_action: next || null })} />
-          <input type="date" value={nextOn ?? ""} onChange={(e) => { setNextOn(e.target.value); setState({ next_action_on: e.target.value || null }); }} />
+          <input type="date" value={nextOn ?? ""} aria-label="Next action date" onChange={(e) => { setNextOn(e.target.value); setState({ next_action_on: e.target.value || null }); }} />
         </div>
         {s.tags?.length ? <div className="faint small" style={{ marginTop: 10 }}>Tags: {s.tags.join(", ")}</div> : null}
       </section>
@@ -371,13 +368,18 @@ function MyCall({ data, num, setState, onNote, onOutreach, onScored }: {
         <h2>Outreach</h2>
         <form onSubmit={async (e) => {
           e.preventDefault();
-          if (!contact.contact_name.trim()) return;
-          await api.addOutreach({ ...contact, company_number: num });
-          setContact({ ...contact, contact_name: "", summary: "" });
-          onOutreach();
+          setOutErr(null);
+          const { follow_up_on, ...c } = contact;
+          try {
+            await api.addOutreach({ ...c, contact_name: c.contact_name.trim() || "Owner", company_number: num,
+                                    next_action: follow_up_on ? `Follow up: ${c.summary || c.channel}` : null, next_action_on: follow_up_on || null });
+            if (follow_up_on) await setState({ next_action: `Follow up: ${c.summary || c.channel}`, next_action_on: follow_up_on });
+            setContact({ ...contact, summary: "", follow_up_on: "" });
+            onOutreach();
+          } catch (err: any) { setOutErr(`Not saved: ${err.message}`); }
         }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 110px", gap: 6 }}>
-            <input type="text" placeholder="Who" value={contact.contact_name} onChange={(e) => setContact({ ...contact, contact_name: e.target.value })} />
+            <input type="text" placeholder="Who (blank: the owner)" aria-label="Who" value={contact.contact_name} onChange={(e) => setContact({ ...contact, contact_name: e.target.value })} />
             <select value={contact.contact_role} onChange={(e) => setContact({ ...contact, contact_role: e.target.value })}>
               <option value="owner">Owner</option><option value="adviser">Adviser</option><option value="broker">Broker</option>
               <option value="investor">Investor</option><option value="other">Other</option>
@@ -388,8 +390,15 @@ function MyCall({ data, num, setState, onNote, onOutreach, onScored }: {
               <option value="linkedin">LinkedIn</option><option value="meeting">Meeting</option>
             </select>
           </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
-            <button className="btn" type="submit" disabled={!contact.contact_name.trim()}>Log contact</button>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 6 }}>
+            <label className="field"><span className="label">When</span>
+              <input type="date" value={contact.happened_on} onChange={(e) => setContact({ ...contact, happened_on: e.target.value })} /></label>
+            <label className="field"><span className="label">Follow up on</span>
+              <input type="date" value={contact.follow_up_on} onChange={(e) => setContact({ ...contact, follow_up_on: e.target.value })} /></label>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginTop: 6 }}>
+            {outErr && <span className="neg small">{outErr}</span>}
+            <button className="btn" type="submit">Log contact</button>
           </div>
         </form>
         <ul className="notes">
@@ -401,7 +410,35 @@ function MyCall({ data, num, setState, onNote, onOutreach, onScored }: {
           ))}
         </ul>
       </section>
+
+      <section>
+        <h2>Your scores</h2>
+        <MyScores num={num} criteria={data.manual.criteria} values={data.manual.values} onChange={() => onScored()} />
+      </section>
+
+      <section>
+        <details>
+          <summary><b>Deal stage and checklist</b></summary>
+          <div style={{ marginTop: 10 }}><DealProgress data={data} num={num} setState={setState} /></div>
+        </details>
+      </section>
     </>
+  );
+}
+
+function StageSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const meta = useAsync(() => api.meta(), []);
+  const phases = meta.data?.phases ?? [];
+  const stages = meta.data?.statuses ?? [];
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} style={{ width: "100%" }} aria-label="Stage">
+      {phases.length ? phases.map((ph) => (
+        <optgroup key={ph.value} label={ph.label}>
+          {stages.filter((x) => x.phase === ph.value).map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+        </optgroup>
+      )) : stages.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+      {stages.filter((x) => !phases.some((ph) => ph.value === x.phase)).map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+    </select>
   );
 }
 

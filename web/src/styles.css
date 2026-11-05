@@ -277,7 +277,7 @@ a.rowlink:hover, a.rowlink:focus-visible { text-decoration: underline; }
 .company-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
 .company-grid > .main { min-width: 0; }
 .company-grid > aside {
-  min-width: 0; position: sticky; top: 76px; max-height: calc(100vh - 92px); overflow: auto;
+  min-width: 0;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
 }
 .company-grid > aside section { border: 0; box-shadow: none; border-radius: 0; margin: 0; border-bottom: 1px solid var(--line); }
@@ -483,7 +483,15 @@ code { font-size: 0.9em; background: var(--panel-2); border: 1px solid var(--lin
   .side .group, .side .foot, .side a.nav .count { display: none; }
   .mark { padding: 4px 10px 4px 4px; }
   .mark span { display: none; }
-  .side a.nav { white-space: nowrap; padding: 6px 9px; }
+  .side a.nav { white-space: nowrap; padding: 6px 9px; scroll-snap-align: start; }
+  /* the menu scrolls sideways: fade the edge so it is clear there is more */
+  .side { scroll-snap-type: x proximity; -webkit-mask-image: linear-gradient(to right, #000 82%, transparent);
+          mask-image: linear-gradient(to right, #000 82%, transparent); padding-right: 48px; }
+  .greeting, .pagehead { flex-wrap: wrap; }
+  .greeting .right, .pagehead .right { flex-wrap: wrap; }
+  dl.facts input[type="text"], dl.facts textarea { width: 100% !important; max-width: 100%; }
+  .show-sm { display: inline-flex !important; }
+  .band.collapsed > :not(.filters-toggle) { display: none; }
   .topbar { position: static; height: auto; padding-top: 12px; }
   .list th { top: 0; }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -665,3 +673,28 @@ section .mapbox { border-radius: 0; }
 
 td.industry { max-width: 260px; }
 td.industry .clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; color: var(--ink-2); }
+
+.card .movesel { margin-top: 8px; width: 100%; font-size: 12.5px; padding: 4px 6px; height: auto; color: var(--ink-2); }
+
+.show-sm { display: none; }
+
+th.tick, td.tick { width: 34px; padding-right: 0; }
+tr.ticked td { background: var(--teal-soft); }
+.selbar { position: sticky; top: 64px; z-index: 5; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  padding: 8px 12px; margin-bottom: 8px; background: var(--panel); border: 1px solid var(--teal);
+  border-radius: var(--radius); box-shadow: 0 0 0 3px var(--teal-tint); }
+
+@media (max-width: 860px) {
+  dl.facts dd { min-width: 0; }
+  dl.facts input, dl.facts textarea { box-sizing: border-box; max-width: 100%; }
+  .sicpicker { width: 100% !important; min-width: 0; max-width: 100%; }
+  .sp-box { flex-wrap: wrap; }
+  .sp-box input { min-width: 80px !important; }
+  .sp-tag { max-width: 100%; }
+  .sp-tag .sp-name { max-width: 150px; }
+}
+@media (max-width: 860px) {
+  /* phones: stages stacked, not a sideways board */
+  .board { flex-direction: column; overflow-x: visible; }
+  .board > * { width: 100% !important; min-width: 0 !important; flex: none !important; }
+}

@@ -211,3 +211,18 @@ def test_search_by_name_number_and_postcode(c):
         assert names("100%") == [] and names("_") == []       # LIKE wildcards are taken literally
         # filters still apply on top of a search
         assert names("example", company_status="dissolved") == []
+
+
+def test_bulk_state(c):
+    from acquireos.api import app
+
+    with TestClient(app) as cl:
+        f = FIX / "ranked_sample.csv"
+        p = cl.post("/api/import/preview", data={"kind": "companies"}, files={"file": (f.name, f.read_bytes(), "text/csv")}).json()
+        cl.post("/api/import/commit", json={"kind": "companies", "token": p["token"], "suffix": p["suffix"],
+                                            "filename": f.name, "mapping": p["mapping"]})
+        r = cl.put("/api/companies/state", json={"numbers": ["01000004", "01000005"], "status": "passed", "stage_note": "Bulk"})
+        assert r.status_code == 200 and r.json()["updated"] == 2
+        for n_ in ("01000004", "01000005"):
+            assert cl.get(f"/api/companies/{n_}").json()["state"]["status"] == "passed"
+        assert cl.put("/api/companies/state", json={"numbers": [], "status": "passed"}).status_code == 400

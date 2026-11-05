@@ -117,7 +117,11 @@ function App() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const loc = useLocation();
   useEffect(() => { api.meta().then(setMeta).catch(() => {}); }, [loc.pathname]);
-  useEffect(() => { window.scrollTo(0, 0); }, [loc.pathname]);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    // On phones the menu scrolls sideways: bring the current page into view.
+    document.querySelector(".side a.nav.active")?.scrollIntoView({ inline: "center", block: "nearest" });
+  }, [loc.pathname]);
   return (
     <div className="shell">
       <Side meta={meta} />

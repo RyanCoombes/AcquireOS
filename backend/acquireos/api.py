@@ -215,6 +215,7 @@ def companies(
     min_years: int | None = None, format: str = "list", business_type: str | None = None,
     has_website: bool | None = None, bb: str = "all", in_box: bool | None = None,
     accounts_size: str | None = None, overdue: str | None = None, charges: str | None = None,
+    numbers: str | None = None,
 ):
     """All companies, with scores from one buy box (bb=<id>) or each company's
     best score across buy boxes (bb=all). in_box limits to companies inside
@@ -287,6 +288,10 @@ def companies(
             params["btype"] = business_type
         if has_website is not None:
             where.append(("" if has_website else "not ") + "exists (select 1 from enrichment en where en.company_number = c.company_number and en.website is not null)")
+        if numbers:
+            # an explicit selection (e.g. "export the ones I ticked")
+            where.append("c.company_number = any(%(nums)s)")
+            params["nums"] = [x.strip().upper() for x in numbers.split(",") if x.strip()][:5000]
         if accounts_size and accounts_size in ACCOUNT_SIZES:
             where.append("c.accounts_category = any(%(acats)s)"); params["acats"] = ACCOUNT_SIZES[accounts_size][1]
         if overdue in ("accounts", "confirmation", "any"):
@@ -695,6 +700,22 @@ class StateIn(BaseModel):
     valuation: dict | None = None
     stage_note: str | None = None
     clear_rating: bool = False
+
+
+class BulkStateIn(StateIn):
+    numbers: list[str]
+
+
+@app.put("/api/companies/state")
+def set_state_bulk(body: BulkStateIn):
+    """The same change (stage, rating, next action, tags) for many companies
+    at once, each recorded exactly as a single change would be."""
+    nums = list(dict.fromkeys(n_.strip().upper() for n_ in body.numbers if n_.strip()))[:2000]
+    if not nums:
+        raise HTTPException(400, "No companies selected")
+    one = StateIn(**body.model_dump(exclude={"numbers"}, exclude_unset=True))
+    done = [set_state(n_, one) for n_ in nums]
+    return {"updated": len(done)}
 
 
 @app.put("/api/companies/{num}/state")

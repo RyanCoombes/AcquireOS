@@ -74,7 +74,20 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   useEffect(() => { if (mode === "directory") loadSic().then(setSics); }, [mode]);
   const [cursor, setCursor] = useState(0);
   const [more, setMore] = useState(() => MORE_KEYS.some((k) => params.has(k)));
+  // On phones the filters start folded away so results come first (desktop always shows them).
+  const [showFilters, setShowFilters] = useState(() => typeof window === "undefined" || window.innerWidth > 860);
   const [toast, setToast] = useState<string | null>(null);
+  // Ticked companies, kept while you page through or change filters.
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const toggle = (num: string) => setSel((x) => { const y = new Set(x); if (y.has(num)) y.delete(num); else y.add(num); return y; });
+  const bulkStage = async (status: string) => {
+    if (!status || !sel.size) return;
+    try {
+      const r = await api.bulkState({ numbers: [...sel], status, stage_note: "Changed for several companies at once" });
+      setToast(`${r.updated} ${r.updated === 1 ? "company" : "companies"} moved to ${m?.statuses.find((x) => x.value === status)?.label ?? status}`);
+      setSel(new Set()); list.reload();
+    } catch (e: any) { setToast(`Not saved: ${e.message}`); }
+  };
   useEffect(() => setCursor(0), [params.toString()]);
 
   const view = query.changed_days && query.sort === "changed" ? "changed" : mode === "directory" ? "all" : "fit";
@@ -267,7 +280,10 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
             )}
           </div>
 
-          <div className="band">
+          <div className={`band ${showFilters ? "" : "collapsed"}`}>
+            <button className="btn filters-toggle show-sm" onClick={() => setShowFilters(!showFilters)} aria-expanded={showFilters}>
+              {showFilters ? "Hide filters" : `Filters${activeFilters ? ` (${activeFilters})` : ""}`}
+            </button>
             {mode === "targets" && boxSelect}
             {search}
             {mode === "directory" ? <>{companyStatus}{industry}{region}{staff}{yearsTrading}{accountsSize}</>
@@ -312,7 +328,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
 
           <ErrorLine error={list.error} />
           <div className="resultline">
-            <span><b>{int(total)}{capped ? "+" : ""}</b> {total === 1 ? "company" : "companies"}
+            <span>{!list.data ? "Loading…" : <><b>{int(total)}{capped ? "+" : ""}</b> {total === 1 ? "company" : "companies"}</>}
               {inBox ? (boxName ? <> in <b>{boxName}</b></> : " in at least one buy box") : ""}</span>
             <span className="faint">
               {list.data?.search_limited ? "Lots of companies match that; showing the first 5,000. Type more to narrow it down. "
@@ -321,9 +337,23 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                 : boxName ? "Scores are from this buy box." : "Each company's best score across your buy boxes, tagged with the box."}
             </span>
           </div>
+          {sel.size > 0 && (
+            <div className="selbar" role="region" aria-label="Ticked companies">
+              <b>{int(sel.size)} ticked</b>
+              <select value="" onChange={(e) => bulkStage(e.target.value)} aria-label="Move ticked companies to a stage">
+                <option value="">Move to stage…</option>
+                {(m?.statuses ?? []).map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+              </select>
+              <a className="btn" href={"/api/export.csv?numbers=" + encodeURIComponent([...sel].join(","))}>Export ticked</a>
+              <button className="btn quiet" onClick={() => setSel(new Set())}>Clear</button>
+            </div>
+          )}
           <table className="list">
             <thead>
               <tr>
+                <th className="tick"><input type="checkbox" aria-label="Tick every company on this page"
+                  checked={rows.length > 0 && rows.every((r) => sel.has(r.company_number))}
+                  onChange={(e) => setSel((x) => { const y = new Set(x); rows.forEach((r) => e.target.checked ? y.add(r.company_number) : y.delete(r.company_number)); return y; })} /></th>
                 {cols.map((c) => (
                   <th key={c.key} className={`${c.nosort ? "" : "sortable"} ${c.num ? "num" : ""} ${c.sm ? "hide-sm" : ""}`}
                       onClick={() => !c.nosort && toggleSort(c.key)} aria-sort={sort === c.key ? (dir === "asc" ? "ascending" : "descending") : undefined}>
@@ -334,7 +364,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => <TargetRow key={r.company_number} r={r} cursor={i === cursor} showBox={!boxId} mode={mode} sics={sics} dim={!!boxId && !!r.excluded}
+              {rows.map((r, i) => <TargetRow key={r.company_number} r={r} cursor={i === cursor} ticked={sel.has(r.company_number)} onTick={() => toggle(r.company_number)} showBox={!boxId} mode={mode} sics={sics} dim={!!boxId && !!r.excluded}
                                              href={`/c/${r.company_number}${boxId ? `?bb=${boxId}` : ""}`}
                                              onOpen={() => nav(`/c/${r.company_number}${boxId ? `?bb=${boxId}` : ""}`)} />)}
             </tbody>
@@ -396,9 +426,15 @@ function NumRange({ label, lo, hi, query, set, wide }: { label: string; lo: stri
   );
 }
 
-function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href }: {
+function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, onTick }: {
   r: Row; cursor: boolean; onOpen: () => void; showBox: boolean; mode: Mode; sics: SicOption[]; dim: boolean; href: string;
+  ticked: boolean; onTick: () => void;
 }) {
+  const tick = (
+    <td className="tick" onClick={(e) => e.stopPropagation()}>
+      <input type="checkbox" checked={ticked} onChange={onTick} aria-label={`Tick ${r.name}`} />
+    </td>
+  );
   const age = ageFrom(r.oldest_birth_year);
   const bad = isBadStatus(r.company_status);
   const recent = r.last_change && Date.now() - new Date(r.last_change).getTime() < 30 * 864e5;
@@ -447,7 +483,8 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href }: {
     const code = r.sic_codes?.[0];
     const label = code ? sics.find((o) => o.code === code)?.description : null;
     return (
-      <tr className={`${cursor ? "cursor" : ""} ${dim ? "excluded" : ""}`} onClick={onOpen}>
+      <tr className={`${cursor ? "cursor" : ""} ${dim ? "excluded" : ""} ${ticked ? "ticked" : ""}`} onClick={onOpen}>
+        {tick}
         {nameCell}
         <td className="hide-sm industry">
           {code ? <><div className="clamp">{label ?? code}</div>
@@ -462,7 +499,8 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href }: {
     );
   }
   return (
-    <tr className={`${cursor ? "cursor" : ""} ${dim ? "excluded" : ""}`} onClick={onOpen}>
+    <tr className={`${cursor ? "cursor" : ""} ${dim ? "excluded" : ""} ${ticked ? "ticked" : ""}`} onClick={onOpen}>
+      {tick}
       {scoreCell}
       {nameCell}
       {staffCell}
