@@ -281,7 +281,7 @@ function ChFeed({ onDone }: { onDone: () => void }) {
       <p className="muted" style={{ maxWidth: "80ch", marginTop: 0 }}>
         AcquireOS downloads these free files itself, keeps <b>every</b> UK company, its filed accounts and its owners, and deletes
         each file once read. It runs automatically each month (the <code>scheduler</code> service in the stack). The first time,
-        choose 12 or 24 months of accounts to build up history: months load oldest first, an older filing can never
+        choose 12 or 24 months of accounts to build up history: owners load first, then accounts newest month first; an older filing can never
         overwrite figures from a newer one, and months already loaded are skipped if you run it again.
       </p>
       <table>

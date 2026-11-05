@@ -190,3 +190,20 @@ def test_fast_register_path_matches_careful_reader(c):
         assert (f["name"], f["status"], f["sic_codes"], f["registered_address"], f["postcode"]) == \
                (s["name"], s["status"], s["sic"], s["addr"], s["pc"]), num
         assert (f["incorporation_date"], f["dissolution_date"], f["last_accounts_date"]) == (s["inc"], s["dissolved"], s["last_acc"])
+
+
+def test_failed_load_keeps_the_download_for_a_rerun(loaded, monkeypatch, tmp_path):
+    f = tmp_path / "Accounts_Monthly_Data-October2026.zip"
+    f.write_bytes(b"x")
+    monkeypatch.setattr(fetch, "links", lambda kind, pages=None: [("2026-10", "https://x/" + f.name)])
+    monkeypatch.setattr(fetch, "download", lambda url, *a, **k: f)
+
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(accounts, "run", boom)
+    import pytest
+    with pytest.raises(RuntimeError):
+        fetch.fetch_accounts(loaded, months=1)
+    assert f.exists()  # not deleted, so the next run reuses it
+    loaded.rollback()
+    assert fetch.accounts_plan(loaded, 1)[0][2] is False  # and the month is not marked as loaded

@@ -172,17 +172,19 @@ def fetch_company_data(conn, keep: bool = False) -> dict:
         log(f"Skipping {name}: this register snapshot is already loaded")
         return {"skipped": name}
     path = download(found[0][1])
-    try:
-        return register.load(conn, path, full=True, progress=_scaled(0.15))
-    finally:
-        if not keep:
-            path.unlink(missing_ok=True)
+    r = register.load(conn, path, full=True, progress=_scaled(0.15))
+    # Delete only after a successful load: if loading fails, the file stays
+    # and a re-run reuses it instead of downloading it again.
+    if not keep:
+        path.unlink(missing_ok=True)
+    return r
 
 
 def accounts_plan(conn, months: int, skip_loaded: bool = True) -> list[tuple[str, str, bool]]:
     """[(label, url, already_loaded)] NEWEST first, so the latest figures
     arrive first and history fills in behind them."""
-    loaded = {r["filename"] for r in conn.execute("select filename from import_run where kind = 'accounts'")}
+    loaded = {r["filename"] for r in conn.execute(
+        "select filename from import_run where kind = 'accounts' and finished_at is not null")}
     chosen = links("accounts")[:months]
     out = []
     for key, url in chosen:
@@ -224,15 +226,13 @@ def fetch_accounts(conn, months: int = 1, keep: bool = False, skip_loaded: bool 
             nxt = pool.submit(download, todo[k + 1][2], DATA_DIR, False) if k + 1 < len(todo) else None
             name = path.name
             newest = i == 0
-            try:
-                log(f"Reading {name}")
-                r = accounts.run(conn, [path], record_changes=newest, progress=_scaled(0.15))
-                conn.commit()
-                results.append({"file": name, **{x: v for x, v in r.items() if x != "messages"}})
-                log(f"{name}: {r['companies_matched']:,} filings, {r['periods']:,} figures, {r['changes']:,} changes")
-            finally:
-                if not keep:
-                    path.unlink(missing_ok=True)
+            log(f"Reading {name}")
+            r = accounts.run(conn, [path], record_changes=newest, progress=_scaled(0.15))
+            conn.commit()
+            results.append({"file": name, **{x: v for x, v in r.items() if x != "messages"}})
+            log(f"{name}: {r['companies_matched']:,} filings, {r['periods']:,} figures, {r['changes']:,} changes")
+            if not keep:  # kept if loading failed, so a re-run does not download it again
+                path.unlink(missing_ok=True)
     return results
 
 
@@ -250,12 +250,11 @@ def fetch_psc(conn, keep: bool = False) -> dict:
         log(f"Skipping owners: snapshot {newest} is already loaded")
         return {"skipped": names}
     paths = [download(u) for u in sorted(parts)]
-    try:
-        return psc.run(conn, paths, progress=_scaled(0.15))
-    finally:
-        if not keep:
-            for p in paths:
-                p.unlink(missing_ok=True)
+    r = psc.run(conn, paths, progress=_scaled(0.15))
+    if not keep:  # kept if loading failed, so a re-run does not download them again
+        for p in paths:
+            p.unlink(missing_ok=True)
+    return r
 
 
 def refresh(conn, accounts_months: int = 1, psc: bool = True) -> dict:
