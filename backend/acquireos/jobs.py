@@ -144,8 +144,8 @@ def current(conn) -> dict | None:
     """The running job, or the most recent one."""
     row = conn.execute(
         "select * from job order by (status = 'running') desc, started_at desc limit 1").fetchone()
-    if row and row["status"] == "running" and (datetime.now(row["updated_at"].tzinfo) - row["updated_at"]).total_seconds() > 900:
-        # No update for 15 minutes: the process running it has gone (e.g. a restart).
+    if row and row["status"] == "running" and (datetime.now(row["updated_at"].tzinfo) - row["updated_at"]).total_seconds() > 180:
+        # No heartbeat (every 30s) for 3 minutes: the process running it has gone (e.g. a restart).
         conn.execute("update job set status = 'failed', error = 'Interrupted (the app restarted). Press Refresh data to carry on: files already loaded are skipped.', finished_at = now() where id = %s",
                      (row["id"],))
         row = conn.execute("select * from job where id = %s", (row["id"],)).fetchone()
