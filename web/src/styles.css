@@ -710,3 +710,10 @@ tr.ticked td { background: var(--teal-soft); }
 .xcheck:focus-within { box-shadow: 0 0 0 3px var(--teal-tint); }
 .exsummary { margin: 6px 0 12px; padding: 8px 12px; border-radius: var(--radius); background: #fdf1f1; color: var(--red); font-size: 13.5px; }
 .exsummary.none { background: var(--panel-2); color: var(--ink-3); }
+
+.dc-price { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin: 10px 0 4px; }
+.dc-h { margin: 16px 0 6px; font-size: 13.5px; }
+.dc-sources td, .dc-walk td { vertical-align: middle; }
+.dc-sources td .sub { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.dc-sources input[type="number"] { padding: 3px 6px; }
+.dc-walk th, .dc-sources th { font-size: 12px; }

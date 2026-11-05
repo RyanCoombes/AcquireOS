@@ -259,6 +259,6 @@ def test_funding_assumptions_are_kept_per_company(loaded):
 
     loaded.commit()
     with TestClient(app) as cl:
-        r = cl.put("/api/companies/01000001/state", json={"funding": {"price": 2500000, "investor_cash": 500000, "investor_stake": 30, "bogus": 1}})
-        assert r.status_code == 200 and r.json()["funding"] == {"price": 2500000.0, "investor_cash": 500000.0, "investor_stake": 30.0}
+        r = cl.put("/api/companies/01000001/state", json={"funding": {"price": 2500000, "investor_equity": 500000, "investor_stake": 30, "bogus": 1}})
+        assert r.status_code == 200 and r.json()["funding"] == {"price": 2500000.0, "investor_equity": 500000.0, "investor_stake": 30.0}
         assert cl.get("/api/companies/01000001").json()["state"]["funding"]["investor_stake"] == 30

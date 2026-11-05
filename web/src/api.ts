@@ -83,8 +83,9 @@ export interface Valuation {
   assumptions: Assumptions; defaults: Assumptions; override: Partial<Assumptions>;
 }
 export interface Funding {
-  price: number; your_cash: number; investor_cash: number; investor_stake: number; vendor_pct: number;
-  vendor_years: number; vendor_rate: number; bank_rate: number; bank_years: number;
+  price: number; your_cash: number; investor_equity: number; investor_stake: number; investor_loan: number;
+  investor_rate: number; investor_years: number; vendor_loan: number; vendor_rate: number; vendor_years: number;
+  bank_rate: number; bank_years: number;
 }
 export interface Assumptions { margin_low: number; margin_high: number; multiple_low: number; multiple_high: number }
 

@@ -100,12 +100,19 @@ function annuity(principal: number, ratePct: number, years: number) {
 }
 
 function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave }: {
-  eLo: number; eHi: number; vLo: number; vHi: number; saved: Partial<Funding>; onSave: (f: Funding) => Promise<unknown>;
+  eLo: number; eHi: number; vLo: number; vHi: number; saved: Partial<Funding> & { investor_cash?: number; vendor_pct?: number };
+  onSave: (f: Funding) => Promise<unknown>;
 }) {
   const mid = Math.round(((vLo + vHi) / 2) / 10000) * 10000;
-  const defaults: Funding = { price: mid, your_cash: 0, investor_cash: 0, investor_stake: 30, vendor_pct: 30, vendor_years: 3,
-                              vendor_rate: 0, bank_rate: 9, bank_years: 5 };
-  const [f, setF] = useState<Funding>({ ...defaults, ...saved });
+  // Older saved checks used investor_cash / vendor_pct: read them once.
+  const start: Funding = {
+    price: mid, your_cash: 0, investor_equity: 0, investor_stake: 30, investor_loan: 0, investor_rate: 10, investor_years: 5,
+    vendor_loan: Math.round(mid * 0.3 / 10000) * 10000, vendor_rate: 0, vendor_years: 3, bank_rate: 9, bank_years: 5,
+    ...saved,
+  } as Funding;
+  if (saved.investor_cash !== undefined && saved.investor_equity === undefined) start.investor_equity = saved.investor_cash;
+  if (saved.vendor_pct !== undefined && saved.vendor_loan === undefined) start.vendor_loan = Math.round(start.price * saved.vendor_pct / 100);
+  const [f, setF] = useState<Funding>(start);
   const [note, setNote] = useState<string>(Object.keys(saved).length ? "Saved for this company" : "");
   const timer = useRef<number | null>(null);
   const set = (patch: Partial<Funding>) => {
@@ -116,67 +123,86 @@ function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave }: {
       try { await onSave(next); setNote("Saved for this company"); } catch (e: any) { setNote(`Not saved: ${e.message}`); }
     }, 600);
   };
-  const vendor = (f.price * f.vendor_pct) / 100;
-  const bank = Math.max(0, f.price - f.your_cash - f.investor_cash - vendor);
-  const short = f.your_cash + f.investor_cash + vendor > f.price;
-  const bankService = annuity(bank, f.bank_rate, f.bank_years);
-  const vendorService = annuity(vendor, f.vendor_rate, f.vendor_years);
-  const service = bankService + vendorService;
-  const cover = (profit: number) => (service > 0 ? profit / service : null);
+
+  // Sources of funds. The bank (or other lender) provides whatever is left.
+  const named = f.your_cash + f.investor_equity + f.investor_loan + f.vendor_loan;
+  const bank = Math.max(0, f.price - named);
+  const over = named - f.price;
+  const pct = (v: number) => (f.price > 0 ? `${Math.round((100 * v) / f.price)}%` : "—");
+  const yearly = {
+    investor: annuity(f.investor_loan, f.investor_rate, f.investor_years),
+    vendor: annuity(f.vendor_loan, f.vendor_rate, f.vendor_years),
+    bank: annuity(bank, f.bank_rate, f.bank_years),
+  };
+  const service = yearly.investor + yearly.vendor + yearly.bank;
   const eMid = (eLo + eHi) / 2;
-  const cMid = cover(eMid);
-  const verdict = (c: number | null) => c === null ? "" : c >= 2 ? "Comfortable" : c >= 1.5 ? "Workable" : c >= 1.2 ? "Tight" : "Does not cover";
-  const stake = f.investor_cash > 0 ? Math.max(0, 100 - f.investor_stake) : 100;
-  const leftMid = eMid - service;
-  const num = (k: keyof Funding, step = 1, w = 70) => (
-    <input type="number" step={step} min={0} style={{ width: w }} value={f[k]} onChange={(e) => set({ [k]: Number(e.target.value) } as Partial<Funding>)} />
+  const cover = (profit: number) => (service > 0 ? profit / service : null);
+  const verdict = (c: number | null) => c === null ? "No debt" : c >= 2 ? "Comfortable" : c >= 1.5 ? "Workable" : c >= 1.2 ? "Tight" : "Does not cover";
+  const coverCls = (c: number | null) => (c !== null && c < 1.2 ? "neg" : c !== null && c >= 1.5 ? "pos" : "");
+  const yours = f.investor_equity > 0 ? 100 - f.investor_stake : 100;
+  const left = (profit: number) => profit - service;
+
+  const money_ = (k: keyof Funding, w = 120) => (
+    <MoneyInput value={f[k]} width={w} onChange={(v) => set({ [k]: v ?? 0 } as Partial<Funding>)} />
   );
-  const cls = (c: number | null) => `num ${c !== null && c < 1.2 ? "neg" : c !== null && c >= 1.5 ? "pos" : ""}`;
+  const num = (k: keyof Funding, step = 1, w = 58) => (
+    <input type="number" step={step} min={0} style={{ width: w }} value={f[k]} aria-label={k}
+           onChange={(e) => set({ [k]: Number(e.target.value) } as Partial<Funding>)} />
+  );
+  const yr = (v: number) => (v > 0 ? money(v) : "—");
+
   return (
     <details className="dealcheck" open={Object.keys(saved).length > 0}>
       <summary>Funding check: can the profit pay for the deal? <span className="faint small">{note}</span></summary>
-      <p className="muted small" style={{ margin: "6px 0 10px" }}>
-        Where the money comes from: your own cash (none if your equity is sweat), an investor's cash in return for a stake
-        (a co-investor such as a development bank typically takes 20–40%), a vendor loan (part of the price paid to the seller
-        over time), and bank or lender debt for the rest. Repayments are then set against the profit range above.
-      </p>
-      <div className="dc-grid">
-        <label className="field"><span className="label">Price <span className="faint">(starts at the midpoint, {money(mid)})</span></span>
-          <MoneyInput value={f.price} width={140} onChange={(v) => set({ price: v ?? 0 })} /></label>
-        <label className="field"><span className="label">Your cash in</span>
-          <MoneyInput value={f.your_cash} width={120} onChange={(v) => set({ your_cash: v ?? 0 })} /></label>
-        <label className="field"><span className="label">Investor cash in</span>
-          <MoneyInput value={f.investor_cash} width={120} onChange={(v) => set({ investor_cash: v ?? 0 })} /></label>
-        <label className="field"><span className="label">Investor's stake, %</span>{num("investor_stake")}</label>
-        <label className="field"><span className="label">Vendor loan, % of price</span>{num("vendor_pct")}</label>
-        <label className="field"><span className="label">Vendor loan over, years</span>{num("vendor_years")}</label>
-        <label className="field"><span className="label">Vendor loan rate, %</span>{num("vendor_rate", 0.25)}</label>
-        <label className="field"><span className="label">Bank rate, %</span>{num("bank_rate", 0.25)}</label>
-        <label className="field"><span className="label">Bank term, years</span>{num("bank_years")}</label>
+
+      <div className="dc-price">
+        <label className="field"><span className="label">Price</span>{money_("price", 150)}</label>
+        <span className="faint small">Starts at the middle of the indicative value ({money(mid)}). Change it to the price you have in mind.</span>
       </div>
-      {short && <div className="callout red">Cash, investor money and the vendor loan add up to more than the price; lower one of them.</div>}
-      <table className="dc-table">
+
+      <h4 className="dc-h">1. Where the money comes from</h4>
+      <table className="dc-table dc-sources">
+        <thead><tr><th>Source</th><th className="num">Amount</th><th className="num">Of price</th><th className="num">Rate</th><th className="num">Years</th><th className="num">Repaid a year</th></tr></thead>
         <tbody>
-          <tr><td>Your cash</td><td className="num">{money(f.your_cash)}{f.your_cash === 0 ? <span className="faint small"> · sweat equity</span> : null}</td></tr>
-          {f.investor_cash > 0 && <tr><td>Investor cash, for a {f.investor_stake}% stake</td><td className="num">{money(f.investor_cash)}</td></tr>}
-          <tr><td>Vendor loan ({f.vendor_pct}%)</td><td className="num">{money(vendor)}</td></tr>
-          <tr><td>Bank or lender debt ({f.price ? Math.round((100 * bank) / f.price) : 0}%)</td><td className="num">{money(bank)}</td></tr>
-          <tr><td>Yearly repayments: bank {money(bankService)} + vendor {money(vendorService)}</td><td className="num"><b>{money(service)}</b></td></tr>
-          <tr><td>Profit available <span className="faint small">(the range above; midpoint {money(eMid)})</span></td><td className="num">{range(eLo, eHi)}</td></tr>
-          <tr className="total">
-            <td>Debt cover <span className="faint small">profit ÷ repayments. Lenders usually want 1.5× or more.</span></td>
-            <td className={cls(cMid)}>
-              <b>{cMid === null ? "—" : `${cMid.toFixed(1)}×`}</b> {verdict(cMid)}
-              {eLo !== eHi && cover(eLo) !== null && <div className="faint small">{cover(eLo)!.toFixed(1)}× at the low end, {cover(eHi)!.toFixed(1)}× at the high end</div>}
-            </td>
-          </tr>
-          <tr><td>Profit left after repayments (midpoint)</td><td className={`num ${leftMid < 0 ? "neg" : ""}`}>{money(leftMid)}</td></tr>
-          <tr><td>Your stake{f.investor_cash > 0 ? ` (investor holds ${f.investor_stake}%)` : ""}</td><td className="num">{stake}%
-            {f.investor_cash > 0 && <div className="faint small">your share of what is left: {money((leftMid * stake) / 100)} a year</div>}</td></tr>
+          <tr><td>Your cash<div className="sub">{f.your_cash === 0 ? "None: your equity is sweat" : "Equity: not repaid"}</div></td>
+            <td className="num">{money_("your_cash")}</td><td className="num">{pct(f.your_cash)}</td><td /><td /><td className="num faint">—</td></tr>
+          <tr><td>Investor equity<div className="sub">e.g. DBW: cash in return for a share of the company. Not repaid.</div></td>
+            <td className="num">{money_("investor_equity")}</td><td className="num">{pct(f.investor_equity)}</td>
+            <td className="num" colSpan={2}><span className="faint small">their stake </span>{num("investor_stake")}%</td><td className="num faint">—</td></tr>
+          <tr><td>Investor loan<div className="sub">The same investor's debt alongside the equity</div></td>
+            <td className="num">{money_("investor_loan")}</td><td className="num">{pct(f.investor_loan)}</td>
+            <td className="num">{num("investor_rate", 0.25)}%</td><td className="num">{num("investor_years")}</td><td className="num">{yr(yearly.investor)}</td></tr>
+          <tr><td>Vendor loan<div className="sub">Part of the price paid to the seller over time</div></td>
+            <td className="num">{money_("vendor_loan")}</td><td className="num">{pct(f.vendor_loan)}</td>
+            <td className="num">{num("vendor_rate", 0.25)}%</td><td className="num">{num("vendor_years")}</td><td className="num">{yr(yearly.vendor)}</td></tr>
+          <tr><td>Bank or other lender<div className="sub">Whatever is left (worked out)</div></td>
+            <td className="num"><b>{money(bank)}</b></td><td className="num">{pct(bank)}</td>
+            <td className="num">{num("bank_rate", 0.25)}%</td><td className="num">{num("bank_years")}</td><td className="num">{yr(yearly.bank)}</td></tr>
+          <tr className="total"><td>Total</td><td className="num"><b>{money(Math.max(f.price, named))}</b></td><td className="num">{over > 0 ? pct(named) : "100%"}</td>
+            <td /><td /><td className="num"><b>{money(service)}</b></td></tr>
         </tbody>
       </table>
-      <p className="faint small">Ignores tax, capital expenditure, working capital, fees and your own salary, so real cover will be lower.
-        An investor's loan element (many co-investors lend as well as take equity) can be entered as part of the bank debt.</p>
+      {over > 0 && <div className="callout red">These add up to {money(named)}, which is {money(over)} more than the price. Lower one of them.</div>}
+
+      <h4 className="dc-h">2. Can the business pay it back?</h4>
+      <table className="dc-table dc-walk">
+        <thead><tr><th /><th className="num">Low</th><th className="num">Middle</th><th className="num">High</th></tr></thead>
+        <tbody>
+          <tr><td>Profit a year <span className="faint small">(EBITDA proxy, from above)</span></td>
+            <td className="num">{money(eLo)}</td><td className="num"><b>{money(eMid)}</b></td><td className="num">{money(eHi)}</td></tr>
+          <tr><td>− Loan repayments a year</td>
+            <td className="num">{money(service)}</td><td className="num">{money(service)}</td><td className="num">{money(service)}</td></tr>
+          <tr className="total"><td>= Left after repayments</td>
+            {[eLo, eMid, eHi].map((e, i) => <td key={i} className={`num ${left(e) < 0 ? "neg" : ""}`}><b>{money(left(e))}</b></td>)}</tr>
+          <tr><td>Your share ({yours}%){f.investor_equity > 0 ? <span className="faint small"> · the investor's {f.investor_stake}% is theirs</span> : null}</td>
+            {[eLo, eMid, eHi].map((e, i) => <td key={i} className={`num ${left(e) < 0 ? "neg" : ""}`}>{money((left(e) * yours) / 100)}</td>)}</tr>
+          <tr><td>Debt cover <span className="faint small">profit ÷ repayments; lenders usually want 1.5× or more</span></td>
+            {[eLo, eMid, eHi].map((e, i) => { const c = cover(e); return (
+              <td key={i} className={`num ${coverCls(c)}`}><b>{c === null ? "—" : `${c.toFixed(1)}×`}</b><div className="small">{verdict(c)}</div></td>); })}</tr>
+        </tbody>
+      </table>
+      <p className="faint small">Repayments are level yearly payments of capital and interest. Ignores tax, capital expenditure, working capital,
+        fees and your own salary, so the real figures will be lower.</p>
     </details>
   );
 }

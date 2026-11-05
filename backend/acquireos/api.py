@@ -773,8 +773,10 @@ def _links_for(c, num):
     ).fetchall()
 
 
-FUNDING_KEYS = {"price", "your_cash", "investor_cash", "investor_stake", "vendor_pct", "vendor_years", "vendor_rate",
-                "bank_rate", "bank_years"}
+FUNDING_KEYS = {"price", "your_cash", "investor_equity", "investor_stake", "investor_loan", "investor_rate", "investor_years",
+                "vendor_loan", "vendor_rate", "vendor_years", "bank_rate", "bank_years",
+                # older names, still read
+                "investor_cash", "vendor_pct"}
 
 
 class StateIn(BaseModel):
