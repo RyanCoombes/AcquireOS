@@ -171,17 +171,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const industry = <div className="field" style={{ minWidth: 300, flex: "1 1 300px" }}><label>Industry</label>{industryPicker("100%")}</div>;
   const industryWide = <div className="field" style={{ flexBasis: "100%" }}><label>Industry (SIC)</label>{industryPicker("100%")}</div>;
   const region = <Select label="Region" k="region" query={query} set={set} options={(m?.regions ?? []).map((r) => [r, r])} />;
-  const companyStatus = (
-    <div className="field">
-      <label>Company status</label>
-      <div className="seg">
-        <button className={!query.company_status ? "on" : ""} onClick={() => set("company_status", null)}>All</button>
-        {(m?.status_groups ?? []).filter((g) => g.value !== "other").map((g) => (
-          <button key={g.value} className={query.company_status === g.value ? "on" : ""} onClick={() => set("company_status", g.value)}>{g.label}</button>
-        ))}
-      </div>
-    </div>
-  );
+  const companyStatus = <Select label="Company status" k="company_status" query={query} set={set}
+                                options={(m?.status_groups ?? []).map((g) => [g.value, g.label] as [string, string])} />;
   const staff = <NumRange label="Staff" lo="min_staff" hi="max_staff" query={query} set={set} />;
   const yearsTrading = <NumField label="Years trading" k="min_years" placeholder="at least" query={query} set={set} />;
   const ownerAge = <NumField label="Owner aged" k="min_owner_age" placeholder="at least" query={query} set={set} />;

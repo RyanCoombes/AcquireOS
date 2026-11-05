@@ -180,9 +180,10 @@ def fetch_company_data(conn, keep: bool = False) -> dict:
 
 
 def accounts_plan(conn, months: int, skip_loaded: bool = True) -> list[tuple[str, str, bool]]:
-    """[(label, url, already_loaded)] oldest first."""
+    """[(label, url, already_loaded)] NEWEST first, so the latest figures
+    arrive first and history fills in behind them."""
     loaded = {r["filename"] for r in conn.execute("select filename from import_run where kind = 'accounts'")}
-    chosen = list(reversed(links("accounts")[:months]))
+    chosen = links("accounts")[:months]
     out = []
     for key, url in chosen:
         name = url.rsplit("/", 1)[-1]
@@ -194,13 +195,14 @@ def accounts_plan(conn, months: int, skip_loaded: bool = True) -> list[tuple[str
 
 def fetch_accounts(conn, months: int = 1, keep: bool = False, skip_loaded: bool = True,
                    plan: list | None = None) -> list[dict]:
-    """Load the newest `months` monthly accounts files, OLDEST FIRST.
+    """Load the newest `months` monthly accounts files, NEWEST FIRST.
 
-    Oldest first means each company's figures build up in date order, and
-    every figure also records which filing it came from, so an older filing
-    can never overwrite a newer one. Changes (new accounts, staff) are only
-    recorded for the newest month, so back-filling history does not flood
-    the Changes page. The next month downloads while this one is read."""
+    Every figure records the balance sheet date of the filing it came from,
+    and an older filing never overwrites a newer one, so the order is safe;
+    newest first means the latest figures are usable straight away while
+    history fills in. Changes (new accounts, staff) are only recorded for the
+    newest month, so back-filling does not flood the Changes page. The next
+    month downloads while this one is read."""
     from concurrent.futures import ThreadPoolExecutor
 
     from .importers import accounts
@@ -221,7 +223,7 @@ def fetch_accounts(conn, months: int = 1, keep: bool = False, skip_loaded: bool 
             # reporting from that thread, to keep this stage's bar meaningful).
             nxt = pool.submit(download, todo[k + 1][2], DATA_DIR, False) if k + 1 < len(todo) else None
             name = path.name
-            newest = i == len(plan) - 1
+            newest = i == 0
             try:
                 log(f"Reading {name}")
                 r = accounts.run(conn, [path], record_changes=newest, progress=_scaled(0.15))
@@ -257,8 +259,8 @@ def fetch_psc(conn, keep: bool = False) -> dict:
 
 
 def refresh(conn, accounts_months: int = 1, psc: bool = True) -> dict:
-    """The monthly job: company data, then accounts (oldest month first), then
-    owners, then scoring, links and map locations. Each part is committed as
+    """The monthly job: company data, then owners, then accounts (newest month
+    first), then scoring, links and map locations. Each part is committed as
     it finishes, so a stop or failure keeps what was already loaded."""
     from . import scoring
     from .ownership import rebuild_links
@@ -284,15 +286,19 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True) -> dict:
             out[label] = {"error": str(e)}
 
     part("Company register", lambda: fetch_company_data(conn))
+    # Owners before accounts: one snapshot covers every company, whereas
+    # accounts take a file per month.
+    if psc:
+        part("Owners (PSC)", lambda: fetch_psc(conn))
     try:
         plan = accounts_plan(conn, accounts_months)
     except Exception as e:
         plan = []
         out["accounts"] = {"error": str(e)}
     if JOB is not None:
-        # Show every month as its own step, between the register and owners.
+        # Show every month as its own step, between owners and scoring.
         names = [st["name"] for st in JOB.stages]
-        at = names.index("Owners (PSC)") if "Owners (PSC)" in names else len(names)
+        at = names.index("Scoring") if "Scoring" in names else len(names)
         for label, _, _ in plan:
             if label not in names:
                 JOB.stages.insert(at, {"name": label, "status": "waiting", "seconds": None})
@@ -307,8 +313,6 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True) -> dict:
             raise
         log(f"Accounts failed: {e}")
         out["accounts"] = {"error": str(e)}
-    if psc:
-        part("Owners (PSC)", lambda: fetch_psc(conn))
     part("Scoring", lambda: scoring.rescore_all(conn, progress=_loader_progress))
     part("Ownership links", lambda: rebuild_links(conn) or "done")
 

@@ -115,7 +115,7 @@ def test_universe_scope_excludes(loaded):
     assert row["excluded"] and "universe" in row["exclusion"]
 
 
-def test_fetch_accounts_oldest_first(loaded, monkeypatch, tmp_path):
+def test_fetch_accounts_newest_first(loaded, monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(fetch, "links", lambda kind, pages=None: [
         ("2026-10", "https://x/Accounts_Monthly_Data-October2026.zip"),
@@ -126,9 +126,9 @@ def test_fetch_accounts_oldest_first(loaded, monkeypatch, tmp_path):
                         calls.append((paths[0].name, record_changes)) or
                         {"companies_matched": 0, "changes": 0, "files_seen": 0, "periods": 0})
     fetch.fetch_accounts(loaded, months=3, keep=True)
-    assert calls == [("Accounts_Monthly_Data-August2026.zip", False),
+    assert calls == [("Accounts_Monthly_Data-October2026.zip", True),
                      ("Accounts_Monthly_Data-September2026.zip", False),
-                     ("Accounts_Monthly_Data-October2026.zip", True)]
+                     ("Accounts_Monthly_Data-August2026.zip", False)]
 
 
 def test_job_progress_and_cancel(loaded):
