@@ -540,7 +540,7 @@ def company(num: str, bb: str | None = None):
         est = c.execute("select * from estimate where company_number = %s", (num,)).fetchone()
         own = c.execute("select * from company_ownership where company_number = %s", (num,)).fetchone()
         people = c.execute(
-            """select p.name, p.kind, p.birth_year, p.birth_month, p.country_registered, p.registration_number,
+            """select p.id as person_id, p.name, p.kind, p.birth_year, p.birth_month, p.country_registered, p.registration_number,
                       cp.role, cp.natures, cp.notified_on, cp.ceased_on
                from company_person cp join person p on p.id = cp.person_id
                where cp.company_number = %s order by cp.ceased_on nulls first, cp.notified_on desc""",
@@ -1355,6 +1355,69 @@ def _reports():
         "address_flags": address_flags, "imports": imports,
         "funnel": [{"status": s, "label": STATUS_LABELS[s], "n": fmap.get(s, 0)} for s in STATUSES if s != "new"],
     }
+
+
+# ---------------------------------------------------------------- owners
+
+@app.get("/api/owners")
+def owners(q: str, limit: int = 50):
+    """People and companies named as owners (PSCs) whose name contains every
+    word given, with how many companies each one controls."""
+    words = [w for w in q.strip().upper().split() if w]
+    if not words or sum(len(w) for w in words) < 3:
+        return {"rows": []}
+    conds = " and ".join(["p.name ilike %s"] * len(words))
+    with db.conn() as c:
+        rows = c.execute(
+            f"""select p.id, p.name, p.kind, p.birth_year, p.birth_month, p.country_registered, p.registration_number,
+                       (select count(*) from company_person cp where cp.person_id = p.id and cp.ceased_on is null) as companies,
+                       (select count(*) from company_person cp where cp.person_id = p.id and cp.ceased_on is not null) as past
+                from person p
+                where {conds}
+                order by (select count(*) from company_person cp where cp.person_id = p.id and cp.ceased_on is null) desc, p.name
+                limit %s""",
+            (*[f"%{_like_escape(w)}%" for w in words], min(limit, 200))).fetchall()
+    return {"rows": rows}
+
+
+@app.get("/api/owners/{pid}")
+def owner(pid: int):
+    """One owner and every company they are (or were) recorded as controlling,
+    with your status and the best score for each."""
+    with db.conn() as c:
+        p = c.execute("select * from person where id = %s", (pid,)).fetchone()
+        if not p:
+            raise HTTPException(404, "Owner not found")
+        rows = c.execute(
+            """select c.company_number, c.name, c.status as company_status, c.postcode, c.region, c.sic_codes,
+                      c.incorporation_date, cp.natures, cp.notified_on, cp.ceased_on,
+                      l.employees, o.ownership_type, e.revenue_low, e.revenue_high, e.basis as revenue_basis,
+                      cb.score, cb.box_name, coalesce(uc.status, 'new') as status
+               from company_person cp join company c on c.company_number = cp.company_number
+               left join company_latest l on l.company_number = c.company_number
+               left join company_ownership o on o.company_number = c.company_number
+               left join estimate e on e.company_number = c.company_number
+               left join company_best cb on cb.company_number = c.company_number
+               left join user_company uc on uc.company_number = c.company_number and uc.user_id = %s
+               where cp.person_id = %s
+               order by cp.ceased_on nulls first, cb.score desc nulls last, c.name""", (UID, pid)).fetchall()
+        # Companies this owner holds through other companies (from the traced ownership).
+        indirect = c.execute(
+            """with held as (
+                   select o.company_number, u.value as owner from company_ownership o
+                   cross join lateral jsonb_array_elements(o.ultimate_owners) u
+                   where o.ultimate_owners @> %s::jsonb and (u.value ->> 'person_id')::bigint = %s
+                     and jsonb_array_length(u.value -> 'via') > 0)
+               select h.company_number, c.name, c.status as company_status, cb.score, coalesce(uc.status, 'new') as status,
+                      (select string_agg(coalesce(c2.name, v.x), ' → ' order by v.o)
+                       from jsonb_array_elements_text(h.owner -> 'via') with ordinality v(x, o)
+                       left join company c2 on c2.company_number = v.x) as via
+               from held h join company c on c.company_number = h.company_number
+               left join company_best cb on cb.company_number = h.company_number
+               left join user_company uc on uc.company_number = h.company_number and uc.user_id = %s
+               order by cb.score desc nulls last limit 200""", (json.dumps([{"person_id": pid}]), pid, UID)).fetchall()
+        outside = c.execute("select count(*) as n from parent_psc where person_id = %s and ceased_on is null", (pid,)).fetchone()["n"]
+    return {"owner": p, "companies": rows, "indirect": indirect, "outside_register": outside}
 
 
 @app.get("/api/links/{num}")

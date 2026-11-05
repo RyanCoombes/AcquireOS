@@ -171,7 +171,8 @@ export default function Company() {
                     <tbody>
                       {own.ultimate_owners.map((u, i) => (
                         <tr key={i}>
-                          <td>{u.name}{u.unresolved && <span className="faint small"> · {u.kind}, not traced further</span>}</td>
+                          <td>{u.person_id ? <Link to={`/owners/${u.person_id}`} title="Everything this owner controls">{u.name}</Link> : u.name}
+                            {u.unresolved && <span className="faint small"> · {u.kind}, not traced further</span>}</td>
                           <td>{u.birth_year ? `${MONTHS[u.birth_month ?? 0]} ${u.birth_year}` : "—"}</td>
                           <td className="num">{ageFrom(u.birth_year) ?? "—"}</td>
                           <td className="muted">{u.via.length ? u.via.join(" → ") : "Direct"}</td>
@@ -188,7 +189,7 @@ export default function Company() {
                       <tbody>
                         {data.people.map((p, i) => (
                           <tr key={i} className={p.ceased_on ? "excluded" : ""}>
-                            <td>{p.name}{p.registration_number ? <span className="faint small"> · {p.registration_number}{p.country_registered ? `, ${p.country_registered}` : ""}</span> : null}</td>
+                            <td><Link to={`/owners/${p.person_id}`}>{p.name}</Link>{p.registration_number ? <span className="faint small"> · {p.registration_number}{p.country_registered ? `, ${p.country_registered}` : ""}</span> : null}</td>
                             <td>{p.kind}</td>
                             <td className="small">{p.natures.map(natureLabel).join("; ")}</td>
                             <td>{date(p.notified_on)}</td>

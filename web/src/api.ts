@@ -130,11 +130,11 @@ export interface CompanyDetail {
   estimate: { revenue_low: string; revenue_high: string; basis: string; method: string } | null;
   ownership: {
     ownership_type: string; flags: string[]; owner_count: number; oldest_birth_year: number | null;
-    ultimate_owners: { name: string; birth_year?: number; birth_month?: number; via: string[]; unresolved?: boolean; kind?: string }[];
+    ultimate_owners: { name: string; birth_year?: number; birth_month?: number; via: string[]; unresolved?: boolean; kind?: string; person_id?: number }[];
     explanation: string;
   } | null;
   people: {
-    name: string; kind: string; birth_year: number | null; birth_month: number | null; country_registered: string | null;
+    person_id: number; name: string; kind: string; birth_year: number | null; birth_month: number | null; country_registered: string | null;
     registration_number: string | null; role: string; natures: string[]; notified_on: string | null; ceased_on: string | null;
   }[];
   links: Link[];
@@ -203,6 +203,8 @@ export const api = {
   outreach: () => req<Outreach[]>("/api/outreach"),
   addOutreach: (body: Record<string, unknown>) => req<Outreach>("/api/outreach", { method: "POST", body: JSON.stringify(body) }),
   reports: () => req<Record<string, any>>("/api/reports"),
+  owners: (q: string) => req<{ rows: OwnerHit[] }>("/api/owners?" + new URLSearchParams({ q })),
+  owner: (id: number) => req<OwnerDetail>(`/api/owners/${id}`),
   graph: (n: string, depth = 2) => req<{ nodes: GNode[]; edges: GEdge[] }>(`/api/links/${encodeURIComponent(n)}?depth=${depth}`),
   buybox: (id?: number | null) =>
     req<{ id: number; name: string; description: string | null; criteria: any; defaults: any }>(`/api/buybox${id ? `?id=${id}` : ""}`),
@@ -275,4 +277,20 @@ export interface Job {
   stages?: { name: string; status: string; seconds: number | null }[];
   log?: string[]; result?: Record<string, any> | null; error?: string | null;
   started_at?: string; updated_at?: string; finished_at?: string | null; cancel_requested?: boolean;
+}
+
+export interface OwnerHit {
+  id: number; name: string; kind: string; birth_year: number | null; birth_month: number | null;
+  country_registered: string | null; registration_number: string | null; companies: number; past: number;
+}
+export interface OwnerDetail {
+  owner: OwnerHit & { legal_form?: string | null; address?: string | null };
+  companies: {
+    company_number: string; name: string; company_status: string | null; postcode: string | null; region: string | null;
+    sic_codes: string[]; incorporation_date: string | null; natures: string[]; notified_on: string | null; ceased_on: string | null;
+    employees: number | null; ownership_type: string | null; revenue_low: string | null; revenue_high: string | null;
+    revenue_basis: string | null; score: string | null; box_name: string | null; status: string;
+  }[];
+  indirect: { company_number: string; name: string; company_status: string | null; score: string | null; status: string; via: string | null }[];
+  outside_register: number;
 }

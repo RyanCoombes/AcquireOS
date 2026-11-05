@@ -226,3 +226,19 @@ def test_bulk_state(c):
         for n_ in ("01000004", "01000005"):
             assert cl.get(f"/api/companies/{n_}").json()["state"]["status"] == "passed"
         assert cl.put("/api/companies/state", json={"numbers": [], "status": "passed"}).status_code == 400
+
+
+def test_owner_search_and_page(loaded):
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        r = cl.get("/api/owners", params={"q": "example alex"}).json()["rows"]
+        assert r and r[0]["name"] == "Mr Alex Example" and r[0]["companies"] >= 1
+        pid = r[0]["id"]
+        o = cl.get(f"/api/owners/{pid}").json()
+        assert o["owner"]["name"] == "Mr Alex Example"
+        nums = {x["company_number"] for x in o["companies"]}
+        assert "01000001" in nums
+        assert cl.get("/api/owners", params={"q": "zz"}).json()["rows"] == []
+        assert cl.get("/api/owners/999999").status_code == 404

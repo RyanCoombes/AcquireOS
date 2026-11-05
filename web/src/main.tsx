@@ -16,6 +16,7 @@ import MapPage from "./pages/MapPage";
 import Connect from "./pages/Connect";
 import JobBar from "./components/JobBar";
 import Review from "./pages/Review";
+import Owners from "./pages/Owners";
 
 const ICONS: Record<string, string> = {
   home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z",
@@ -29,6 +30,7 @@ const ICONS: Record<string, string> = {
   import: "M12 3v12M7 10l5 5 5-5M4 21h16",
   map: "M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14",
   review: "M4 4h16v12H4zM8 20h8M12 16v4M8 9l2 2 4-4",
+  owners: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
   claude: "M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8",
 };
 
@@ -64,6 +66,7 @@ function Side({ meta }: { meta: Meta | null }) {
       {item("/changes", "changes", "Changes", c?.changed_30d)}
       <div className="group">Analyse</div>
       {item("/map", "map", "Map")}
+      {item("/owners", "owners", "Owners")}
       {item("/connections", "connections", "Connections")}
       {item("/reports", "reports", "Reports")}
       <div className="group">Set up</div>
@@ -138,6 +141,8 @@ function App() {
             <Route path="/changes" element={<Changes />} />
             <Route path="/connections" element={<Connections />} />
             <Route path="/connections/:num" element={<Connections />} />
+            <Route path="/owners" element={<Owners />} />
+            <Route path="/owners/:pid" element={<Owners />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/map" element={<MapPage />} />
             <Route path="/connect" element={<Connect />} />
