@@ -281,7 +281,8 @@ def active_buy_box(conn, user_id: int = 1) -> dict:
     return dict(row)
 
 
-def rescore(conn, buy_box: dict | None = None, company_number: str | None = None, batch: int = 20_000) -> int:
+def rescore(conn, buy_box: dict | None = None, company_number: str | None = None, batch: int = 20_000,
+            progress=None) -> int:
     """Score every company (streamed in batches) or one company."""
     from . import valuation
 
@@ -325,7 +326,10 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
         refresh_latest(conn, [company_number])
         flush(list(rows_for(load_facts(conn, company_number))))
         return 1
+    if progress:
+        progress("Updating latest figures", 0.02)
     refresh_latest(conn)
+    total = conn.execute("select count(*) as n from company").fetchone()["n"] or 1
     conn.execute("delete from score where buy_box_id = %s", (bb["id"],))
     n = 0
     buf: list = []
@@ -338,6 +342,8 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
             if len(buf) >= batch:
                 flush(buf)
                 buf = []
+                if progress:
+                    progress(f"Scored {n:,} of {total:,} companies", 0.05 + 0.95 * n / total)
     flush(buf)
     return n
 

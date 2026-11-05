@@ -45,8 +45,25 @@ MONTHS = {m: i for i, m in enumerate(["january", "february", "march", "april", "
                                      "august", "september", "october", "november", "december"], 1)}
 
 
+# The job being run (for progress), if any. Set by run_job().
+JOB = None
+
+
 def log(msg: str):
     print(f"[{datetime.now():%Y-%m-%d %H:%M}] {msg}", file=sys.stderr, flush=True)
+    if JOB is not None:
+        JOB.log(msg)
+
+
+def progress(frac: float | None = None, detail: str | None = None):
+    if JOB is not None:
+        JOB.progress(frac, detail)
+
+
+def _loader_progress(msg: str, frac: float | None = None):
+    """Callback handed to the loaders: they report a message and, where they
+    can tell, the fraction done."""
+    progress(frac, msg)
 
 
 def _get(url: str) -> bytes:
@@ -102,7 +119,7 @@ def _writable_dir(preferred: Path) -> Path:
         return fallback
 
 
-def download(url: str, dest_dir: Path = DATA_DIR) -> Path:
+def download(url: str, dest_dir: Path = DATA_DIR, report: bool = True) -> Path:
     dest_dir = _writable_dir(dest_dir)
     dest = dest_dir / url.rsplit("/", 1)[-1]
     req = urllib.request.Request(url, headers={"User-Agent": UA})
@@ -115,16 +132,32 @@ def download(url: str, dest_dir: Path = DATA_DIR) -> Path:
                     return dest
                 log(f"Downloading {dest.name} ({size / 1e9:.2f} GB)" if size else f"Downloading {dest.name}")
                 tmp = dest.with_suffix(dest.suffix + ".part")
+                got, t0 = 0, time.time()
                 with open(tmp, "wb") as f:
-                    while chunk := r.read(1 << 20):
+                    while chunk := r.read(4 << 20):
                         f.write(chunk)
+                        got += len(chunk)
+                        if report and size:
+                            rate = got / max(time.time() - t0, 0.1) / 1e6
+                            progress(min(got / size, 1) * 0.15,
+                                     f"Downloading {dest.name}: {got / 1e9:.2f} of {size / 1e9:.2f} GB ({rate:.0f} MB/s)")
                 tmp.rename(dest)
+                log(f"Downloaded {dest.name} in {time.time() - t0:.0f}s")
                 return dest
         except Exception as e:
+            if JOB is not None:
+                JOB.check_cancel()
             wait = 2 ** (attempt + 2)
             log(f"Download failed ({e}); retrying in {wait}s")
             time.sleep(wait)
     raise RuntimeError(f"Could not download {url}")
+
+
+def _scaled(start: float):
+    """Loader progress mapped onto the part of a stage after the download."""
+    def cb(msg: str, frac: float | None = None):
+        progress(None if frac is None else start + (1 - start) * frac, msg)
+    return cb
 
 
 def fetch_company_data(conn, keep: bool = False) -> dict:
@@ -135,42 +168,64 @@ def fetch_company_data(conn, keep: bool = False) -> dict:
 
     path = download(found[0][1])
     try:
-        return register.load(conn, path, full=True, progress=log)
+        return register.load(conn, path, full=True, progress=_scaled(0.15))
     finally:
         if not keep:
             path.unlink(missing_ok=True)
 
 
-def fetch_accounts(conn, months: int = 1, keep: bool = False, skip_loaded: bool = True) -> list[dict]:
+def accounts_plan(conn, months: int, skip_loaded: bool = True) -> list[tuple[str, str, bool]]:
+    """[(label, url, already_loaded)] oldest first."""
+    loaded = {r["filename"] for r in conn.execute("select filename from import_run where kind = 'accounts'")}
+    chosen = list(reversed(links("accounts")[:months]))
+    out = []
+    for key, url in chosen:
+        name = url.rsplit("/", 1)[-1]
+        y, m = key.split("-")
+        label = f"Accounts: {datetime(int(y), int(m), 1):%B %Y}"
+        out.append((label, url, skip_loaded and name in loaded))
+    return out
+
+
+def fetch_accounts(conn, months: int = 1, keep: bool = False, skip_loaded: bool = True,
+                   plan: list | None = None) -> list[dict]:
     """Load the newest `months` monthly accounts files, OLDEST FIRST.
 
     Oldest first means each company's figures build up in date order, and
     every figure also records which filing it came from, so an older filing
     can never overwrite a newer one. Changes (new accounts, staff) are only
     recorded for the newest month, so back-filling history does not flood
-    the Changes page."""
+    the Changes page. The next month downloads while this one is read."""
+    from concurrent.futures import ThreadPoolExecutor
+
     from .importers import accounts
 
-    loaded = {r["filename"] for r in conn.execute("select filename from import_run where kind = 'accounts'")}
-    chosen = links("accounts")[:months]            # newest first
-    chosen = list(reversed(chosen))                # process oldest first
+    plan = plan if plan is not None else accounts_plan(conn, months, skip_loaded)
+    todo = [(i, label, url) for i, (label, url, done) in enumerate(plan) if not done]
+    for label, url, done in plan:
+        if done and JOB is not None:
+            JOB.skip(label, "already loaded")
     results = []
-    for i, (_, url) in enumerate(chosen):
-        name = url.rsplit("/", 1)[-1]
-        if skip_loaded and name in loaded:
-            log(f"Skipping {name}: already loaded")
-            continue
-        newest = i == len(chosen) - 1
-        path = download(url)
-        try:
-            log(f"Reading accounts in {name} ({i + 1} of {len(chosen)})")
-            r = accounts.run(conn, [path], record_changes=newest, progress=log)
-            conn.commit()
-            results.append({"file": name, **{k: v for k, v in r.items() if k != "messages"}})
-            log(f"{name}: {r['companies_matched']:,} filings, {r['changes']:,} changes")
-        finally:
-            if not keep:
-                path.unlink(missing_ok=True)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        nxt = pool.submit(download, todo[0][2], DATA_DIR, True) if todo else None
+        for k, (i, label, url) in enumerate(todo):
+            if JOB is not None:
+                JOB.stage(label)
+            path = nxt.result()
+            # Start fetching the following month in the background (no progress
+            # reporting from that thread, to keep this stage's bar meaningful).
+            nxt = pool.submit(download, todo[k + 1][2], DATA_DIR, False) if k + 1 < len(todo) else None
+            name = path.name
+            newest = i == len(plan) - 1
+            try:
+                log(f"Reading {name}")
+                r = accounts.run(conn, [path], record_changes=newest, progress=_scaled(0.15))
+                conn.commit()
+                results.append({"file": name, **{x: v for x, v in r.items() if x != "messages"}})
+                log(f"{name}: {r['companies_matched']:,} filings, {r['periods']:,} figures, {r['changes']:,} changes")
+            finally:
+                if not keep:
+                    path.unlink(missing_ok=True)
     return results
 
 
@@ -184,7 +239,7 @@ def fetch_psc(conn, keep: bool = False) -> dict:
     parts = [url for key, url in found if key.startswith(newest)]
     paths = [download(u) for u in sorted(parts)]
     try:
-        return psc.run(conn, paths, progress=log)
+        return psc.run(conn, paths, progress=_scaled(0.15))
     finally:
         if not keep:
             for p in paths:
@@ -192,39 +247,92 @@ def fetch_psc(conn, keep: bool = False) -> dict:
 
 
 def refresh(conn, accounts_months: int = 1, psc: bool = True) -> dict:
-    """The monthly job: company data, then accounts, then owners, then rescore."""
+    """The monthly job: company data, then accounts (oldest month first), then
+    owners, then scoring, links and map locations. Each part is committed as
+    it finishes, so a stop or failure keeps what was already loaded."""
     from . import scoring
     from .ownership import rebuild_links
 
+    # Bulk loads: do not wait for each commit to reach the disk. A power cut
+    # could lose the last few seconds, which a re-run restores.
+    conn.execute("set synchronous_commit = off")
     out: dict = {}
-    for label, fn in [
-        ("company_data", lambda: fetch_company_data(conn)),
-        ("accounts", lambda: fetch_accounts(conn, months=accounts_months)),
-        ("psc", (lambda: fetch_psc(conn)) if psc else None),
-    ]:
-        if fn is None:
-            continue
+
+    def part(label, fn):
+        if JOB is not None:
+            JOB.stage(label)
         try:
             out[label] = fn()
             conn.commit()
-        except Exception as e:  # keep going: one product failing should not block the others
+        except Exception as e:
             conn.rollback()
+            from .jobs import Cancelled
+
+            if isinstance(e, Cancelled):
+                raise
             log(f"{label} failed: {e}")
             out[label] = {"error": str(e)}
-    log("Scoring companies")
-    scoring.rescore(conn)
-    conn.commit()
-    log("Rebuilding ownership links for companies in your buy box")
-    rebuild_links(conn)
-    conn.commit()
+
+    part("Company register", lambda: fetch_company_data(conn))
     try:
+        plan = accounts_plan(conn, accounts_months)
+    except Exception as e:
+        plan = []
+        out["accounts"] = {"error": str(e)}
+    if JOB is not None:
+        # Show every month as its own step, between the register and owners.
+        names = [st["name"] for st in JOB.stages]
+        at = names.index("Owners (PSC)") if "Owners (PSC)" in names else len(names)
+        for label, _, _ in plan:
+            if label not in names:
+                JOB.stages.insert(at, {"name": label, "status": "waiting", "seconds": None})
+                at += 1
+    try:
+        out["accounts"] = fetch_accounts(conn, plan=plan)
+    except Exception as e:
+        conn.rollback()
+        from .jobs import Cancelled
+
+        if isinstance(e, Cancelled):
+            raise
+        log(f"Accounts failed: {e}")
+        out["accounts"] = {"error": str(e)}
+    if psc:
+        part("Owners (PSC)", lambda: fetch_psc(conn))
+    part("Scoring", lambda: scoring.rescore(conn, progress=_loader_progress))
+    part("Ownership links", lambda: rebuild_links(conn) or "done")
+
+    def locate():
         from . import geo
 
-        out["map_locations"] = geo.geocode(conn)
-        conn.commit()
-    except Exception as e:
-        log(f"Map location lookup failed: {e}")
+        return geo.geocode(conn)
+
+    part("Map locations", locate)
     return out
+
+
+def run_job(kind: str = "refresh", accounts_months: int = 1) -> dict:
+    """Run refresh() as a tracked job (progress visible on every page)."""
+    global JOB
+    from . import db
+    from .jobs import Cancelled, Job
+
+    JOB = Job(kind, ["Company register", "Owners (PSC)", "Scoring", "Ownership links", "Map locations"])
+    try:
+        db.migrate()
+        with db.conn() as c:
+            result = refresh(c, accounts_months=accounts_months)
+        failed = [k for k, v in result.items() if isinstance(v, dict) and v.get("error")]
+        JOB.finish(result, status="done", error=("Some parts failed: " + ", ".join(failed)) if failed else None)
+        return result
+    except Cancelled as e:
+        JOB.finish(None, status="cancelled", error=str(e))
+        return {"cancelled": True}
+    except Exception as e:
+        JOB.finish(None, status="failed", error=str(e))
+        raise
+    finally:
+        JOB = None
 
 
 def scheduler():
@@ -244,9 +352,7 @@ def scheduler():
             last = (now.year, now.month)
             log("Monthly refresh starting")
             try:
-                db.migrate()
-                with db.conn() as c:
-                    result = refresh(c, accounts_months=months)
+                result = run_job("scheduled", accounts_months=months)
                 log(f"Monthly refresh finished: {result}")
             except Exception as e:
                 log(f"Monthly refresh failed: {e}")

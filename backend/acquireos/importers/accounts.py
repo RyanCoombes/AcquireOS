@@ -192,6 +192,7 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
 
     seen = matched = periods = changes = 0
     buf: list[tuple] = []
+    total_files = _count_members(paths)
 
     def flush():
         nonlocal periods, changes, buf
@@ -244,7 +245,8 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
         if len(buf) >= batch:
             flush()
             if progress:
-                progress(f"{matched:,} filings loaded")
+                progress(f"{seen:,} of about {total_files:,} filings read; {matched:,} loaded",
+                         min(seen / max(total_files, 1), 1))
 
     workers = workers if workers is not None else (os.cpu_count() or 1)
     if workers > 1:
@@ -319,6 +321,26 @@ def _upsert(conn, num, period_end, vals, source, balance_date=None):
                or excluded.source_balance_date >= fp.source_balance_date""",
         params,
     )
+
+
+def _count_members(paths) -> int:
+    """Number of filings, for progress. Nested daily zips count roughly."""
+    total = 0
+    for p in paths:
+        if p.suffix.lower() != ".zip":
+            total += 1
+            continue
+        try:
+            with zipfile.ZipFile(p) as z:
+                infos = [i for i in z.infolist() if not i.is_dir()]
+                inner = [i for i in infos if i.filename.lower().endswith(".zip")]
+                if inner:
+                    # Estimate from compressed size: about 12 KB per filing.
+                    total += sum(max(int(i.compress_size / 12_000), 1) for i in inner)
+                total += len(infos) - len(inner)
+        except Exception:
+            pass
+    return total
 
 
 def _members(path: Path):

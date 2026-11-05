@@ -48,6 +48,21 @@ COLS = {
 FULL_REGISTER_MIN_ROWS = 500_000
 
 
+def _estimate_rows(path: Path) -> int:
+    """Rough row count for progress: about 470 bytes per company in the CSV."""
+    import zipfile
+
+    try:
+        if path.suffix.lower() == ".zip":
+            with zipfile.ZipFile(path) as z:
+                size = sum(i.file_size for i in z.infolist())
+        else:
+            size = path.stat().st_size
+        return max(int(size / 470), 1)
+    except Exception:
+        return 5_500_000
+
+
 def is_register(headers: list[str]) -> bool:
     normed = {norm_header(h) for h in headers}
     return {"companynumber", "companystatus", "regaddress_postcode"} <= normed
@@ -76,6 +91,7 @@ def load(conn, path: Path, register_date: date | None = None, full: bool = True,
     from .companies import flag_mass_addresses, refresh_estimates
 
     headers, rows = open_table(path)
+    est_rows = _estimate_rows(path)
     if not is_register(headers):
         raise ValueError("This is not a Companies House BasicCompanyData file")
     idx = {norm_header(h): h for h in headers}
@@ -110,8 +126,10 @@ def load(conn, path: Path, register_date: date | None = None, full: bool = True,
             cp.write_row((num, g("name") or num, ", ".join(p for p in parts if p) or None, pc,
                           g("category") or None, (g("status") or "").lower() or None, _d(g("dissolved")),
                           _d(g("inc")), _d(g("last_acc")), codes, sic_raw))
-            if progress and rows_in % 250_000 == 0:
-                progress(f"{rows_in:,} rows read")
+            if progress and rows_in % 50_000 == 0:
+                progress(f"Reading the register: {rows_in:,} companies", min(rows_in / est_rows, 1) * 0.6)
+    if progress:
+        progress(f"Comparing {rows_in:,} companies with what is stored", 0.65)
     conn.execute("create index on reg_stage (num)")
     conn.execute("analyze reg_stage")
     # A number can appear twice in a damaged file; keep one.
@@ -137,6 +155,8 @@ def load(conn, path: Path, register_date: date | None = None, full: bool = True,
     if record_changes:
         changes += _record_changes(conn, run_id, snap)
 
+    if progress:
+        progress("Saving companies", 0.8)
     conn.execute(r"""
         insert into company as c (company_number, name, status, company_type, incorporation_date, dissolution_date,
             sic_codes, nature_of_business, registered_address, postcode, address_key, address_flag, region,

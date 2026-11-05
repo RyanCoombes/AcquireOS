@@ -197,6 +197,8 @@ export const api = {
     req(`/api/companies/${encodeURIComponent(n)}/enrichment`, { method: "POST", body: JSON.stringify(body) }),
   startRefresh: (months = 1) => req<Record<string, any>>(`/api/refresh?months=${months}`, { method: "POST" }),
   refreshStatus: () => req<Record<string, any>>("/api/refresh"),
+  jobCurrent: () => req<Job>("/api/jobs/current"),
+  cancelJob: (id: number) => req<{ ok: boolean; message: string }>(`/api/jobs/${id}/cancel`, { method: "POST" }),
   changes: (params: Record<string, string>) =>
     req<{ rows: Change[]; summary: { kind: string; n: number }[] }>("/api/changes?" + new URLSearchParams(params)),
   searches: () => req<SavedSearch[]>("/api/searches"),
@@ -211,4 +213,14 @@ export interface GEdge { source: string; target: string; kind: Link["kind"]; via
 export interface Preview {
   headers: string[]; mapping: Record<string, any>; row_count: number | null; sample: Record<string, unknown>[];
   fields: string[]; problems: string[]; token: string; suffix: string; filename: string; sheets: string[]; unmapped?: string[];
+}
+
+export interface Job {
+  running: boolean;
+  id?: number; kind?: string; status?: "running" | "done" | "failed" | "cancelled";
+  stage?: string | null; stage_index?: number; stage_total?: number; stage_pct?: string | number; pct?: string | number;
+  detail?: string | null; eta_seconds?: number | null;
+  stages?: { name: string; status: string; seconds: number | null }[];
+  log?: string[]; result?: Record<string, any> | null; error?: string | null;
+  started_at?: string; updated_at?: string; finished_at?: string | null; cancel_requested?: boolean;
 }

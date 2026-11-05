@@ -105,7 +105,7 @@ def test_fetch_accounts_oldest_first(loaded, monkeypatch, tmp_path):
         ("2026-10", "https://x/Accounts_Monthly_Data-October2026.zip"),
         ("2026-09", "https://x/Accounts_Monthly_Data-September2026.zip"),
         ("2026-08", "https://x/Accounts_Monthly_Data-August2026.zip")])
-    monkeypatch.setattr(fetch, "download", lambda url, d=None: tmp_path / url.rsplit("/", 1)[-1])
+    monkeypatch.setattr(fetch, "download", lambda url, *a, **k: tmp_path / url.rsplit("/", 1)[-1])
     monkeypatch.setattr(accounts, "run", lambda conn, paths, record_changes=True, progress=None, **k:
                         calls.append((paths[0].name, record_changes)) or
                         {"companies_matched": 0, "changes": 0, "files_seen": 0, "periods": 0})
@@ -113,3 +113,27 @@ def test_fetch_accounts_oldest_first(loaded, monkeypatch, tmp_path):
     assert calls == [("Accounts_Monthly_Data-August2026.zip", False),
                      ("Accounts_Monthly_Data-September2026.zip", False),
                      ("Accounts_Monthly_Data-October2026.zip", True)]
+
+
+def test_job_progress_and_cancel(loaded):
+    loaded.commit()
+    from acquireos import jobs
+
+    j = jobs.Job("test", ["Company register", "Owners (PSC)", "Scoring"])
+    j.stage("Company register")
+    j.progress(0.5, "halfway")
+    j._write(force=True)
+    row = loaded.execute("select * from job where id = %s", (j.id,)).fetchone()
+    assert row["status"] == "running" and row["stage"] == "Company register" and float(row["pct"]) == 16.7
+    j.stage("Accounts: October 2026")  # an unplanned stage is added
+    assert [s["name"] for s in j.stages][-1] == "Accounts: October 2026"
+    loaded.execute("update job set cancel_requested = true where id = %s", (j.id,))
+    loaded.commit()
+    import pytest
+
+    with pytest.raises(jobs.Cancelled):
+        j.check_cancel()
+    j.finish(status="cancelled", error="Stopped by you")
+    row = loaded.execute("select * from job where id = %s", (j.id,)).fetchone()
+    assert row["status"] == "cancelled" and row["finished_at"] is not None
+    assert jobs.current(loaded)["id"] == j.id

@@ -81,6 +81,7 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
         registration_number text, country_registered text, legal_form text, address text, postcode text,
         natures text[], notified_on date, ceased_on date, row_key text, seq bigserial)""")
     total = 0
+    est = _estimate_lines(paths)
     with conn.cursor().copy(
         """copy psc_stage (company_number, person_key, kind, name, birth_year, birth_month, registration_number,
                country_registered, legal_form, address, postcode, natures, notified_on, ceased_on, row_key)
@@ -93,8 +94,10 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
                           p["postcode"], data.get("natures_of_control") or [], notified,
                           n.parse_date(data.get("ceased_on")), f"psc:{num}:{p['person_key']}:{notified or ''}"))
             total += 1
-            if progress and total % 500_000 == 0:
-                progress(f"{total:,} owner records read")
+            if progress and total % 100_000 == 0:
+                progress(f"Reading owners: {total:,} records", min(total / est, 1) * 0.6)
+    if progress:
+        progress(f"Saving {total:,} owner records", 0.65)
     conn.execute("create index on psc_stage (row_key, seq)")
     conn.execute("analyze psc_stage")
     conn.execute("""delete from psc_stage a using psc_stage b where a.row_key = b.row_key and a.seq < b.seq""")
@@ -145,8 +148,25 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
     conn.execute("drop table if exists psc_stage")
     from ..ownership import rebuild
 
+    if progress:
+        progress("Tracing owners through holding companies", 0.85)
     stats = rebuild(conn)
     return {"run_id": run_id, "rows_ok": in_list, "parents_traced": parents, "changes": changes, **stats}
+
+
+def _estimate_lines(paths) -> int:
+    """Rough record count for progress: about 650 bytes per JSON line."""
+    total = 0
+    for p in paths:
+        try:
+            if p.suffix.lower() == ".zip":
+                with zipfile.ZipFile(p) as z:
+                    total += sum(i.file_size for i in z.infolist())
+            else:
+                total += p.stat().st_size
+        except Exception:
+            pass
+    return max(int(total / 650), 1)
 
 
 def _reg_number(data: dict) -> str | None:

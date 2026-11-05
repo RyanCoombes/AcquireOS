@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { duration, elapsed, useJob } from "../components/JobBar";
 import { Link } from "react-router-dom";
 import { api, type Preview } from "../api";
 import { ErrorLine, useAsync } from "../components/bits";
@@ -187,65 +188,114 @@ export default function Import() {
 
 
 function ChFeed({ onDone }: { onDone: () => void }) {
-  const [months, setMonths] = useState(1);
-  const status = useAsync(() => api.refreshStatus(), []);
+  const [months, setMonths] = useState(24);
+  const { job, refresh } = useJob();
   const [busy, setBusy] = useState(false);
-  const st = status.data;
+  const [msg, setMsg] = useState<string | null>(null);
+  const running = !!job?.running;
+  const wasRunning = useRef(false);
   useEffect(() => {
-    if (!st?.running) return;
-    const t = setInterval(() => { status.reload(); }, 5000);
-    return () => clearInterval(t);
-  }, [st?.running]);
-  useEffect(() => { if (st && !st.running && st.finished) onDone(); }, [st?.running]);
+    if (wasRunning.current && !running) onDone();
+    wasRunning.current = running;
+  }, [running, onDone]);
+
   const start = async () => {
-    setBusy(true);
-    try { await api.startRefresh(months); status.reload(); } catch (e: any) { alert(e.message); }
+    setBusy(true); setMsg(null);
+    try { await api.startRefresh(months); refresh(); } catch (e: any) { setMsg(e.message); }
     setBusy(false);
   };
+  const stop = async () => {
+    if (!job?.id || !confirm("Stop the refresh? Everything loaded so far is kept, and running it again carries on from where it stopped.")) return;
+    const r = await api.cancelJob(job.id);
+    setMsg(r.message); refresh();
+  };
+  const pct = Number(job?.pct ?? 0);
+  const icon = (st: string) => st === "done" ? "✓" : "";
+  const cls = (st: string) => st === "done" ? "done" : st === "running" ? "running" : ["already loaded", "skipped"].includes(st) ? "skip" : "";
+
   return (
-    <section>
+    <section id="job">
       <div className="sechead">
         <h2>Companies House bulk data</h2>
-        <span className="right" style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {st?.running ? <span className="pill-live">Running since {new Date(st.started).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span> : null}
-          <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <span className="label">Months of accounts</span>
-            <select value={months} onChange={(e) => setMonths(Number(e.target.value))}>
-              {[1, 3, 6, 12, 24].map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </label>
-          <button className="btn primary" disabled={busy || st?.running} onClick={start}>Download and load now</button>
+        <span className="right" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          {running ? (
+            <button className="btn" onClick={stop} disabled={job?.cancel_requested}>{job?.cancel_requested ? "Stopping…" : "Stop"}</button>
+          ) : (
+            <>
+              <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <span className="label">Months of accounts</span>
+                <select value={months} onChange={(e) => setMonths(Number(e.target.value))}>
+                  {[1, 3, 6, 12, 24].map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </label>
+              <button className="btn primary" disabled={busy} onClick={start}>Download and load now</button>
+            </>
+          )}
         </span>
       </div>
+
+      {job && (job.running || job.finished_at) && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+            <span className="big">{Math.round(pct)}%</span>
+            <span className="muted">
+              {job.running
+                ? <>Step {(job.stage_index ?? 0) + 1} of {job.stage_total}: <b className="ink">{job.stage ?? "starting"}</b></>
+                : job.status === "done" && !job.error ? "Finished" : job.status === "cancelled" ? "Stopped" : "Finished with problems"}
+            </span>
+            <span className="faint small" style={{ marginLeft: "auto" }}>
+              {job.running
+                ? <>Running for {duration(elapsed(job.started_at))}{job.eta_seconds ? <> · about <b className="ink">{duration(job.eta_seconds)}</b> left</> : " · working out time left"}</>
+                : <>Took {duration(elapsed(job.started_at, job.finished_at))} · finished {job.finished_at ? new Date(job.finished_at).toLocaleString("en-GB") : ""}</>}
+            </span>
+          </div>
+          <div className="bigbar"><i style={{ width: `${Math.max(pct, job.running ? 1 : 0)}%` }} /></div>
+          {job.running && job.detail && <div className="muted small">{job.detail}</div>}
+          {job.error && <div className="callout red" style={{ marginTop: 10 }}>{job.error}</div>}
+          {job.stages && job.stages.length > 0 && (
+            <ul className="stagelist">
+              {job.stages.map((st) => (
+                <li key={st.name} className={cls(st.status)}>
+                  <span className="ic">{icon(st.status)}</span>{st.name}
+                  <span className="sec">{st.status === "already loaded" ? "already loaded" : st.seconds ? duration(st.seconds) : ""}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {job.log && job.log.length > 0 && (
+            <details style={{ marginTop: 12 }}>
+              <summary className="muted" style={{ cursor: "pointer" }}>Activity log</summary>
+              <pre className="joblog">{[...job.log].reverse().join("\n")}</pre>
+            </details>
+          )}
+          <p className="faint small" style={{ marginBottom: 0 }}>
+            This runs on the server: you can close this page or the browser and it keeps going. Progress shows at the top of every page.
+          </p>
+        </div>
+      )}
+      {msg && <div className="callout" style={{ marginBottom: 12 }}>{msg}</div>}
+
       <p className="muted" style={{ maxWidth: "80ch", marginTop: 0 }}>
         AcquireOS downloads these free files itself, keeps <b>every</b> UK company, its filed accounts and its owners, and deletes
         each file once read. It runs automatically each month (the <code>scheduler</code> service in the stack). The first time,
-        choose 12 or 24 months of accounts to build up history: months load oldest first, and an older filing can never
-        overwrite figures from a newer one. Expect the first full load to take several hours on a Raspberry Pi.
+        choose 12 or 24 months of accounts to build up history: months load oldest first, an older filing can never
+        overwrite figures from a newer one, and months already loaded are skipped if you run it again.
       </p>
       <table>
         <thead><tr><th>File</th><th>What it adds</th><th>Size</th></tr></thead>
         <tbody>
           <tr><td><a href="https://download.companieshouse.gov.uk/en_output.html" target="_blank" rel="noreferrer">Basic company data ↗</a></td>
-            <td>Every live company: name, status, address, SIC codes, accounts dates. All are kept; your <Link to="/buy-box">universe</Link> decides which count as targets. Changes are recorded and companies that leave the register are flagged.</td><td className="nowrap">~0.5 GB zip</td></tr>
+            <td>Every live company: name, status, address, SIC codes, accounts dates. All are kept; your <Link to="/buy-box">universe</Link> decides which count as targets.</td><td className="nowrap">~0.5 GB zip</td></tr>
           <tr><td><a href="https://download.companieshouse.gov.uk/en_monthlyaccountsdata.html" target="_blank" rel="noreferrer">Monthly accounts ↗</a></td>
-            <td>Filed accounts (staff, turnover, profit, net assets, cash, debtors) for every company, current and prior year. Builds the financial history charts.</td><td className="nowrap">several GB a month</td></tr>
+            <td>Filed accounts (staff, turnover, profit, net assets, cash, debtors) for every company, current and prior year. Builds the history charts.</td><td className="nowrap">several GB a month</td></tr>
           <tr><td><a href="https://download.companieshouse.gov.uk/en_pscdata.html" target="_blank" rel="noreferrer">Owners (PSC) ↗</a></td>
             <td>Who owns every company, traced through holding companies; ages, trusts, EOTs, foreign parents.</td><td className="nowrap">~2 GB zip</td></tr>
         </tbody>
       </table>
-      {st?.error && <div className="callout red" style={{ marginTop: 14 }}>Last run failed: {st.error}</div>}
-      {st?.result && !st.running && (
-        <div className="callout" style={{ marginTop: 14 }}>
-          Last run finished {st.finished ? new Date(st.finished).toLocaleString("en-GB") : ""}.{" "}
-          {Object.entries(st.result).map(([k, v]: [string, any]) => `${k.replace("_", " ")}: ${v?.error ? "failed (" + v.error + ")" : "done"}`).join(" · ")}
-        </div>
-      )}
       <details style={{ marginTop: 14 }}>
         <summary className="muted" style={{ cursor: "pointer" }}>Prefer the command line?</summary>
-        <pre className="cmd">{`docker exec -it acquireos acquireos fetch all --months 12   # everything, 12 months of accounts
-docker exec -it acquireos acquireos fetch accounts --months 24
-docker exec -it acquireos sh -c 'acquireos import-accounts /data/Accounts_Monthly_Data-*.zip'   # files you downloaded yourself`}</pre>
+        <pre className="cmd">{`docker exec -it acquireos acquireos fetch all --months 24
+docker exec -it acquireos acquireos fetch accounts --months 24`}</pre>
       </details>
     </section>
   );

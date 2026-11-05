@@ -600,7 +600,7 @@ def outreach_add(o: OutreachIn):
 @app.get("/api/dashboard")
 def dashboard():
     d = cached("dashboard", 120, _dashboard)
-    return {**d, "refresh": _refresh_state}
+    return {**d, "refresh": job_current()}
 
 
 def _dashboard():
@@ -1096,39 +1096,59 @@ def import_commit(body: CommitIn):
     return result
 
 
-_refresh_state = {"running": False, "started": None, "finished": None, "result": None, "error": None}
+def _job_view(row):
+    if not row:
+        return {"running": False}
+    r = dict(row)
+    r["running"] = r["status"] == "running"
+    return r
+
+
+@app.get("/api/jobs/current")
+def job_current():
+    from . import jobs
+
+    with db.conn() as c:
+        return _job_view(jobs.current(c))
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def job_cancel(job_id: int):
+    with db.conn() as c:
+        c.execute("update job set cancel_requested = true where id = %s and status = 'running'", (job_id,))
+    return {"ok": True, "message": "Stopping after the current step's batch; loaded data is kept."}
 
 
 @app.post("/api/refresh")
 def start_refresh(months: int = 1):
     """Start the Companies House download and load in the background."""
     import threading
-    from datetime import datetime
 
-    if _refresh_state["running"]:
-        raise HTTPException(409, "A refresh is already running")
+    from . import fetch, jobs
+
+    with db.conn() as c:
+        cur = jobs.current(c)
+        if cur and cur["status"] == "running":
+            raise HTTPException(409, "A refresh is already running")
 
     def work():
-        from . import fetch
-
         try:
-            with db.conn() as c:
-                _refresh_state["result"] = fetch.refresh(c, accounts_months=max(1, min(months, 24)))
-        except Exception as e:
-            _refresh_state["error"] = str(e)
+            fetch.run_job("refresh", accounts_months=max(1, min(months, 36)))
+        except Exception:
+            pass
         finally:
-            _refresh_state["running"] = False
-            _refresh_state["finished"] = datetime.now().isoformat()
             clear_cache()
 
-    _refresh_state.update(running=True, started=datetime.now().isoformat(), finished=None, result=None, error=None)
     threading.Thread(target=work, daemon=True).start()
-    return _refresh_state
+    import time
+
+    time.sleep(0.5)  # let the job row appear
+    return job_current()
 
 
 @app.get("/api/refresh")
 def refresh_status():
-    return _refresh_state
+    return job_current()
 
 
 @app.get("/api/imports")

@@ -100,7 +100,9 @@ def main(argv=None):
             elif a.what == "psc":
                 _print(Path("owners"), fetch.fetch_psc(c, keep=a.keep))
             else:
-                print(fetch.refresh(c, accounts_months=a.months))
+                c.commit()
+                print(fetch.run_job("refresh", accounts_months=a.months))
+                return
             rebuild(c)
         elif a.cmd == "import-psc":
             print("Streaming the PSC snapshot. On a Raspberry Pi this can take a while.", file=sys.stderr)
