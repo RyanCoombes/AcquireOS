@@ -317,6 +317,9 @@ def companies(
             order_sql = f"c.name {direction}, c.company_number {direction}"
         else:
             col = SORTS.get(sort, "s.score")
+            if sort == "age":
+                # "Owner age, highest first" means the earliest birth year first.
+                direction = "asc" if direction == "desc" else "desc"
             # In a buy box every row has a score, so plain "score desc" lets the
             # score indexes do the sorting (with "nulls last" Postgres sorts it all).
             nulls = "" if (in_box and col == "s.score") else " nulls last"
@@ -334,13 +337,34 @@ def companies(
             {lateral}
             where {' and '.join(where)}"""
         params.update(limit=min(limit, 1000), offset=offset)
+        # Sorting the whole directory by a figure from a side table (staff,
+        # revenue...): page through that table's own index, then the companies
+        # without a figure in name order, rather than sorting millions of rows.
+        page_sql = f"""select c.company_number {filt} order by {order_sql} limit %(limit)s offset %(offset)s"""
+        side = SIDE_SORTS.get((sort, direction))
+        if side and where == ["true"] and not in_box:
+            table, scol = side
+            n_side = cached(f"count:{table}.{scol}", 3600, lambda: _count_table(table, scol))
+            with_sql = f"""select x.company_number, 0 as grp, row_number() over () as rn from (
+                               select x.company_number from {table} x where x.{scol} is not null
+                               order by x.{scol} {direction}, x.company_number limit %(limit)s offset %(offset)s) x"""
+            params["limit2"] = max(0, min(params["limit"], offset + params["limit"] - n_side))
+            params["offset2"] = max(0, offset - n_side)
+            without_sql = f"""select c.company_number, 1 as grp, row_number() over () as rn from (
+                                  select c.company_number from company c
+                                  where not exists (select 1 from {table} x where x.company_number = c.company_number
+                                                    and x.{scol} is not null)
+                                  order by c.name, c.company_number limit %(limit2)s offset %(offset2)s) c"""
+            if offset + params["limit"] <= n_side:
+                page_sql = with_sql
+            elif offset >= n_side:
+                page_sql = without_sql
+            else:  # a page that straddles the boundary: the last with a figure, then the first without
+                page_sql = f"select company_number from (({with_sql}) union all ({without_sql})) u order by grp, rn"
         # Page first (cheap), then fetch the extras for just those rows.
         sql = f"""
             with page as (
-                select c.company_number, row_number() over () as rn from (
-                    select c.company_number {filt}
-                    order by {order_sql}
-                    limit %(limit)s offset %(offset)s) c
+                select c.company_number, row_number() over () as rn from ({page_sql}) c
             )
             select c.company_number, c.name, c.region, c.postcode, c.review_tier, c.incorporation_date,
                    c.sic_codes, c.address_flag, c.status as company_status,
@@ -384,6 +408,18 @@ def companies(
 
 
 COUNT_CAP = 100_000
+# (sort, direction) -> (side table, column) that an index can page through.
+SIDE_SORTS = {
+    ("staff", "desc"): ("company_latest", "employees"),
+    ("net_assets", "desc"): ("company_latest", "net_assets"),
+    ("revenue", "desc"): ("estimate", "revenue_high"),
+    ("age", "asc"): ("company_ownership", "oldest_birth_year"),  # oldest owners first
+}
+
+
+def _count_table(table: str, col: str) -> int:
+    with db.conn() as c:
+        return c.execute(f"select count(*) as n from {table} where {col} is not null").fetchone()["n"]
 SEARCH_CAP = 5_000
 _PC_RE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?(\s*\d[A-Z]{0,2})?$")
 _NUM_RE = re.compile(r"^([A-Z]{2})?\d{1,8}$")
@@ -1123,14 +1159,13 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
                 left join score s on s.company_number = ch.company_number and s.buy_box_id = %(bb)s
                 left join import_run r on r.id = ch.import_run_id
                 where {' and '.join(where)}
-                order by ch.detected_at desc, (coalesce(uc.status,'new') <> 'new') desc, s.score desc nulls last
+                order by ch.detected_at desc, ch.id desc
                 limit %(limit)s""",
             params,
         ).fetchall()
         summary = c.execute(
             f"""select ch.kind, count(*) as n from company_change ch
                 left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
-                left join score s on s.company_number = ch.company_number and s.buy_box_id = %(bb)s
                 where ch.detected_at > now() - make_interval(days => %(days)s)
                 {"and coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed')" if tracked else
                  "and (exists (select 1 from company_best cb where cb.company_number = ch.company_number) or coalesce(uc.status, 'new') <> 'new')" if scope == "buy_box" else ""}
