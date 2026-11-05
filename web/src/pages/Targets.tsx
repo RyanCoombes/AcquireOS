@@ -70,7 +70,10 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   delete apiParams.list;
   if (mode === "targets") apiParams.in_box = "true";
   else if (apiParams.in_box === "1") apiParams.in_box = "true";
-  const list = useAsync(() => api.companies(apiParams), [params.toString(), mode]);
+  // Rows first (fast), the count separately (it can take a moment on millions of rows).
+  const list = useAsync(() => api.companies({ ...apiParams, count: "false" }), [params.toString(), mode]);
+  const countParams = Object.fromEntries(Object.entries(apiParams).filter(([k]) => k !== "limit" && k !== "offset"));
+  const countQ = useAsync(() => api.companiesCount(countParams), [params.toString(), mode]);
   const [sics, setSics] = useState<SicOption[]>([]);
   useEffect(() => { if (mode === "directory") loadSic().then(setSics); }, [mode]);
   const [cursor, setCursor] = useState(0);
@@ -138,8 +141,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   useEffect(() => { document.querySelector("tr.cursor")?.scrollIntoView({ block: "nearest" }); }, [cursor]);
 
   const m = meta.data;
-  const total = list.data?.total ?? 0;
-  const capped = !!list.data?.capped;
+  const total = countQ.data?.total ?? 0;
+  const capped = !!countQ.data?.capped;
   const cols = mode === "directory" ? DIR_COLS : COLS;
   const boxName = boxId ? m?.buy_boxes.find((b) => b.id === boxId)?.name : null;
   const empty = m && m.counts.companies === 0;
@@ -329,7 +332,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
 
           <ErrorLine error={list.error} />
           <div className="resultline">
-            <span>{!list.data ? "Loading…" : <><b>{int(total)}{capped ? "+" : ""}</b> {total === 1 ? "company" : "companies"}</>}
+            <span>{!list.data ? "Loading…" : !countQ.data ? "Counting…" : <><b>{int(total)}{capped ? "+" : ""}</b> {total === 1 ? "company" : "companies"}</>}
               {inBox ? (boxName ? <> in <b>{boxName}</b></> : " in at least one buy box") : ""}</span>
             <span className="faint">
               {list.data?.search_limited ? "Lots of companies match that; showing the first 5,000. Type more to narrow it down. "
@@ -374,7 +377,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
           <div className="pager">
             <span>{rows.length ? `${int(page * PAGE + 1)}–${int(page * PAGE + rows.length)} of ${int(total)}${capped ? "+" : ""}` : ""}</span>
             <button className="btn" disabled={page === 0} onClick={() => { const p = new URLSearchParams(params); p.set("page", String(page - 1)); setParams(p); }}>Previous</button>
-            <button className="btn" disabled={capped ? rows.length < PAGE : (page + 1) * PAGE >= total} onClick={() => { const p = new URLSearchParams(params); p.set("page", String(page + 1)); setParams(p); }}>Next</button>
+            <button className="btn" disabled={!countQ.data || capped ? rows.length < PAGE : (page + 1) * PAGE >= total} onClick={() => { const p = new URLSearchParams(params); p.set("page", String(page + 1)); setParams(p); }}>Next</button>
             <span className="faint small hide-sm" style={{ marginLeft: "auto" }}>
               <span className="kbd">/</span> search · <span className="kbd">j</span> <span className="kbd">k</span> move · <span className="kbd">Enter</span> open
             </span>

@@ -54,6 +54,7 @@ def main(argv=None):
     sub.add_parser("rebuild", help="Recompute ownership, links and scores")
     sub.add_parser("demo", help="Load a fictional demo dataset (for trying the app out)")
     sub.add_parser("rescore", help="Recompute scores against the active buy box")
+    sub.add_parser("score-pending", help="Score buy boxes marked as needing it (used by the web app)")
 
     a = ap.parse_args(argv)
     if a.cmd == "new-token":
@@ -65,6 +66,12 @@ def main(argv=None):
         from .fetch import scheduler
 
         scheduler()
+        return
+    if a.cmd == "score-pending":
+        from .api import score_pending
+
+        with db.conn(dedicated=True) as c:
+            print(score_pending(c))
         return
     if a.cmd == "migrate":
         print("Applied:", db.migrate() or "nothing new")

@@ -49,6 +49,8 @@ services:
       - wal_compression=on
       - -c
       - max_parallel_workers_per_gather=2
+      - -c
+      - jit=off
     environment:
       POSTGRES_DB: acquireos
       POSTGRES_USER: acquireos

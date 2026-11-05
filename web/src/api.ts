@@ -176,8 +176,16 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+let metaCache: { t: number; p: Promise<Meta> } | null = null;
+
 export const api = {
-  meta: () => req<Meta>("/api/meta"),
+  // Every page asks for meta; one request serves them all for 20 seconds.
+  meta: () => {
+    if (!metaCache || Date.now() - metaCache.t > 20_000) metaCache = { t: Date.now(), p: req<Meta>("/api/meta") };
+    return metaCache.p;
+  },
+  companiesCount: (params: Record<string, string>) =>
+    req<{ total: number; capped: boolean }>("/api/companies?" + new URLSearchParams({ ...params, format: "count" })),
   companies: (params: Record<string, string>) =>
     req<{ total: number; capped?: boolean; search_limited?: boolean; rows: Row[] }>("/api/companies?" + new URLSearchParams(params)),
   company: (n: string, bb?: number | null) =>

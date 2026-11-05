@@ -13,6 +13,7 @@ import uuid
 from datetime import date
 from pathlib import Path
 
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -42,6 +43,7 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="AcquireOS", version=__version__, lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # company pages and lists are large JSON
 UID = config.DEFAULT_USER_ID
 
 
@@ -225,7 +227,7 @@ def companies(
     min_years: int | None = None, format: str = "list", business_type: str | None = None,
     has_website: bool | None = None, bb: str = "all", in_box: bool | None = None,
     accounts_size: str | None = None, overdue: str | None = None, charges: str | None = None,
-    numbers: str | None = None,
+    numbers: str | None = None, count: bool = True,
 ):
     """All companies, with scores from one buy box (bb=<id>) or each company's
     best score across buy boxes (bb=all). in_box limits to companies inside
@@ -317,6 +319,13 @@ def companies(
             where.append(sx)
         if format == "map":
             return _map_points(c, where, params, sj)
+        if format == "count":
+            # The count alone (the list is fetched first so rows show at once).
+            if where == ["true"]:
+                return {"total": cached("company_count", 3600, lambda: _count_all()), "capped": False}
+            n = c.execute(f"select count(*) as n from (select 1 {_from_sql(sj, lateral='')} where {' and '.join(where)} limit {COUNT_CAP + 1}) x",
+                          params).fetchone()["n"]
+            return {"total": min(n, COUNT_CAP), "capped": n > COUNT_CAP}
         direction = "asc" if dir == "asc" else "desc"
         if sort == "relevance" and "qcands" in params:
             # Search order: exact number, postcode, names starting with it, names containing it.
@@ -337,13 +346,7 @@ def companies(
         if sort == "changed":
             lateral = """left join lateral (select max(detected_at) as last_change from company_change x
                                             where x.company_number = c.company_number) ch on true"""
-        filt = f"""from company c
-            left join company_latest l on l.company_number = c.company_number
-            left join estimate e on e.company_number = c.company_number
-            left join company_ownership o on o.company_number = c.company_number
-            {sj}
-            left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
-            {lateral}
+        filt = f"""{_from_sql(sj, lateral)}
             where {' and '.join(where)}"""
         params.update(limit=min(limit, 1000), offset=offset)
         # Sorting the whole directory by a figure from a side table (staff,
@@ -404,7 +407,9 @@ def companies(
         # Counting millions of matches is slow, so counts stop at COUNT_CAP
         # ("100,000+"). With no filters at all the total is the register size.
         capped = False
-        if not (rows or offset):
+        if not count:
+            total = None  # the page asks for the count separately
+        elif not (rows or offset):
             total = 0
         elif where == ["true"]:
             total = cached("company_count", 3600, lambda: _count_all())
@@ -417,6 +422,16 @@ def companies(
 
 
 COUNT_CAP = 100_000
+
+
+def _from_sql(sj: str, lateral: str) -> str:
+    return f"""from company c
+            left join company_latest l on l.company_number = c.company_number
+            left join estimate e on e.company_number = c.company_number
+            left join company_ownership o on o.company_number = c.company_number
+            {sj}
+            left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
+            {lateral}"""
 # (sort, direction) -> (side table, column) that an index can page through.
 SIDE_SORTS = {
     ("staff", "desc"): ("company_latest", "employees"),
@@ -1388,33 +1403,62 @@ def _start_scoring(bb_id: int | None = None) -> bool:
         if cur and cur["status"] == "running":
             return True
 
-    def work():
-        job = None
-        try:
-            with db.conn(dedicated=True) as c:
-                pending = [dict(r) for r in c.execute(
-                    "select * from buy_box where user_id = %s and scored_at is null order by id", (UID,))]
-                if not pending:
-                    return
-                job = jobs.Job("scoring", [f"Scoring “{b['name']}”" for b in pending] + ["Ownership links"])
-                for b in pending:
-                    job.stage(f"Scoring “{b['name']}”")
-                    scoring.rescore(c, b, progress=lambda msg, frac=None: job.progress(frac, msg))
-                    c.commit()
-                job.stage("Ownership links")
-                from .ownership import rebuild_links
-
-                rebuild_links(c)
-                refresh_stats(c)
-            job.finish({"buy_boxes": [b["name"] for b in pending]})
-        except Exception as e:
-            if job:
-                job.finish(None, status="failed", error=str(e))
-        finally:
-            clear_cache()
-
-    threading.Thread(target=work, daemon=True).start()
+    # In its own process, not a thread: scoring is Python-heavy and would
+    # otherwise slow every web request while it runs (the interpreter lock).
+    _run_detached(["score-pending"], after=clear_cache)
     return False
+
+
+def score_pending(c) -> list[str]:
+    """Score every buy box marked as needing it, then rebuild links and
+    summaries, as one tracked job. Used by the score-pending command."""
+    from . import jobs
+
+    pending = [dict(r) for r in c.execute(
+        "select * from buy_box where user_id = %s and scored_at is null order by id", (UID,))]
+    if not pending:
+        return []
+    job = jobs.Job("scoring", [f"Scoring “{b['name']}”" for b in pending] + ["Ownership links", "Summaries"])
+    try:
+        for b in pending:
+            job.stage(f"Scoring “{b['name']}”")
+            scoring.rescore(c, b, progress=lambda msg, frac=None: job.progress(frac, msg))
+            c.commit()
+        job.stage("Ownership links")
+        from .ownership import rebuild_links
+
+        rebuild_links(c)
+        c.commit()
+        job.stage("Summaries")
+        refresh_stats(c)
+        c.commit()
+        job.finish({"buy_boxes": [b["name"] for b in pending]})
+    except Exception as e:
+        job.finish(None, status="failed", error=str(e))
+        raise
+    return [b["name"] for b in pending]
+
+
+def _run_detached(args: list[str], after=None):
+    """Run an acquireos command in a separate process (so heavy Python work
+    never competes with web requests for the interpreter) and call `after`
+    when it ends. Progress is in the job table as usual."""
+    import subprocess
+    import sys
+    import threading
+
+    proc = subprocess.Popen([sys.executable, "-m", "acquireos.cli", *args], stdout=sys.stderr, stderr=sys.stderr)
+
+    def watch():
+        proc.wait()
+        if after:
+            try:
+                after()
+            except Exception:
+                pass
+
+    threading.Thread(target=watch, daemon=True).start()
+    return proc
 
 
 def _small_db(c) -> bool:
@@ -1695,16 +1739,11 @@ def start_refresh(months: int = 1, reread: bool = False):
         if cur and cur["status"] == "running":
             raise HTTPException(409, "A refresh is already running")
 
-    def work():
-        try:
-            fetch.run_job("refresh", accounts_months=max(1, min(months, 36)), reread_old=reread)
-        except Exception:
-            pass
-        finally:
-            clear_cache()
-            _start_scoring()  # any buy box changed while the refresh ran
+    def after():
+        clear_cache()
+        _start_scoring()  # any buy box changed while the refresh ran
 
-    threading.Thread(target=work, daemon=True).start()
+    _run_detached(["fetch", "all", "--months", str(max(1, min(months, 36)))] + (["--reread"] if reread else []), after=after)
     import time
 
     time.sleep(0.5)  # let the job row appear
