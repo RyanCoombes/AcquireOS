@@ -111,7 +111,7 @@ services:
     volumes:
       - ${DATA_DIR:-/opt/acquireos/data}:/data
 
-  # Nightly database dump at 02:30. Point BACKUP_DIR at your NAS mount.
+  # Nightly dump of your own work at 02:30 (small), full dump on Sundays. Point BACKUP_DIR at your NAS mount.
   backup:
     image: postgres:16-alpine
     container_name: acquireos-backup
@@ -131,12 +131,22 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        echo "Backups run daily at 02:30 into /backups"
+        echo "Backups: your own work nightly at 02:30, everything on Sundays, into /backups"
+        # Tables that come from the Companies House downloads or are computed
+        # from them: left out of the nightly dump (re-downloadable, tens of GB).
+        BIG="company financial_period estimate person company_person company_link parent_psc company_ownership company_change score company_best company_latest postcode_geo job"
         while true; do
           if [ "$$(date +%H%M)" = "0230" ]; then
-            f=/backups/acquireos-$$(date +%Y%m%d).sql.gz
-            pg_dump --no-owner | gzip > "$$f.tmp" && mv "$$f.tmp" "$$f" && echo "Backup written: $$f"
-            find /backups -name 'acquireos-*.sql.gz' -mtime +$$KEEP_DAYS -delete
+            d=$$(date +%Y%m%d)
+            x=""; for t in $$BIG; do x="$$x --exclude-table-data=$$t"; done
+            f=/backups/acquireos-work-$$d.dump
+            pg_dump --no-owner -Fc $$x -f "$$f.tmp" && mv "$$f.tmp" "$$f" && echo "Backup of your work written: $$f"
+            if [ "$$(date +%u)" = "7" ]; then
+              f=/backups/acquireos-full-$$d.dump
+              pg_dump --no-owner -Fc -f "$$f.tmp" && mv "$$f.tmp" "$$f" && echo "Full backup written: $$f"
+            fi
+            find /backups -name 'acquireos-work-*.dump' -mtime +$$KEEP_DAYS -delete
+            find /backups -name 'acquireos-full-*.dump' -mtime +$$((KEEP_DAYS * 3)) -delete
             sleep 60
           fi
           sleep 30

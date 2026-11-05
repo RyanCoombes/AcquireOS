@@ -355,12 +355,24 @@ Inside the container (`docker exec -it acquireos sh`):
 
 ## Backups
 
-The `backup` service writes `acquireos-YYYYMMDD.sql.gz` to `BACKUP_DIR` at
-02:30 each night and keeps 30 days. To restore into a fresh stack:
+The `backup` service writes two kinds of dump to `BACKUP_DIR`:
+
+- **Your work, nightly at 02:30** (`acquireos-work-YYYYMMDD.dump`, a few MB):
+  buy boxes, pipeline stages, notes, outreach, your own scores, saved
+  searches, research and enrichment. Companies House data and everything
+  computed from it are left out, because they can be downloaded again.
+  Kept for 30 days.
+- **Everything, on Sundays** (`acquireos-full-YYYYMMDD.dump`, tens of GB):
+  kept for 90 days.
+
+To restore into a fresh stack:
 
 ```bash
-gunzip -c acquireos-20261104.sql.gz | docker exec -i acquireos-db psql -U acquireos acquireos
+docker exec -i acquireos-db pg_restore -U acquireos -d acquireos --no-owner --clean --if-exists < acquireos-full-20261102.dump
 ```
+
+After restoring a **work** dump, open Data and press **Download and load
+now** to fetch the Companies House data again; your work is then rescored.
 
 ## Development
 
