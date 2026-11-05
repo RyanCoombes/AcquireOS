@@ -773,6 +773,10 @@ def _links_for(c, num):
     ).fetchall()
 
 
+FUNDING_KEYS = {"price", "your_cash", "investor_cash", "investor_stake", "vendor_pct", "vendor_years", "vendor_rate",
+                "bank_rate", "bank_years"}
+
+
 class StateIn(BaseModel):
     status: str | None = None
     rating: int | None = None
@@ -780,6 +784,7 @@ class StateIn(BaseModel):
     next_action_on: date | None = None
     tags: list[str] | None = None
     valuation: dict | None = None
+    funding: dict | None = None
     stage_note: str | None = None
     clear_rating: bool = False
 
@@ -831,6 +836,11 @@ def set_state(num: str, body: StateIn):
             clean = {k: float(v) for k, v in (fields["valuation"] or {}).items()
                      if k in valuation.DEFAULTS and v not in (None, "")}
             sets.append("valuation = %s")
+            params.append(json.dumps(clean))
+        if "funding" in fields:
+            clean = {k: float(v) for k, v in (fields["funding"] or {}).items()
+                     if k in FUNDING_KEYS and isinstance(v, (int, float)) and v == v}
+            sets.append("funding = %s")
             params.append(json.dumps(clean))
         if body.clear_rating:
             sets.append("rating = null")

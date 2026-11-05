@@ -82,6 +82,10 @@ export interface Valuation {
   basis: string | null; steps: string[]; cash: number | string | null;
   assumptions: Assumptions; defaults: Assumptions; override: Partial<Assumptions>;
 }
+export interface Funding {
+  price: number; your_cash: number; investor_cash: number; investor_stake: number; vendor_pct: number;
+  vendor_years: number; vendor_rate: number; bank_rate: number; bank_years: number;
+}
 export interface Assumptions { margin_low: number; margin_high: number; multiple_low: number; multiple_high: number }
 
 export interface SavedSearch { id: number; name: string; params: Record<string, string>; buy_box_id?: number | null; buy_box_name?: string | null }
@@ -141,7 +145,7 @@ export interface CompanyDetail {
   links: Link[];
   score: BoxScore | null;
   scores: (BoxScore & { buy_box_id: number; buy_box: string })[];
-  state: { status: Status; rating: number | null; tags: string[]; next_action?: string | null; next_action_on?: string | null; valuation?: Partial<Assumptions> };
+  state: { status: Status; rating: number | null; tags: string[]; next_action?: string | null; next_action_on?: string | null; valuation?: Partial<Assumptions>; funding?: Partial<Funding> };
   changes: Change[];
   valuation: Valuation;
   deal: Deal;

@@ -252,3 +252,13 @@ def test_search_finds_companies_by_owner(loaded):
         rows = cl.get("/api/companies", params={"q": "alex example", "sort": "relevance"}).json()["rows"]
         nums = {r["company_number"]: r for r in rows}
         assert "01000001" in nums and nums["01000001"]["matched_owner"] == "Mr Alex Example"
+
+
+def test_funding_assumptions_are_kept_per_company(loaded):
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        r = cl.put("/api/companies/01000001/state", json={"funding": {"price": 2500000, "investor_cash": 500000, "investor_stake": 30, "bogus": 1}})
+        assert r.status_code == 200 and r.json()["funding"] == {"price": 2500000.0, "investor_cash": 500000.0, "investor_stake": 30.0}
+        assert cl.get("/api/companies/01000001").json()["state"]["funding"]["investor_stake"] == 30
