@@ -17,6 +17,7 @@ const DIR_COLS: Col[] = [
   { key: "years", label: "Years", num: true, sm: true },
   { key: "staff", label: "Staff", num: true },
   { key: "revenue", label: "Revenue", num: true, sm: true },
+  { key: "age", label: "Owners", sm: true },
   { key: "score", label: "Best fit" },
   { key: "status", label: "My status" },
 ];
@@ -493,6 +494,10 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
         <td className="num hide-sm">{years(r.incorporation_date)}</td>
         {staffCell}
         {revenueCell}
+        <td className="hide-sm nowrap">
+          {r.ownership_type ? OWNERSHIP[r.ownership_type] ?? r.ownership_type : <span className="faint">Not traced</span>}
+          {age ? <div className="sub">oldest owner {age}</div> : null}
+        </td>
         {scoreCell}
         {statusCell}
       </tr>

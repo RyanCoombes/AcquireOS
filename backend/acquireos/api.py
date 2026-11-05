@@ -130,17 +130,26 @@ def _meta_data():
     changed by data jobs (cached until one runs, or an hour)."""
     with db.conn() as c:
         counts = c.execute(
-            """select (select count(*) from company) as companies,
+            """select (select ao_rowcount('company')) as companies,
                       (select count(*) from company_best) as in_scope,
-                      (select count(*) from company_person) as owner_records,
+                      (select ao_rowcount('company_person')) as owner_records,
                       (select max(finished_at) from import_run) as last_import,
                       (select count(distinct ch.company_number) from company_change ch
                          join company_best s on s.company_number = ch.company_number
                          where ch.detected_at > now() - interval '30 days') as changed_30d""").fetchone()
-        regions = [r["region"] for r in c.execute("select distinct region from company where region is not null order by 1")]
-        tiers = [r["review_tier"] for r in c.execute("select distinct review_tier from company where review_tier is not null order by 1")]
-        company_statuses = [r["status"] for r in c.execute("select status, count(*) from company where status is not null group by 1 order by 2 desc")]
-    return {"counts": dict(counts), "regions": regions, "tiers": tiers, "company_statuses": company_statuses}
+        lists = stats_get(c, "meta_lists", compute_meta_lists)
+    return {"counts": dict(counts), **lists}
+
+
+def compute_meta_lists(c) -> dict:
+    """Filter choices that come from scanning every company (regions, tiers,
+    statuses): stored after each load rather than scanned per visit."""
+    return {
+        "regions": [r["region"] for r in c.execute("select distinct region from company where region is not null order by 1")],
+        "tiers": [r["review_tier"] for r in c.execute("select distinct review_tier from company where review_tier is not null order by 1")],
+        "company_statuses": [r["status"] for r in c.execute(
+            "select status, count(*) from company where status is not null group by 1 order by 2 desc")],
+    }
 
 
 def _meta():
@@ -1032,6 +1041,32 @@ def geocode_status():
     return {**_geo_state, "counts": counts}
 
 
+def stats_get(c, key: str, compute):
+    """A stored summary, computed and stored on first use (data jobs refresh it)."""
+    row = c.execute("select value from stats where key = %s", (key,)).fetchone()
+    if row:
+        return row["value"]
+    value = compute(c)
+    c.execute("insert into stats (key, value) values (%s, %s) on conflict (key) do update set value = excluded.value, updated_at = now()",
+              (key, json.dumps(value, default=str)))
+    return json.loads(json.dumps(value, default=str))
+
+
+def compute_sic_counts(c) -> list[dict]:
+    return [dict(r) for r in c.execute(
+        """select code, count(*) as n, count(cb.company_number) as in_scope
+           from company c cross join unnest(c.sic_codes) code
+           left join company_best cb on cb.company_number = c.company_number
+           group by code""")]
+
+
+def refresh_stats(c):
+    """Recompute stored summaries after a data load (called by the jobs)."""
+    for key, fn in (("sic_counts", compute_sic_counts), ("coverage", _coverage_compute), ("meta_lists", compute_meta_lists)):
+        c.execute("insert into stats (key, value) values (%s, %s) on conflict (key) do update set value = excluded.value, updated_at = now()",
+                  (key, json.dumps(fn(c), default=str)))
+
+
 @app.get("/api/sic")
 def sic_list():
     return cached("sic", 3600, _sic_list)
@@ -1043,13 +1078,7 @@ def _sic_list():
     from . import sic as sic_mod
 
     with db.conn() as c:
-        bb = scoring.active_buy_box(c)
-        counts = {r["code"]: r for r in c.execute(
-            """select code, count(*) as n, count(cb.company_number) as in_scope
-               from company c cross join unnest(c.sic_codes) code
-               left join company_best cb on cb.company_number = c.company_number
-               where %s::int is not null
-               group by code""", (bb["id"],))}
+        counts = {r["code"]: r for r in stats_get(c, "sic_counts", compute_sic_counts)}
         known = {r["code"]: r["description"] for r in c.execute("select code, description from sic_code")}
     codes = set(known) | set(counts)
     out = [{"code": code, "description": sic_mod.describe(code, known), "level": "code",
@@ -1376,6 +1405,7 @@ def _start_scoring(bb_id: int | None = None) -> bool:
                 from .ownership import rebuild_links
 
                 rebuild_links(c)
+                refresh_stats(c)
             job.finish({"buy_boxes": [b["name"] for b in pending]})
         except Exception as e:
             if job:
@@ -1625,6 +1655,7 @@ def import_commit(body: CommitIn):
         if body.kind == "companies":
             rebuild_ownership(c)
         scoring.rescore(c)
+        refresh_stats(c)
     path.unlink(missing_ok=True)
     return result
 
@@ -1694,6 +1725,11 @@ def coverage():
 
 def _coverage():
     with db.conn() as c:
+        return stats_get(c, "coverage", _coverage_compute)
+
+
+def _coverage_compute(c):
+    if True:
         n = c.execute(
             """select count(*) as active,
                       count(o.company_number) filter (where o.ownership_type <> 'unknown') as owners_traced,

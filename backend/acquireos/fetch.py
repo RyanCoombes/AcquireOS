@@ -342,6 +342,14 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True, reread_old: bool =
         return geo.geocode(conn)
 
     part("Map locations", locate)
+
+    def summaries():
+        from .api import refresh_stats
+
+        refresh_stats(conn)
+        return "done"
+
+    part("Summaries", summaries)
     return out
 
 
@@ -351,7 +359,7 @@ def run_job(kind: str = "refresh", accounts_months: int = 1, reread_old: bool = 
     from . import db
     from .jobs import Cancelled, Job
 
-    JOB = Job(kind, ["Company register", "Owners (PSC)", "Scoring", "Ownership links", "Map locations"])
+    JOB = Job(kind, ["Company register", "Owners (PSC)", "Scoring", "Ownership links", "Map locations", "Summaries"])
     try:
         db.migrate()
         with db.conn(dedicated=True) as c:
