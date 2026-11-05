@@ -91,64 +91,170 @@ def _number(text: str, attrs: dict) -> float | None:
     return value
 
 
-def parse(content: str) -> dict[date, dict[str, float]]:
+# Fast path (bytes, no decoding): only <ix:nonFraction> tags whose name is one
+# of the concepts we keep are matched at all, so the hundreds of other
+# figures in a filing are skipped by the regex engine.
+_WANTED = "|".join(sorted(_LOCAL_TO_FIELD, key=len, reverse=True))
+_IX_WANTED_B = re.compile(
+    rb'<ix:nonFraction\b(?=[^>]*\bname="[\w.-]+:(?:' + _WANTED.encode() + rb')")([^>]*)>(.*?)</ix:nonFraction>',
+    re.S | re.I)
+_ATTR_B = re.compile(rb'([\w:-]+)\s*=\s*"([^"]*)"')
+_CONTEXT_B = re.compile(rb'<(?:\w+:)?context\b[^>]*\bid="([^"]+)"[^>]*>(.*?)</(?:\w+:)?context>', re.S | re.I)
+_END_B = re.compile(rb'<(?:\w+:)?(?:endDate|instant)>\s*(\d{4}-\d{2}-\d{2})\s*<', re.I)
+_SEGMENT_B = re.compile(rb'<(?:\w+:)?(?:segment|scenario)\b', re.I)
+_TAG_B = re.compile(rb'<[^>]+>')
+# Faster still: search for the wanted names directly (a literal-led pattern the
+# regex engine scans for quickly), then find the enclosing tag with bytes ops.
+_NAME_B = re.compile(rb'name="[\w.-]+:(?:' + _WANTED.encode() + rb')"')
+_OPEN_TAG = b"<ix:nonfraction"
+_CLOSE_TAG = b"</ix:nonfraction>"
+
+
+def _facts_fast(raw: bytes, low: bytes | None = None):
+    """[(attrs bytes, value bytes)] for wanted ix:nonFraction tags."""
+    out = []
+    for m in _NAME_B.finditer(raw):
+        if low is None:
+            low = raw.lower()  # tag names can be any case; offsets are unchanged
+        start = low.rfind(_OPEN_TAG, 0, m.start())
+        if start == -1 or low.find(b">", start, m.start()) != -1:
+            continue  # the name belongs to some other element
+        gt = raw.find(b">", m.end())
+        end = low.find(_CLOSE_TAG, gt)
+        if gt == -1 or end == -1:
+            continue
+        out.append((raw[start + len(_OPEN_TAG):gt], raw[gt + 1:end]))
+    return out
+
+
+def _context_date(raw: bytes, low: bytes, cid: str):
+    """Period end for one context id, or None if it is a breakdown/missing."""
+    needle = b'id="' + cid.encode() + b'"'
+    pos = 0
+    while True:
+        i = raw.find(needle, pos)
+        if i == -1:
+            return None
+        lt = raw.rfind(b"<", 0, i)
+        head = low[lt:i]
+        if b"context" in head.split(b" ", 1)[0]:
+            close = low.find(b"context>", i)
+            body = raw[i:close] if close != -1 else raw[i:i + 4000]
+            if _SEGMENT_B.search(body):
+                return None
+            ends = _END_B.findall(body)
+            try:
+                return date.fromisoformat(ends[-1].decode()) if ends else None
+            except ValueError:
+                return None
+        pos = i + len(needle)
+
+
+def parse(content: str | bytes) -> dict[date, dict[str, float]]:
     """Return {period_end: {field: value}} for the plain (undimensioned)
-    contexts in one set of accounts."""
+    contexts in one set of accounts. Accepts text or raw bytes."""
+    raw = content.encode("utf-8", "replace") if isinstance(content, str) else content
+    found: dict[date, dict[str, tuple[int, float]]] = {}
+    low = raw.lower()
+    facts = _facts_fast(raw, low)
+    if facts:
+        contexts: dict[str, date | None] = {}
+
+        def ctx_date(cid: str):
+            if cid not in contexts:
+                contexts[cid] = _context_date(raw, low, cid)
+            return contexts[cid]
+
+        for attrs_b, val_b in facts:
+            attrs = {k.decode(): v.decode("utf-8", "replace") for k, v in _ATTR_B.findall(attrs_b)}
+            hit = _LOCAL_TO_FIELD.get(attrs.get("name", "").split(":")[-1])
+            if not hit:
+                continue
+            d = ctx_date(attrs.get("contextRef", ""))
+            if d is None:
+                continue
+            v = _number(_TAG_B.sub(b"", val_b).decode("utf-8", "replace"), attrs)
+            if v is None:
+                continue
+            field, rank = hit
+            slot = found.setdefault(d, {})
+            if field not in slot or rank < slot[field][0]:
+                slot[field] = (rank, v)
+    else:
+        # Older plain-XBRL filings (.xml): the original, more general parser.
+        found = _parse_plain(raw.decode("utf-8", "replace"))
+
+    out = {}
+    for d, fields in found.items():
+        vals = {f: v for f, (_, v) in fields.items()}
+        if "employees" in vals:
+            # Mis-tagged filings sometimes put a money figure in the staff
+            # field; no UK company has a million employees.
+            emp = vals["employees"]
+            if 0 <= emp < 1_000_000:
+                vals["employees"] = int(round(emp))
+            else:
+                del vals["employees"]
+        out[d] = vals
+    return out
+
+
+def _parse_plain(content: str) -> dict[date, dict[str, tuple[int, float]]]:
     contexts: dict[str, date] = {}
     for m in _CONTEXT_RE.finditer(content):
         body = m.group("body")
         if _SEGMENT_RE.search(body):
-            continue  # a breakdown (by class of share, director and so on), not the company total
+            continue
         ends = _END_RE.findall(body)
         if ends:
             try:
                 contexts[m.group("id")] = date.fromisoformat(ends[-1])
             except ValueError:
                 pass
-
     found: dict[date, dict[str, tuple[int, float]]] = {}
-
-    def take(local: str, attrs: dict, val: str):
-        hit = _LOCAL_TO_FIELD.get(local)
-        if not hit:
-            return
-        ctx = contexts.get(attrs.get("contextRef", ""))
-        if ctx is None:
-            return
-        v = _number(val, attrs)
-        if v is None:
-            return
-        field, rank = hit
-        slot = found.setdefault(ctx, {})
-        if field not in slot or rank < slot[field][0]:
-            slot[field] = (rank, v)
-
-    for m in _IX_RE.finditer(content):
-        attrs = dict(_ATTR_RE.findall(m.group("attrs")))
-        local = attrs.get("name", "").split(":")[-1]
-        take(local, attrs, m.group("val"))
-    if not found:
-        for m in _XML_RE.finditer(content):
+    for pattern in (_IX_RE, _XML_RE):
+        for m in pattern.finditer(content):
             attrs = dict(_ATTR_RE.findall(m.group("attrs")))
-            take(m.group("local"), attrs, m.group("val"))
+            local = attrs.get("name", "").split(":")[-1] if pattern is _IX_RE else m.group("local")
+            hit = _LOCAL_TO_FIELD.get(local)
+            ctx = contexts.get(attrs.get("contextRef", ""))
+            if not hit or ctx is None:
+                continue
+            v = _number(m.group("val"), attrs)
+            if v is None:
+                continue
+            field, rank = hit
+            slot = found.setdefault(ctx, {})
+            if field not in slot or rank < slot[field][0]:
+                slot[field] = (rank, v)
+        if found:
+            break
+    return found
 
-    out = {}
-    for d, fields in found.items():
-        vals = {f: v for f, (_, v) in fields.items()}
-        if "employees" in vals:
-            vals["employees"] = int(round(vals["employees"]))
-        out[d] = vals
-    return out
+
+_ZIP_CACHE: dict = {}
 
 
 def _parse_member(item):
-    """Worker: (fname, raw bytes) -> (fname, number, balance date, {period: values}) or None."""
-    fname, raw = item
+    """Worker: (fname, raw bytes) or (fname, zip path, member name) ->
+    (fname, number, balance date, {period: values}) or None. Reading the
+    member inside the worker keeps the main process free."""
+    if len(item) == 3:
+        fname, zpath, member = item
+        z = _ZIP_CACHE.get(zpath)
+        if z is None:
+            z = _ZIP_CACHE[zpath] = zipfile.ZipFile(zpath)
+        try:
+            raw = z.read(member)
+        except Exception:
+            return None
+    else:
+        fname, raw = item
     meta = parse_name(fname)
     if not meta:
         return None
     try:
-        data = parse(raw.decode("utf-8", errors="replace"))
+        data = parse(raw)
     except Exception:
         return None
     return (fname.rsplit("/", 1)[-1], meta[0], meta[1], data)
@@ -210,7 +316,7 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
                 source_balance_date, {', '.join(FIELDS)})
             select distinct on (company_number, period_end) company_number, period_end, false, source, balance_date,
                    {', '.join(FIELDS)}
-            from acc_stage order by company_number, period_end, balance_date desc
+            from acc_stage order by company_number, period_end, balance_date desc, source desc
             on conflict (company_number, period_end) do update set
                 period_inferred = false, source = excluded.source, source_balance_date = excluded.source_balance_date,
                 {', '.join(f"{f} = coalesce(excluded.{f}, fp.{f})" for f in FIELDS)}
@@ -226,11 +332,12 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
     def items():
         nonlocal seen
         for path in paths:
-            for fname, read in _members(path):
+            for fname, read, ref in _members(path, refs=True):
                 seen += 1
                 meta = parse_name(fname)
                 if meta and meta[0] in wanted:
-                    yield fname, read()
+                    # Flat zips: hand the worker a reference, not the bytes.
+                    yield (fname, str(ref[0]), ref[1]) if ref else (fname, read())
 
     def handle(res):
         nonlocal matched
@@ -343,14 +450,27 @@ def _count_members(paths) -> int:
     return total
 
 
-def _members(path: Path):
+def _members(path: Path, refs: bool = False):
     """Yield (name, reader) for each accounts file in a zip, or the file itself.
-    Monthly zips sometimes contain the daily zips, so nested zips are opened too."""
+    Monthly zips sometimes contain the daily zips, so nested zips are opened too.
+    With refs=True, yields (name, reader, (zip path, member) or None)."""
     if path.suffix.lower() != ".zip":
-        yield path.name, path.read_bytes
+        yield (path.name, path.read_bytes, None) if refs else (path.name, path.read_bytes)
         return
     with zipfile.ZipFile(path) as z:
-        yield from _zip_members(z)
+        for info in z.infolist():
+            if info.is_dir():
+                continue
+            low = info.filename.lower()
+            if low.endswith(".zip"):
+                import io
+
+                with z.open(info) as f, zipfile.ZipFile(io.BytesIO(f.read())) as inner:
+                    for name, read in _zip_members(inner):
+                        yield (name, read, None) if refs else (name, read)
+            elif low.endswith((".html", ".xhtml", ".xml")):
+                reader = (lambda i=info: z.read(i))
+                yield (info.filename, reader, (path, info.filename)) if refs else (info.filename, reader)
 
 
 def _zip_members(z: zipfile.ZipFile):

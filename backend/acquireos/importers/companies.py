@@ -461,7 +461,7 @@ def refresh_estimates(conn):
             order by company_number, period_end desc
         )
         insert into estimate (company_number, revenue_low, revenue_high, basis, method)
-        select l.company_number, l.employees * %s, l.employees * %s, 'estimated', %s
+        select l.company_number, l.employees::numeric * %s, l.employees::numeric * %s, 'estimated', %s
         from latest l where l.employees > 0
         on conflict (company_number) do nothing
         """,
