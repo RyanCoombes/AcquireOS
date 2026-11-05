@@ -17,3 +17,13 @@ create table company_best (
     boxes          text[] not null default '{}'
 );
 create index company_best_score_idx on company_best (score desc);
+
+-- Fill it from the scores you already have, so nothing looks unscored after updating.
+insert into company_best (company_number, buy_box_id, box_name, score, coverage, value_low, value_high, value_basis, boxes)
+select distinct on (s.company_number) s.company_number, s.buy_box_id, b.name, s.score, s.coverage,
+       s.value_low, s.value_high, s.value_basis,
+       array(select b2.name from score s2 join buy_box b2 on b2.id = s2.buy_box_id
+             where s2.company_number = s.company_number and not s2.excluded order by s2.score desc)
+from score s join buy_box b on b.id = s.buy_box_id
+where not s.excluded
+order by s.company_number, s.score desc;
