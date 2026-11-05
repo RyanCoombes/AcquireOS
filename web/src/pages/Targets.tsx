@@ -330,6 +330,13 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
             )}
           </div>
 
+          {(m?.buy_boxes ?? []).some((b) => !b.scored_at) && (
+            <div className="callout">
+              <b>Scores are being updated.</b> {m!.buy_boxes.filter((b) => !b.scored_at).map((b) => b.name).join(", ")}{" "}
+              changed and {m!.buy_boxes.filter((b) => !b.scored_at).length === 1 ? "is" : "are"} waiting to be rescored
+              (after any data refresh that is running). Until then this list shows the previous scores.
+            </div>
+          )}
           <ErrorLine error={list.error} />
           <div className="resultline">
             <span>{!list.data ? "Loading…" : !countQ.data ? "Counting…" : <><b>{int(total)}{capped ? "+" : ""}</b> {total === 1 ? "company" : "companies"}</>}

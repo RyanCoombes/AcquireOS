@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { ErrorLine, Toast, useAsync } from "../components/bits";
+import { useJob } from "../components/JobBar";
 import { money, OWNERSHIP } from "../format";
 import SicPicker from "../components/SicPicker";
 import MoneyInput from "../components/MoneyInput";
@@ -35,8 +36,8 @@ export default function BuyBox() {
     try {
       const r = await api.saveBuybox(data.id, c);
       setToast(r.background
-        ? (r.queued === false
-          ? "Saved. It will be rescored as soon as the current job finishes; progress shows at the top."
+        ? (r.queued
+          ? "Saved. Another job is running (the data refresh), so this buy box is rescored as soon as it finishes. Until then Targets shows the old scores."
           : "Saved. Rescoring in the background; progress shows at the top. Everything stays usable meanwhile.")
         : `Saved. Rescored ${r.rescored.toLocaleString("en-GB")} companies.`);
     } catch (e: any) { setToast(e.message); }
@@ -162,6 +163,21 @@ export default function BuyBox() {
           <dt>Postcode areas</dt><dd><input type="text" style={{ width: "100%", maxWidth: 360 }} placeholder="e.g. CF, SA, NP, LL (blank for all of the UK)" value={(c.universe?.postcode_areas ?? []).join(", ")}
                    onChange={(e) => upd(["universe", "postcode_areas"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
           <dt>Trading at least</dt><dd className="range">{n(["universe", "min_years"])}<span className="faint">years</span></dd>
+          <dt>Only companies in</dt>
+          <dd>
+            {meta.data?.regions.length ? meta.data.regions.map((r) => (
+              <label key={r} className="check" style={{ display: "inline-flex", marginRight: 12 }}>
+                <input type="checkbox" checked={c.regions.includes(r)}
+                       onChange={(e) => upd(["regions"], e.target.checked ? [...c.regions, r] : c.regions.filter((x: string) => x !== r))} />
+                {r}
+              </label>
+            )) : <span className="faint">No regions in the data yet.</span>}
+            <div className={c.regions.length ? "small" : "faint small"} style={{ marginTop: 4 }}>
+              {c.regions.length
+                ? <><b>Keeping only:</b> {c.regions.join(", ")}. Every other region is left out.</>
+                : "Nothing ticked: all of the UK. Tick a region to keep only that region."}
+            </div>
+          </dd>
           <dt>Holding companies</dt>
           <dd>
             <label className="check" style={{ height: "auto" }}>
@@ -201,17 +217,6 @@ export default function BuyBox() {
             <textarea style={{ minHeight: 56 }} value={c.exclude.keywords.join(", ")}
                       onChange={(e) => upd(["exclude", "keywords"], e.target.value.split(",").map((s) => s.trim()).filter(Boolean))} />
             <div className="faint small">Comma separated. Whole words only, so “van” does not exclude “Vanguard”.</div>
-          </dd>
-          <dt>Regions only</dt>
-          <dd>
-            {meta.data?.regions.length ? meta.data.regions.map((r) => (
-              <label key={r} className="check" style={{ display: "inline-flex", marginRight: 12 }}>
-                <input type="checkbox" checked={c.regions.includes(r)}
-                       onChange={(e) => upd(["regions"], e.target.checked ? [...c.regions, r] : c.regions.filter((x: string) => x !== r))} />
-                {r}
-              </label>
-            )) : <span className="faint">No regions in the data yet.</span>}
-            <div className="faint small">Leave all unticked for anywhere.</div>
           </dd>
           <dt>Review tiers</dt>
           <dd>
@@ -265,6 +270,7 @@ function Crit({ label, w, c, n, total, children }: { label: string; w: string[];
 }
 
 function BoxManager({ current, onToast, select }: { current: number; onToast: (m: string) => void; select: (id: number) => void }) {
+  const { job } = useJob();
   const boxes = useAsync(() => api.buyboxes(), []);
   const tpls = useAsync(() => api.buyboxTemplates(), []);
   const [adding, setAdding] = useState(false);
@@ -301,7 +307,10 @@ function BoxManager({ current, onToast, select }: { current: number; onToast: (m
           <div key={b.id} className={`boxcard ${b.id === current ? "on" : ""}`} role="button" tabIndex={0}
                onClick={() => select(b.id)} onKeyDown={(e) => { if (e.key === "Enter") select(b.id); }}>
             <div className="nm">{b.name}</div>
-            <div className="st">{b.scored_at ? <>{b.in_scope.toLocaleString("en-GB")} in scope · {b.strong.toLocaleString("en-GB")} score 70+</> : "Scoring…"}</div>
+            <div className="st">{b.scored_at ? <>{b.in_scope.toLocaleString("en-GB")} in scope · {b.strong.toLocaleString("en-GB")} score 70+</>
+              : job?.running && job.kind !== "scoring"
+                ? <span className="neg">Waiting to rescore: starts when the data refresh finishes. Counts below are out of date.</span>
+                : "Rescoring now…"}</div>
             <div className="st">
               {b.id === current ? "Editing below" : "Edit"}
               {" · "}<a href={`/targets?bb=${b.id}`} onClick={(e) => e.stopPropagation()}>View targets</a>
