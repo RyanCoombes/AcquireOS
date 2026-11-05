@@ -244,3 +244,24 @@ def test_accounts_extra_figures_are_read():
     assert v["fixed_assets"] == 120000 and v["intangible_assets"] == 20000 and v["current_assets"] == 400000
     assert v["net_current_assets"] == 150000 and v["total_assets_less_cl"] == 270000
     assert v["gross_profit"] == 900000 and v["director_pay"] == 85000 and v["staff_costs"] == 1200000
+
+
+def test_nil_facts_are_skipped():
+    doc = (b'<html><xbrli:context id="cy"><xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate>'
+           b'<xbrli:endDate>2025-12-31</xbrli:endDate></xbrli:period></xbrli:context>'
+           b'<ix:nonFraction name="core:Turnover" contextRef="cy" xsi:nil="true"/> '
+           b'<ix:nonFraction name="core:OperatingProfitLoss" contextRef="cy">50,000</ix:nonFraction>'
+           b'<ix:nonFraction name="core:ProfitLoss" contextRef="cy" xsi:nil="true"></ix:nonFraction></html>')
+    assert accounts.parse(doc) == {date(2025, 12, 31): {"operating_profit": 50000.0}}
+
+
+def test_own_import_does_not_overwrite_the_register(loaded):
+    from acquireos.importers import companies
+
+    c = loaded
+    register.load(c, BULK, register_date=date(2026, 11, 1), full=False)
+    assert c.execute("select status from company where company_number = '01000006'").fetchone()["status"] == "dissolved"
+    n_changes = c.execute("select count(*) as n from company_change where company_number = '01000006'").fetchone()["n"]
+    companies.run(c, FIX / "ranked_sample.csv")  # an older list of yours saying "Active"
+    assert c.execute("select status from company where company_number = '01000006'").fetchone()["status"] == "dissolved"
+    assert c.execute("select count(*) as n from company_change where company_number = '01000006'").fetchone()["n"] == n_changes

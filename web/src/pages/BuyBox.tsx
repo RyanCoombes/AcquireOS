@@ -56,7 +56,7 @@ export default function BuyBox() {
           <div className="lede">
             {data.description ? <>{data.description} </> : null}
             Each criterion earns points up to its weight; the score is the share of all points earned.
-            Missing data is not counted as a miss, but lowers the coverage figure.
+            Missing data is neutral: it earns half the points (neither a hit nor a miss) and lowers the coverage figure.
           </div>
         </div>
         <div className="right">

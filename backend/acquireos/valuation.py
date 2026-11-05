@@ -37,6 +37,12 @@ def value(f: dict, a: dict) -> dict:
         e_lo = e_hi = float(op)
         basis = "filed"
         steps.append(f"Profit: filed operating profit of {_m(op)}. Depreciation is not added back, so true EBITDA is likely higher.")
+    elif op is not None and op <= 0:
+        # Filed as loss-making: an earnings multiple does not apply, and an
+        # assumed margin would invent profit the accounts say is not there.
+        return {"ebitda_low": None, "ebitda_high": None, "value_low": None, "value_high": None, "basis": "loss",
+                "steps": [f"Loss-making as filed: operating profit of {_m(op)} in the latest accounts. "
+                          "No earnings-based value; it would be priced on its assets or a turnaround view."]}
     elif f.get("revenue_low"):
         r_lo, r_hi = float(f["revenue_low"]), float(f["revenue_high"] or f["revenue_low"])
         e_lo, e_hi = r_lo * a["margin_low"] / 100, r_hi * a["margin_high"] / 100
@@ -57,8 +63,9 @@ def value(f: dict, a: dict) -> dict:
 
 def _m(v) -> str:
     v = float(v)
-    if abs(v) >= 1_000_000:
-        return f"£{v / 1_000_000:.1f}m"
-    if abs(v) >= 1_000:
-        return f"£{v / 1_000:.0f}k"
-    return f"£{v:.0f}"
+    sign, v = ("−" if v < 0 else ""), abs(v)
+    if v >= 1_000_000:
+        return f"{sign}£{v / 1_000_000:.1f}m"
+    if v >= 1_000:
+        return f"{sign}£{v / 1_000:.0f}k"
+    return f"{sign}£{v:.0f}"

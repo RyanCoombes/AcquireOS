@@ -227,7 +227,7 @@ def _stage_fast(conn, path: Path, headers: list[str], progress) -> int:
 
 def load(conn, path: Path, register_date: date | None = None, full: bool = True,
          record_changes: bool = True, progress=None) -> dict:
-    from .companies import flag_mass_addresses, refresh_estimates
+    from .companies import flag_mass_addresses
 
     headers, rows = open_table(path)
     est_rows = _estimate_rows(path)
@@ -379,8 +379,7 @@ def load(conn, path: Path, register_date: date | None = None, full: bool = True,
                 changes += len(gone)
                 messages.append(f"{len(gone):,} companies are no longer on the live register (usually dissolved).")
 
-    flag_mass_addresses(conn)
-    refresh_estimates(conn)
+    flag_mass_addresses(conn)  # (estimates depend only on accounts, so are not redone here)
     conn.execute("update import_run set rows_in=%s, rows_ok=%s, messages=%s, finished_at=now() where id=%s",
                  (rows_in, rows_in, json.dumps(messages), run_id))
     return {"run_id": run_id, "rows_in": rows_in, "rows_ok": rows_in, "rows_skipped": 0, "changes": changes,

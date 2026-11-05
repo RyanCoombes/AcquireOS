@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import zipfile
 from pathlib import Path
 
@@ -21,6 +22,9 @@ UK_PLACES = {
     "registrar of companies for england and wales", "register of companies for england and wales",
     "registrar of companies", "companies house, cardiff", "cardiff",
 }
+
+# Fewer records than this and a file is not treated as the full snapshot.
+FULL_SNAPSHOT_MIN = 1_000_000
 
 KIND_MAP = {
     "individual-person-with-significant-control": "individual",
@@ -110,8 +114,14 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
                country_registered, legal_form, address, postcode
         from psc_stage order by person_key, seq desc
         on conflict (person_key) do update set name = excluded.name,
+            registration_number = excluded.registration_number,
+            country_registered = excluded.country_registered,
             address = coalesce(excluded.address, person.address),
-            postcode = coalesce(excluded.postcode, person.postcode)""")
+            postcode = coalesce(excluded.postcode, person.postcode)
+        -- only rows that differ are rewritten (most owners are unchanged month to month)
+        where (person.name, person.registration_number, person.country_registered)
+              is distinct from (excluded.name, excluded.registration_number, excluded.country_registered)
+           or (excluded.address is not null and person.address is distinct from excluded.address)""")
 
     changes = 0
     if record_changes and not first:
@@ -132,7 +142,19 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
         select s.row_key, s.company_number, p.id, 'psc', s.natures, s.notified_on, s.ceased_on, 'psc_snapshot'
         from psc_stage s join person p on p.person_key = s.person_key
         join company c on c.company_number = s.company_number
-        on conflict (row_key) do update set natures = excluded.natures, ceased_on = excluded.ceased_on""").rowcount
+        on conflict (row_key) do update set natures = excluded.natures, ceased_on = excluded.ceased_on
+        where (company_person.natures, company_person.ceased_on) is distinct from (excluded.natures, excluded.ceased_on)
+        """).rowcount
+    in_list = conn.execute("select count(*) as n from psc_stage s join company c using (company_number)").fetchone()["n"]
+    retired = 0
+    if total >= FULL_SNAPSHOT_MIN:
+        # A full snapshot is the whole truth: owner records no longer in it
+        # (removed or corrected at Companies House) are dropped, so they do
+        # not linger as duplicate or out-of-date owners.
+        conn.execute("create index if not exists psc_stage_key on psc_stage (row_key)")
+        retired = conn.execute("""
+            delete from company_person cp where cp.source = 'psc_snapshot'
+              and not exists (select 1 from psc_stage s where s.row_key = cp.row_key)""").rowcount
     parents = conn.execute("""
         insert into parent_psc (parent_number, person_id, natures, ceased_on)
         select distinct on (s.company_number, p.id) s.company_number, p.id, s.natures, s.ceased_on
@@ -140,11 +162,13 @@ def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True
         where not exists (select 1 from company c where c.company_number = s.company_number)
         order by s.company_number, p.id, s.seq desc
         on conflict (parent_number, person_id) do update set natures = excluded.natures,
-            ceased_on = excluded.ceased_on""").rowcount
+            ceased_on = excluded.ceased_on
+        where (parent_psc.natures, parent_psc.ceased_on) is distinct from (excluded.natures, excluded.ceased_on)""").rowcount
 
     conn.execute(
         "update import_run set rows_in=%s, rows_ok=%s, finished_at=now(), messages=%s where id=%s",
-        (total, in_list, json.dumps([f"Owner records for companies outside your database: {parents:,}"]), run_id),
+        (total, in_list, json.dumps([f"Owner records for companies outside your database: {parents:,}"]
+                                    + ([f"Owner records no longer at Companies House, removed: {retired:,}"] if retired else [])), run_id),
     )
     conn.execute("drop table if exists psc_stage")
     from ..ownership import rebuild
@@ -170,14 +194,47 @@ def _estimate_lines(paths) -> int:
     return max(int(total / 650), 1)
 
 
-def _reg_number(data: dict) -> str | None:
-    ident = data.get("identification") or {}
-    reg = n.company_number(ident.get("registration_number"))
-    if not reg:
+# A place of registration in the UK (Companies House numbers can be traced).
+# Word-bounded so "Ireland" alone (the Republic) does not count.
+UK_PLACE_RE = re.compile(
+    r"\b(uk|u\.k\.?|gb|great britain|britain|united kingdom|england|wales|scotland|northern ireland|n\.?\s?ireland"
+    r"|companies house|registrar of companies|register of companies|cardiff|edinburgh|belfast|london)\b", re.I)
+# Same test for SQL (Postgres word boundaries are \y).
+UK_PLACE_SQL = (r"\y(uk|u\.k\.?|gb|great britain|britain|united kingdom|england|wales|scotland|northern ireland|n\.?\s?ireland"
+                r"|companies house|registrar of companies|register of companies|cardiff|edinburgh|belfast|london)\y")
+_UK_NUM_RE = re.compile(r"\b(SC|NI|OC|SO|NC|R|FC|SE|GE|LP|SL|NL|IP|SP|RS|CE|CS)?\s*-?\s*(\d{5,8})\b")
+
+
+def is_uk_place(place: str | None) -> bool:
+    return bool(place and UK_PLACE_RE.search(place))
+
+
+def uk_registration(ident: dict) -> str | None:
+    """The Companies House number of a corporate owner, or None when it is
+    registered abroad or the number cannot be read. Free text such as
+    "Company No. 08123456" or "SC-123456 (Scotland)" is handled; a foreign
+    number is never padded into a UK one (it would match an unrelated company)."""
+    raw = (ident.get("registration_number") or "").strip().upper()
+    if not raw:
         return None
-    place = (ident.get("country_registered") or ident.get("place_registered") or "").strip().lower()
-    # Only UK registration numbers can be looked up in the UK snapshot.
-    return reg if place in UK_PLACES or "england" in place or "wales" in place or "companies house" in place else None
+    place = " ".join(filter(None, (ident.get("country_registered"), ident.get("place_registered"),
+                                   ident.get("legal_authority"))))
+    m = _UK_NUM_RE.search(raw)
+    if not m:
+        return None
+    prefix, digits = m.group(1) or "", m.group(2)
+    uk = is_uk_place(place) or "companies act" in place.lower()
+    if not uk:
+        # No place given: only accept a number that is already in full UK form.
+        if place.strip() or len(prefix) + len(digits) != 8:
+            return None
+    if len(prefix) + len(digits) > 8:
+        return None
+    return prefix + digits.zfill(8 - len(prefix))
+
+
+def _reg_number(data: dict) -> str | None:
+    return uk_registration(data.get("identification") or {})
 
 
 def person_from(data: dict) -> dict:
@@ -185,12 +242,15 @@ def person_from(data: dict) -> dict:
     name = (data.get("name") or "Unnamed").strip()
     ident = data.get("identification") or {}
     dob = data.get("date_of_birth") or {}
-    reg = n.company_number(ident.get("registration_number")) if kind != "individual" else None
+    reg = uk_registration(ident) if kind != "individual" else None
+    raw_reg = (ident.get("registration_number") or "").strip() or None
     country = (ident.get("country_registered") or ident.get("place_registered") or "").strip() or None
     if kind == "individual":
         key = f"i:{n.name_key(name)}:{dob.get('year') or ''}:{dob.get('month') or ''}"
     elif reg:
         key = f"c:{reg}:{(country or '').lower()}"
+    elif raw_reg:
+        key = f"c:{raw_reg.upper()}:{(country or '').lower()}"  # foreign: keep its own number
     else:
         key = f"{kind[0]}:{n.company_name_key(name)}"
     addr = data.get("address") or {}

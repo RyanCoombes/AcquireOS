@@ -135,10 +135,17 @@ def _facts_fast(raw: bytes, low: bytes | None = None):
         if start == -1 or low.find(b">", start, m.start()) != -1:
             continue  # the name belongs to some other element
         gt = raw.find(b">", m.end())
-        end = low.find(_CLOSE_TAG, gt)
-        if gt == -1 or end == -1:
+        if gt == -1:
             continue
-        out.append((raw[start + len(_OPEN_TAG):gt], raw[gt + 1:end]))
+        attrs = raw[start + len(_OPEN_TAG):gt]
+        # A self-closing or nil fact has no value: skip it, rather than reading
+        # on to the next fact's closing tag and taking that figure instead.
+        if attrs.rstrip().endswith(b"/") or b'nil="true"' in low[start:gt]:
+            continue
+        end = low.find(_CLOSE_TAG, gt)
+        if end == -1:
+            continue
+        out.append((attrs, raw[gt + 1:end]))
     return out
 
 
@@ -384,12 +391,14 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
     flush()
 
     # Real periods replace the "inferred" prior-year rows from the ranked file.
+    # Only the companies this file touched (not the whole table, every month).
     conn.execute(
         """delete from financial_period i using financial_period r
            where i.company_number = r.company_number and i.period_inferred and not r.period_inferred
-             and abs(i.period_end - r.period_end) <= 45"""
+             and abs(i.period_end - r.period_end) <= 45
+             and i.company_number in (select company_number from acc_touched)"""
     )
-    refresh_estimates(conn)
+    refresh_estimates(conn, from_table="acc_touched")
     from ..scoring import refresh_latest
 
     if progress:

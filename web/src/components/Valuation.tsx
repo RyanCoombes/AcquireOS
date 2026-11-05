@@ -23,6 +23,7 @@ export default function Valuation({ data, num, onSaved }: { data: CompanyDetail;
   // Same method as the server (backend/acquireos/valuation.py), recalculated live.
   const live = useMemo(() => {
     if (op !== null && op > 0) return { eLo: op, eHi: op, basis: "filed" as const };
+    if (op !== null && op <= 0) return null;  // loss-making as filed: no earnings-based value
     const rLo = toNum(est?.revenue_low ?? null), rHi = toNum(est?.revenue_high ?? null) ?? rLo;
     if (rLo === null || rHi === null) return null;
     return { eLo: (rLo * a.margin_low) / 100, eHi: (rHi * a.margin_high) / 100, basis: "estimated" as const };
@@ -44,7 +45,9 @@ export default function Valuation({ data, num, onSaved }: { data: CompanyDetail;
         <span className="faint small">A screening estimate, not a valuation.</span>
       </div>
       {!live ? (
-        <div className="faint">Not enough filed figures to estimate profit or value.</div>
+        <div className="faint">{op !== null && op <= 0
+          ? <>Loss-making as filed: operating profit of {money(op)} in the latest accounts. No earnings-based value; it would be priced on its assets or a turnaround view.</>
+          : "Not enough filed figures to estimate profit or value."}</div>
       ) : (
         <>
           <div className="factline" style={{ borderTop: 0 }}>

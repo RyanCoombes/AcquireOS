@@ -11,7 +11,7 @@ import time
 from datetime import date, timedelta
 
 from . import normalise as n
-from .importers.psc import UK_PLACES
+from .importers.psc import UK_PLACE_SQL
 
 EOT_RE = re.compile(r"EMPLOYEE\s+OWNERSHIP|\bEOT\b|EMPLOYEE\s+BENEFIT\s+TRUST|\bEBT\b", re.I)
 TRUST_RE = re.compile(r"\bTRUST(EES?)?\b|\bSETTLEMENT\b", re.I)
@@ -96,18 +96,18 @@ def _build_walk(conn):
     conn.execute("analyze own_edges")
     conn.execute("""
         create temp table own_walk as
-        with recursive walk (root, person_id, depth, path) as (
-            select e.owned, e.person_id, 0, array[e.owned]
+        with recursive walk (root, person_id, depth, path, natures) as (
+            select e.owned, e.person_id, 0, array[e.owned], e.natures
             from own_edges e join company c on c.company_number = e.owned
             union all
-            select w.root, e2.person_id, w.depth + 1, w.path || p.registration_number
+            select w.root, e2.person_id, w.depth + 1, w.path || p.registration_number, e2.natures
             from walk w
             join person p on p.id = w.person_id and p.kind <> 'individual' and p.registration_number is not null
             join own_edges e2 on e2.owned = p.registration_number
             where w.depth < 5 and not (p.registration_number = any (w.path))
         )
-        select w.root, w.person_id, w.depth, w.path, p.kind, p.name, p.birth_year, p.birth_month,
-               p.registration_number, p.country_registered,
+        select w.root, w.person_id, w.depth, w.path, w.natures, p.kind, p.name, p.birth_year, p.birth_month,
+               p.registration_number, p.country_registered, p.legal_form,
                (p.kind <> 'individual' and (p.registration_number is null or not exists (
                     select 1 from own_edges e where e.owned = p.registration_number)
                 or p.registration_number = any (w.path) or w.depth >= 5)) as dead_end
@@ -118,18 +118,28 @@ def _build_walk(conn):
 
 def _ownership_from_walk(conn, today):
 
-    uk = "('" + "','".join(sorted(UK_PLACES - {""})) + "')"
+    # A majority stake: more than 50% of shares or votes.
+    majority = "exists (select 1 from unnest(natures) nn where nn ~ '(50-to-75|75-to-100)')"
     conn.execute("delete from company_ownership")
     conn.execute(rf"""
         with agg as (
             select root,
-              bool_or(kind <> 'individual' and name ~* '(EMPLOYEE\s+OWNERSHIP|\mEOT\M|EMPLOYEE\s+BENEFIT\s+TRUST|\mEBT\M)') as eot,
+              -- Employee ownership only when the trust holds a majority; a minority EBT is a flag.
+              bool_or(kind <> 'individual' and name ~* '(EMPLOYEE\s+OWNERSHIP|\mEOT\M|EMPLOYEE\s+BENEFIT\s+TRUST|\mEBT\M)'
+                      and {majority}) as eot,
+              bool_or(kind <> 'individual' and name ~* '(EMPLOYEE\s+OWNERSHIP|\mEOT\M|EMPLOYEE\s+BENEFIT\s+TRUST|\mEBT\M)') as ebt,
               bool_or(kind <> 'individual' and not name ~* '(EMPLOYEE\s+OWNERSHIP|\mEOT\M|EMPLOYEE\s+BENEFIT\s+TRUST|\mEBT\M)'
                       and (kind = 'legal' or name ~* '(\mTRUST(EES?)?\M|\mSETTLEMENT\M)')) as trust_node,
-              bool_or(kind <> 'individual' and name ~* '\m(CAPITAL|VENTURES?|EQUITY|INVESTMENTS?|INVESTORS?|FUND|NOMINEES?|PARTNERS LLP|GP LIMITED|PRIVATE EQUITY)\M') as investor,
+              -- Strong signs of a fund or institutional investor count even when
+              -- individuals are traced (fund managers often appear as PSCs).
+              bool_or(kind <> 'individual' and (
+                      name ~* '\m(VENTURES?|FUNDS?|NOMINEES?|PRIVATE EQUITY|GP LIMITED|GP LLP|PARTNERS LLP|LIMITED PARTNERSHIP)\M'
+                      or coalesce(legal_form, '') ~* '(limited partnership|\mLP\M|\mLLP\M)')) as investor_strong,
+              -- Weaker words (often a family holding company: "J Smith Investments Ltd")
+              -- only count when no individual owner can be traced.
+              bool_or(kind <> 'individual' and name ~* '\m(CAPITAL|EQUITY|INVESTMENTS?|INVESTORS?)\M') as investor_weak,
               bool_or(kind = 'corporate' and coalesce(country_registered, '') <> ''
-                      and lower(trim(country_registered)) not in {uk}
-                      and lower(country_registered) !~ '(england|wales|scotland|united kingdom)') as foreign_parent,
+                      and country_registered !~* %(uk_re)s) as foreign_parent,
               bool_or(depth = 0 and kind <> 'individual' and registration_number is not null) as via_holdco,
               bool_or(kind = 'corporate' and dead_end) as unresolved_corporate,
               count(distinct person_id) filter (where kind = 'individual') as individuals,
@@ -151,7 +161,8 @@ def _ownership_from_walk(conn, today):
             select c.company_number,
                    coalesce(a.eot, false) as eot,
                    coalesce(a.trust_node, false) or coalesce(d.trust_nature, false) as trust,
-                   coalesce(a.investor, false) as investor,
+                   coalesce(a.investor_strong, false) or (coalesce(a.investor_weak, false) and coalesce(a.individuals, 0) = 0) as investor,
+                   coalesce(a.ebt, false) and not coalesce(a.eot, false) as ebt,
                    coalesce(a.foreign_parent, false) as foreign_parent,
                    coalesce(a.via_holdco, false) as via_holdco,
                    coalesce(a.unresolved_corporate, false) as unresolved_corporate,
@@ -181,7 +192,7 @@ def _ownership_from_walk(conn, today):
                    case when eot then 'eot' end, case when foreign_parent then 'foreign_parent' end,
                    case when investor then 'investor' end, case when recent then 'recent_change' end,
                    case when not has_active then 'no_psc_data' end, case when trust then 'trust' end,
-                   case when via_holdco then 'via_holdco' end], null)::text[],
+                   case when via_holdco then 'via_holdco' end, case when ebt then 'ebt' end], null)::text[],
                individuals, oldest, owners,
                case otype
                    when 'owner_held' then individuals || ' individual owner(s), held '
@@ -191,7 +202,7 @@ def _ownership_from_walk(conn, today):
                         when 'investor_backed' then 'Investor-backed' when 'eot' then 'Employee-owned (EOT)'
                         when 'trust' then 'Held in trust' when 'foreign_owned' then 'Foreign parent' end)
                         || ' from the owner records.' end
-        from typed""", {"recent": today - RECENT})
+        from typed""", {"recent": today - RECENT, "uk_re": UK_PLACE_SQL})
 
 
 # Above this many companies, links wait until scores exist (so they can be

@@ -114,7 +114,7 @@ export default function Company() {
                         {r.label}
                       </td>
                       <td className={r.status === "unknown" ? "faint" : ""}>{r.text}</td>
-                      <td className="num pts">{r.status === "unknown" ? <span className="faint">no data</span> : r.status === "unscored" ? <span className="faint">not counted</span> : `${r.points} / ${r.max}`}</td>
+                      <td className="num pts">{r.status === "unknown" ? <span className="faint" title="No data: half points, neither a hit nor a miss">no data · {r.points} / {r.max}</span> : r.status === "unscored" ? <span className="faint">not counted</span> : `${r.points} / ${r.max}`}</td>
                     </tr>
                   ))}
                 </tbody>

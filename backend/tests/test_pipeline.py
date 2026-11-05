@@ -197,3 +197,63 @@ def test_zipped_bulk_file_streams(loaded, tmp_path):
     assert pv["row_count"] is None and len(pv["sample"]) == 4
     r = companies.run(loaded, z, only_existing=True)
     assert r["rows_in"] == 4 and r["rows_ok"] == 3
+
+
+def test_ownership_classification_edge_cases(c, tmp_path):
+    """Family holding companies, minority employee trusts and foreign parents."""
+    import json as _json
+
+    from acquireos.importers import companies, psc
+
+    companies.run(c, FIX / "ranked_sample.csv")
+    corp = "corporate-entity-person-with-significant-control"
+    ind = "individual-person-with-significant-control"
+    recs = [
+        # 01000001: owned by "J SMITH INVESTMENTS LIMITED" (UK, number as free text), itself owned by John Smith
+        ("01000001", {"kind": corp, "name": "J SMITH INVESTMENTS LIMITED", "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
+                      "identification": {"registration_number": "Company No. 09999991", "country_registered": "England"}}),
+        ("09999991", {"kind": ind, "name": "Mr John Smith", "date_of_birth": {"year": 1960, "month": 5},
+                      "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}),
+        # 01000002: founder 60%, employee benefit trust 25-50%
+        ("01000002", {"kind": ind, "name": "Ms Jane Founder", "date_of_birth": {"year": 1958, "month": 2},
+                      "natures_of_control": ["ownership-of-shares-50-to-75-percent"]}),
+        ("01000002", {"kind": "legal-person-person-with-significant-control", "name": "ACME EMPLOYEE BENEFIT TRUST",
+                      "natures_of_control": ["ownership-of-shares-25-to-50-percent"]}),
+        # 01000004: Irish parent whose number would pad to an unrelated UK company (01000003)
+        ("01000004", {"kind": corp, "name": "EMERALD HOLDINGS DAC", "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
+                      "identification": {"registration_number": "1000003", "country_registered": "Ireland"}}),
+    ]
+    f = tmp_path / "psc.jsonl"
+    f.write_text("\n".join(_json.dumps({"company_number": n_, "data": d}) for n_, d in recs))
+    psc.run(c, [f])
+    o = {r["company_number"]: r for r in c.execute("select * from company_ownership")}
+    assert o["01000001"]["ownership_type"] == "owner_held" and o["01000001"]["oldest_birth_year"] == 1960
+    assert "via_holdco" in o["01000001"]["flags"]
+    assert o["01000002"]["ownership_type"] == "owner_held" and "ebt" in o["01000002"]["flags"]
+    assert o["01000004"]["ownership_type"] == "foreign_owned"
+    # the Irish number is not turned into a UK one, so no link to 01000003
+    assert not c.execute("select 1 from company_link where a = '01000004' and b = '01000003'").fetchone()
+    assert c.execute("select registration_number from person where name = 'EMERALD HOLDINGS DAC'").fetchone()["registration_number"] is None
+
+
+def test_estimates_follow_the_latest_accounts(loaded):
+    from acquireos.importers.companies import refresh_estimates
+
+    c = loaded
+    num = "01000006"
+    c.execute("delete from financial_period where company_number = %s", (num,))
+    c.execute("delete from estimate where company_number = %s", (num,))
+    c.execute("insert into financial_period (company_number, period_end, employees, turnover) values (%s, '2019-12-31', 5, 3000000)", (num,))
+    refresh_estimates(c)
+    e = c.execute("select * from estimate where company_number = %s", (num,)).fetchone()
+    assert e["basis"] == "filed" and float(e["revenue_low"]) == 3e6 and "31 Dec 2019" in e["method"]
+    # newer accounts without turnover: the old turnover is not kept as "filed"
+    c.execute("insert into financial_period (company_number, period_end, employees) values (%s, '2025-12-31', 40)", (num,))
+    refresh_estimates(c)
+    e = c.execute("select * from estimate where company_number = %s", (num,)).fetchone()
+    assert e["basis"] == "estimated" and "40" in e["method"] and float(e["revenue_low"]) > 1e6
+    # staff change: the estimate moves with it
+    c.execute("update financial_period set employees = 12 where company_number = %s and period_end = '2025-12-31'", (num,))
+    refresh_estimates(c)
+    e2 = c.execute("select * from estimate where company_number = %s", (num,)).fetchone()
+    assert float(e2["revenue_low"]) < float(e["revenue_low"])

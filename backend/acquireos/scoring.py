@@ -1,8 +1,8 @@
 """Score companies against a saved buy box, with a reason for every point.
 
-Missing data scores nothing but is reported as "unknown" rather than as a
-miss, and each score carries a coverage figure: the share of the possible
-points that could actually be assessed.
+Missing data is neutral: it earns half the points (neither a hit nor a
+miss) and is reported as "unknown". Each score carries a coverage figure:
+the share of the possible points that could actually be assessed.
 """
 from __future__ import annotations
 
@@ -46,7 +46,10 @@ DEFAULT_CRITERIA = {
         "include_parents": True,
     },
     "exclude": {
-        "statuses": ["dissolved", "liquidation", "administration", "receivership", "converted-closed"],
+        # Matched as phrases within the Companies House status, so "in administration",
+        # "receiver action" and "active - proposal to strike off" are caught.
+        "statuses": ["dissolved", "liquidation", "administration", "receiver", "voluntary arrangement",
+                     "insolvency", "converted-closed", "closed", "removed from register", "proposal to strike off"],
         "tiers": ["Dormant"],
         "ownership": ["eot"],
         "keywords": ["electrical", "plumbing", "heating", "cctv", "fire alarm", "scaffold", "roofing", "cleaning"],
@@ -159,6 +162,9 @@ def _money(v):
     return f"£{v:.0f}"
 
 
+UNKNOWN_SHARE = 0.5
+
+
 def score_company(c: dict, criteria: dict, today: date | None = None, scope=None,
                   parent_of: dict | None = None) -> dict:
     """c holds the company's facts (see load_facts). Returns score dict.
@@ -168,20 +174,25 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
     reasons = []
 
     def add(key, label, weight, frac, status, text):
-        pts = round(weight * frac, 1) if status != STATUS_UNKNOWN else 0.0
+        # Unknown is neutral: half the points, so missing data neither helps nor hurts much.
+        pts = round(weight * frac, 1) if status != STATUS_UNKNOWN else round(weight * UNKNOWN_SHARE, 1)
         reasons.append({"key": key, "label": label, "points": pts, "max": weight, "status": status, "text": text})
 
     # exclusions first; the universe before anything else, so a company outside
     # it is always reported (and stored) as outside it
     ex = cr["exclude"]
     exclusion = None
-    status_ok = (c.get("status") or "active").lower() not in [x.lower() for x in ex.get("statuses", [])]
+    # Saved buy boxes keep their own list; the current defaults always apply too.
+    bad = {x.lower() for x in ex.get("statuses", [])} | set(DEFAULT_CRITERIA["exclude"]["statuses"])
+    cstatus = (c.get("status") or "active").lower()
+    bad_status = next((b for b in bad if b and b in cstatus), None)
+    status_ok = bad_status is None
     children = (parent_of or {}).get(c.get("company_number")) if (cr.get("universe") or {}).get("include_parents", True) else None
     if status_ok and scope is not None and not children and not scope({
             "status": (c.get("status") or "active").lower(), "postcode": c.get("postcode"),
             "inc": c.get("incorporation_date"), "sic": c.get("sic_codes") or [], "name": c.get("name")}):
         exclusion = "Outside your universe (SIC codes, name keywords, area or age)"
-    elif c.get("status") and c["status"].lower() in [s.lower() for s in ex.get("statuses", [])]:
+    elif not status_ok:
         exclusion = f"Company status is {c['status']}"
     elif c.get("review_tier") and c["review_tier"] in ex.get("tiers", []):
         exclusion = f"Review tier is {c['review_tier']}"

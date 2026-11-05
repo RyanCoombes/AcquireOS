@@ -469,7 +469,8 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href }: {
       {revenueCell}
       <td className="num hide-sm">
         {range(r.value_low, r.value_high)}
-        {r.value_basis && <div className="sub">{r.value_basis === "filed" ? "from filed profit" : "estimate"}</div>}
+        {r.value_basis === "loss" ? <div className="sub">loss-making as filed</div>
+          : r.value_low && r.value_basis ? <div className="sub">{r.value_basis === "filed" ? "from filed profit" : "estimate"}</div> : null}
       </td>
       <td className="num hide-sm">{years(r.incorporation_date)}</td>
       <td className="num">{age ?? "—"}</td>

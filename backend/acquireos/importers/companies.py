@@ -170,7 +170,7 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
             before.clear()
             latest_period.clear()
             for r in conn.execute(
-                """select company_number, name, status, registered_address, address_key, sic_codes
+                """select company_number, name, status, registered_address, address_key, sic_codes, register_date
                    from company where company_number = any(%s)""", (nums,)):
                 before[r["company_number"]] = r
             for r in conn.execute(
@@ -243,7 +243,11 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
         }
         old = before.get(num)
         status_changed = False
-        if old is not None:
+        # Once a company has come from the Companies House register, the
+        # register owns its name, status, address and SIC codes: an older list
+        # of yours must not set a liquidated company back to "Active".
+        from_register = old is not None and old.get("register_date") is not None
+        if old is not None and not from_register:
             for col, kind in TRACKED.items():
                 nv, ov = new[col], old[col]
                 if not nv:
@@ -269,20 +273,21 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
             values (%(num)s, %(name)s, %(status)s, %(type)s, %(subtype)s, %(inc)s, %(dis)s, %(sic)s,
                 %(nob)s, %(addr)s, %(pc)s, %(akey)s, %(flag)s, %(region)s, %(tier)s, %(extra)s, %(source)s, %(acc)s)
             on conflict (company_number) do update set
-                name = coalesce(excluded.name, company.name),
-                status = coalesce(excluded.status, company.status),
+                name = case when company.register_date is null then coalesce(excluded.name, company.name) else company.name end,
+                status = case when company.register_date is null then coalesce(excluded.status, company.status) else company.status end,
                 status_changed_at = case when %(status_changed)s then now() else company.status_changed_at end,
                 company_type = coalesce(excluded.company_type, company.company_type),
                 company_subtype = coalesce(excluded.company_subtype, company.company_subtype),
-                incorporation_date = coalesce(excluded.incorporation_date, company.incorporation_date),
-                dissolution_date = coalesce(excluded.dissolution_date, company.dissolution_date),
-                sic_codes = case when cardinality(excluded.sic_codes) > 0 then excluded.sic_codes else company.sic_codes end,
+                incorporation_date = case when company.register_date is null then coalesce(excluded.incorporation_date, company.incorporation_date) else company.incorporation_date end,
+                dissolution_date = case when company.register_date is null then coalesce(excluded.dissolution_date, company.dissolution_date) else company.dissolution_date end,
+                sic_codes = case when company.register_date is null and cardinality(excluded.sic_codes) > 0
+                                 then excluded.sic_codes else company.sic_codes end,
                 nature_of_business = coalesce(excluded.nature_of_business, company.nature_of_business),
-                registered_address = coalesce(excluded.registered_address, company.registered_address),
-                postcode = coalesce(excluded.postcode, company.postcode),
-                address_key = coalesce(excluded.address_key, company.address_key),
-                address_flag = coalesce(excluded.address_flag, company.address_flag),
-                region = coalesce(excluded.region, company.region),
+                registered_address = case when company.register_date is null then coalesce(excluded.registered_address, company.registered_address) else company.registered_address end,
+                postcode = case when company.register_date is null then coalesce(excluded.postcode, company.postcode) else company.postcode end,
+                address_key = case when company.register_date is null then coalesce(excluded.address_key, company.address_key) else company.address_key end,
+                address_flag = case when company.register_date is null then coalesce(excluded.address_flag, company.address_flag) else company.address_flag end,
+                region = case when company.register_date is null then coalesce(excluded.region, company.region) else company.region end,
                 review_tier = coalesce(excluded.review_tier, company.review_tier),
                 extra = company.extra || excluded.extra,
                 source = excluded.source,
@@ -439,36 +444,41 @@ def _upsert_period(conn, num, period, inferred, values, source, balance_date=Non
     )
 
 
-def refresh_estimates(conn):
-    """Fill in revenue ranges for companies with filed turnover or staff only."""
-    conn.execute(
-        """
-        with latest as (
-            select distinct on (company_number) company_number, turnover, employees
-            from financial_period where not period_inferred
-            order by company_number, period_end desc
-        )
-        insert into estimate (company_number, revenue_low, revenue_high, basis, method)
-        select l.company_number, l.turnover, l.turnover, 'filed', 'Turnover as filed in latest accounts'
-        from latest l where l.turnover is not null and l.turnover > 0
-        on conflict (company_number) do update set revenue_low=excluded.revenue_low,
-            revenue_high=excluded.revenue_high, basis='filed', method=excluded.method, updated_at=now()
-        """
-    )
+def refresh_estimates(conn, from_table: str | None = None):
+    """Revenue range for each company from its LATEST accounts: the filed
+    turnover if those accounts give one, otherwise staff × revenue per head.
+    Recomputed whenever accounts change, so an estimate never sticks at an
+    old staff count and an old turnover is not shown as the current one.
+    An estimate imported from your own file is kept unless turnover is filed.
+    from_table limits it to the companies listed in that temp table."""
     lo, hi = REVENUE_PER_HEAD
+    scope = f"and company_number in (select company_number from {from_table})" if from_table else ""
     conn.execute(
-        """
+        f"""
         with latest as (
-            select distinct on (company_number) company_number, employees
-            from financial_period where not period_inferred and employees is not null
+            select distinct on (company_number) company_number, period_end, turnover, employees
+            from financial_period where not period_inferred {scope}
             order by company_number, period_end desc
+        ), want as (
+            select company_number,
+                   case when turnover > 0 then turnover else employees::numeric * %(lo)s end as low,
+                   case when turnover > 0 then turnover else employees::numeric * %(hi)s end as high,
+                   case when turnover > 0 then 'filed' else 'estimated' end as basis,
+                   case when turnover > 0
+                        then 'Turnover as filed for the year to ' || to_char(period_end, 'FMDD Mon YYYY')
+                        else 'Staff (' || employees || ', accounts to ' || to_char(period_end, 'FMDD Mon YYYY')
+                             || %(per_head)s end as method
+            from latest where turnover > 0 or employees > 0
         )
         insert into estimate (company_number, revenue_low, revenue_high, basis, method)
-        select l.company_number, l.employees::numeric * %s, l.employees::numeric * %s, 'estimated', %s
-        from latest l where l.employees > 0
-        on conflict (company_number) do nothing
+        select company_number, low, high, basis, method from want
+        on conflict (company_number) do update set revenue_low = excluded.revenue_low,
+            revenue_high = excluded.revenue_high, basis = excluded.basis, method = excluded.method, updated_at = now()
+        where (estimate.method not like 'Imported%%' or excluded.basis = 'filed')
+          and (estimate.revenue_low, estimate.revenue_high, estimate.basis, estimate.method)
+              is distinct from (excluded.revenue_low, excluded.revenue_high, excluded.basis, excluded.method)
         """,
-        (lo, hi, f"Staff × £{lo // 1000}k–£{hi // 1000}k revenue per head"),
+        {"lo": lo, "hi": hi, "per_head": f") × £{lo // 1000}k–£{hi // 1000}k revenue per head"},
     )
 
 
