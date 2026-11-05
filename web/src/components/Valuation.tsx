@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { api, type Assumptions, type CompanyDetail } from "../api";
 import { money, range, toNum } from "../format";
+import MoneyInput from "./MoneyInput";
 
 const FIELDS: { k: keyof Assumptions; label: string; unit: string; step: number }[] = [
   { k: "margin_low", label: "Margin, low", unit: "%", step: 1 },
@@ -111,7 +112,8 @@ function DealCheck({ ebitda, price: suggested }: { ebitda: number; price: number
     <details className="dealcheck">
       <summary>Funding check: can the profit pay for the deal?</summary>
       <div className="dc-grid">
-        <label className="field"><span className="label">Price, £</span>{num("price", 10000, 120)}</label>
+        <label className="field"><span className="label">Price</span>
+          <MoneyInput value={p.price} width={140} onChange={(v) => setP({ ...p, price: v ?? 0 })} /></label>
         <label className="field"><span className="label">Your equity, %</span>{num("equity")}</label>
         <label className="field"><span className="label">Vendor loan, %</span>{num("vendor")}</label>
         <label className="field"><span className="label">Vendor loan over, years</span>{num("vendorTerm")}</label>

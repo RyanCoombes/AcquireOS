@@ -4,6 +4,7 @@ import { api } from "../api";
 import { ErrorLine, Toast, useAsync } from "../components/bits";
 import { money, OWNERSHIP } from "../format";
 import SicPicker from "../components/SicPicker";
+import MoneyInput from "../components/MoneyInput";
 
 type C = any;
 
@@ -68,10 +69,12 @@ export default function BuyBox() {
           <Crit label="Revenue" w={["revenue", "weight"]} c={c} n={n} total={totalWeight}>
             Ideal {money(c.revenue.ideal_min)}–{money(c.revenue.ideal_max)}, acceptable {money(c.revenue.min)}–{money(c.revenue.max)}
             <div className="range" style={{ marginTop: 6 }}>
-              <span className="faint small">£</span>{n(["revenue", "min"], { style: { width: 110 }, step: 100000 })}
-              {n(["revenue", "ideal_min"], { style: { width: 110 }, step: 100000 })}
-              {n(["revenue", "ideal_max"], { style: { width: 110 }, step: 100000 })}
-              {n(["revenue", "max"], { style: { width: 110 }, step: 100000 })}
+              {([["min", "Lowest"], ["ideal_min", "Ideal from"], ["ideal_max", "Ideal to"], ["max", "Highest"]] as const).map(([k, l]) => (
+                <label key={k} className="field" style={{ marginRight: 6 }}>
+                  <span className="label">{l}</span>
+                  <MoneyInput value={c.revenue[k]} width={130} onChange={(v) => upd(["revenue", k], v ?? 0)} />
+                </label>
+              ))}
             </div>
             <div className="faint small">Uses filed turnover where available, otherwise the estimate from staff numbers.</div>
           </Crit>

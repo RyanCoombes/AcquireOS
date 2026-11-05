@@ -4,6 +4,7 @@ import { api, type Row } from "../api";
 import { ErrorLine, Flags, Score, StatusMark, Toast, useAsync } from "../components/bits";
 import { Spark } from "../components/charts";
 import SicPicker from "../components/SicPicker";
+import MoneyInput from "../components/MoneyInput";
 import { ageFrom, cap, CHANGE_KIND, int, isBadStatus, OWNERSHIP, range, relDays, years } from "../format";
 
 const PAGE = 100;
@@ -171,7 +172,16 @@ export default function Targets() {
                              onChange={(v) => set("sic", v.join(","))} />
                 </div>
                 <NumField label="Years trading" k="min_years" placeholder="at least" query={query} set={set} />
-                <NumRange label="Indicative value, £" lo="min_value" hi="max_value" query={query} set={set} wide />
+                <div className="field">
+                  <label>Indicative value</label>
+                  <div className="range">
+                    <MoneyInput value={query.min_value ? Number(query.min_value) : null} commit="blur" width={120} placeholder="min, e.g. 500k"
+                                aria-label="Indicative value minimum" onChange={(v) => set("min_value", v === null ? null : String(v))} />
+                    <span className="faint">to</span>
+                    <MoneyInput value={query.max_value ? Number(query.max_value) : null} commit="blur" width={120} placeholder="max, e.g. 3m"
+                                aria-label="Indicative value maximum" onChange={(v) => set("max_value", v === null ? null : String(v))} />
+                  </div>
+                </div>
                 <Select label="Review tier" k="tier" query={query} set={set} options={(m?.tiers ?? []).map((t) => [t, t])} />
                 <Select label="Business type" k="business_type" query={query} set={set} options={[
                   ["software", "Software"], ["saas", "SaaS"], ["data", "Data"], ["msp", "Managed service provider"],
