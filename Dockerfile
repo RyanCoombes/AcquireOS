@@ -24,6 +24,6 @@ RUN chmod 755 /usr/local/bin/acquireos-entrypoint /usr/local/bin/acquireos-healt
 # Starts as root only to fix the data folder's ownership, then runs as "app".
 ENTRYPOINT ["acquireos-entrypoint"]
 EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=45m --retries=5 \
   CMD ["acquireos-health"]
 CMD ["uvicorn", "acquireos.api:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

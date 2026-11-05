@@ -81,7 +81,9 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
       interval: 30s
       timeout: 10s
-      start_period: 180s
+      # Database updates (new indexes on millions of rows) run before the app
+      # answers: the first start after an update can take 20-30 minutes.
+      start_period: 45m
       retries: 5
     ports:
       - "${APP_PORT:-8090}:8000"
