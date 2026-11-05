@@ -309,7 +309,7 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True) -> dict:
         out["accounts"] = {"error": str(e)}
     if psc:
         part("Owners (PSC)", lambda: fetch_psc(conn))
-    part("Scoring", lambda: scoring.rescore(conn, progress=_loader_progress))
+    part("Scoring", lambda: scoring.rescore_all(conn, progress=_loader_progress))
     part("Ownership links", lambda: rebuild_links(conn) or "done")
 
     def locate():

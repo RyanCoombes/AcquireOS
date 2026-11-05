@@ -1,5 +1,6 @@
 """Whole-register loading: snapshot order, filing order, back-fill and scope."""
 import csv
+import json
 import zipfile
 from datetime import date
 from pathlib import Path
@@ -95,9 +96,18 @@ def test_parallel_parse_matches(loaded, tmp_path):
 
 def test_universe_scope_excludes(loaded):
     s = {x["company_number"]: x for x in loaded.execute("select * from score")}
-    # SIC 70100 holding company: outside the universe, so no score row is stored
-    assert "01000003" not in s
     assert not s["01000001"]["excluded"]
+    # SIC 70100 holding company that owns 01000002 (in the universe): in scope as its parent
+    hold = s["01000003"]
+    assert not hold["excluded"]
+    assert "parent" in json.dumps(hold["reasons"], default=str).lower()
+    # With parents switched off it falls outside the universe and no score row is stored
+    bb = scoring.active_buy_box(loaded)
+    crit = bb["criteria"]
+    crit["universe"]["include_parents"] = False
+    loaded.execute("update buy_box set criteria = %s where id = %s", (json.dumps(crit), bb["id"]))
+    scoring.rescore(loaded)
+    assert not loaded.execute("select 1 from score where company_number = '01000003'").fetchone()
     # ...unless you are working on it: then it is stored, marked outside the universe
     loaded.execute("insert into user_company (user_id, company_number, status) values (1, '01000003', 'watching')")
     scoring.rescore(loaded)
@@ -155,3 +165,28 @@ def test_already_loaded_snapshots_are_skipped(loaded, monkeypatch):
     c.execute("insert into import_run (kind, filename, finished_at) values ('psc', 'persons-with-significant-control-snapshot-2026-11-03.zip', now())")
     assert fetch.fetch_company_data(c) == {"skipped": "BasicCompanyDataAsOneFile-2026-11-01.zip"}
     assert "skipped" in fetch.fetch_psc(c)
+
+
+def test_fast_register_path_matches_careful_reader(c):
+    """The streamed SQL path is used, and gives the same rows as the Python reader."""
+    from acquireos.importers.tables import open_table
+
+    msgs = []
+    register.load(c, BULK, register_date=date(2026, 11, 1), full=False, progress=lambda m, f=None: msgs.append(m))
+    assert not any("Fast load failed" in m for m in msgs), msgs
+    fast = {r["company_number"]: r for r in c.execute(
+        "select company_number, name, status, sic_codes, registered_address, postcode, incorporation_date, "
+        "dissolution_date, last_accounts_date, company_type from company")}
+    c.execute("delete from company_change; delete from company")
+    headers, rows = open_table(BULK)
+    idx = {register.norm_header(h): h for h in headers}
+    col = {k: next((idx[a] for a in al if a in idx), None) for k, al in register.COLS.items()}
+    c.execute("drop table if exists reg_stage")
+    register._stage_python(c, rows, col, 10, None)
+    slow = {r["num"]: r for r in c.execute("select * from reg_stage")}
+    assert set(fast) == set(slow)
+    for num, f in fast.items():
+        s = slow[num]
+        assert (f["name"], f["status"], f["sic_codes"], f["registered_address"], f["postcode"]) == \
+               (s["name"], s["status"], s["sic"], s["addr"], s["pc"]), num
+        assert (f["incorporation_date"], f["dissolution_date"], f["last_accounts_date"]) == (s["inc"], s["dissolved"], s["last_acc"])

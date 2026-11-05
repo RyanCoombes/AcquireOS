@@ -23,7 +23,7 @@ export default function MyScores({
     } finally { setSaving(null); }
   };
   if (!criteria.length) {
-    return <div className="faint small">This buy box has no criteria of your own yet. Add some on the <a href="/buy-box">Buy box</a> page.</div>;
+    return <div className="faint small">None of your buy boxes has criteria of your own yet. Add some on the <a href="/buy-box">Buy boxes</a> page.</div>;
   }
   const scored = criteria.filter((c) => vals[c.key]).length;
   return (
@@ -34,7 +34,7 @@ export default function MyScores({
         return (
           <div key={c.key} className={`myscore ${focus === i ? "focus" : ""}`}>
             <span className="lab">{compact && <span className="kbd" style={{ marginRight: 6 }}>{i + 1}</span>}{c.label}
-              <span className="faint small"> · counts {c.weight}</span></span>
+              <span className="faint small" title={c.boxes?.length ? `Used in: ${c.boxes.join(", ")}` : undefined}> · counts {c.weight}</span></span>
             <span className="pips" aria-label={`${c.label} score`}>
               {[0, 1, 2, 3, 4, 5].map((n) => (
                 <button key={n} type="button" disabled={saving === c.key}

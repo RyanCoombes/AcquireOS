@@ -1,5 +1,6 @@
 import type React from "react";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { ErrorLine, Toast, useAsync } from "../components/bits";
 import { money, OWNERSHIP } from "../format";
@@ -9,7 +10,9 @@ import MoneyInput from "../components/MoneyInput";
 type C = any;
 
 export default function BuyBox() {
-  const { data, error } = useAsync(() => api.buybox(), []);
+  const [params, setParams] = useSearchParams();
+  const idParam = /^\d+$/.test(params.get("id") ?? "") ? Number(params.get("id")) : null;
+  const { data, error } = useAsync(() => api.buybox(idParam), [idParam]);
   const meta = useAsync(() => api.meta(), []);
   const [c, setC] = useState<C | null>(null);
   const [saving, setSaving] = useState(false);
@@ -30,9 +33,11 @@ export default function BuyBox() {
   const save = async () => {
     setSaving(true);
     try {
-      const r = await api.saveBuybox(c);
-      setToast((r as any).background
-        ? `Saved. Rescoring ${r.rescored.toLocaleString("en-GB")} companies in the background; this takes a few minutes.`
+      const r = await api.saveBuybox(data.id, c);
+      setToast(r.background
+        ? (r.queued === false
+          ? "Saved. It will be rescored as soon as the current job finishes; progress shows at the top."
+          : "Saved. Rescoring in the background; progress shows at the top. Everything stays usable meanwhile.")
         : `Saved. Rescored ${r.rescored.toLocaleString("en-GB")} companies.`);
     } catch (e: any) { setToast(e.message); }
     setSaving(false);
@@ -43,11 +48,11 @@ export default function BuyBox() {
 
   return (
     <>
-      <BoxManager current={data.id} onToast={setToast} />
+      <BoxManager current={data.id} onToast={setToast} select={(id) => setParams({ id: String(id) }, { replace: true })} />
 
       <div className="pagehead" style={{ paddingTop: 4 }}>
         <div>
-          <h1 style={{ fontSize: 22 }}>{data.name}</h1>
+          <h1 style={{ fontSize: 22 }}>Editing: {data.name}</h1>
           <div className="lede">
             {data.description ? <>{data.description} </> : null}
             Each criterion earns points up to its weight; the score is the share of all points earned.
@@ -148,8 +153,18 @@ export default function BuyBox() {
           <dt>Postcode areas</dt><dd><input type="text" style={{ width: 360 }} placeholder="e.g. CF, SA, NP, LL (blank for all of the UK)" value={(c.universe?.postcode_areas ?? []).join(", ")}
                    onChange={(e) => upd(["universe", "postcode_areas"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
           <dt>Trading at least</dt><dd className="range">{n(["universe", "min_years"])}<span className="faint">years</span></dd>
+          <dt>Holding companies</dt>
+          <dd>
+            <label className="check" style={{ height: "auto" }}>
+              <input type="checkbox" checked={c.universe?.include_parents ?? true}
+                     onChange={(e) => upd(["universe", "include_parents"], e.target.checked)} />
+              Include parent companies of targets
+            </label>
+            <div className="faint small">A company that owns (as a person with significant control) a company in this universe comes into
+              scope too, whatever its own SIC code, so you can buy the group rather than the subsidiary. Its page shows which subsidiary brought it in.</div>
+          </dd>
         </dl>
-        <p className="faint small">Saving rescores every company straight away. On the full register this takes a few minutes.</p>
+        <p className="faint small">Saving rescores this buy box in the background (a few minutes on the full register). Everything stays usable while it runs.</p>
       </section>
 
       <section>
@@ -169,7 +184,7 @@ export default function BuyBox() {
 
       <section>
         <h2>Exclusions</h2>
-        <p className="muted" style={{ marginTop: -4 }}>Excluded companies drop out of the list (tick “Show excluded” on Targets to see them, with the reason).</p>
+        <p className="muted" style={{ marginTop: -4 }}>Excluded companies are not in this buy box. On Targets they still show under All companies, in grey with the reason, when you filter by this box.</p>
         <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
           <dt>Keywords in name, SIC or research</dt>
           <dd>
@@ -239,7 +254,7 @@ function Crit({ label, w, c, n, total, children }: { label: string; w: string[];
   );
 }
 
-function BoxManager({ current, onToast }: { current: number; onToast: (m: string) => void }) {
+function BoxManager({ current, onToast, select }: { current: number; onToast: (m: string) => void; select: (id: number) => void }) {
   const boxes = useAsync(() => api.buyboxes(), []);
   const tpls = useAsync(() => api.buyboxTemplates(), []);
   const [adding, setAdding] = useState(false);
@@ -252,7 +267,8 @@ function BoxManager({ current, onToast }: { current: number; onToast: (m: string
       <div className="pagehead" style={{ paddingBottom: 12 }}>
         <div>
           <h1>Buy boxes</h1>
-          <div className="lede">Each buy box is its own search: which companies count (universe), how they are scored, what they are worth.
+          <div className="lede">A buy box is a lens over all your company data: which companies count (universe), how they are scored and what
+            they are worth. Every box is scored all the time, so you can filter by any of them on Targets, Home, Review and the map.
             Your pipeline, notes, stages and your own scores are shared across all of them.</div>
         </div>
         {active && (
@@ -264,7 +280,7 @@ function BoxManager({ current, onToast }: { current: number; onToast: (m: string
             {(boxes.data?.length ?? 0) > 1 && (
               <button className="btn" onClick={async () => {
                 if (!confirm(`Delete the buy box “${active.name}”? Its scores and saved searches go; your pipeline, notes and own scores are kept.`)) return;
-                await api.deleteBuybox(active.id); go();
+                await api.deleteBuybox(active.id); window.location.href = "/buy-box";
               }}>Delete</button>
             )}
           </div>
@@ -272,11 +288,14 @@ function BoxManager({ current, onToast }: { current: number; onToast: (m: string
       </div>
       <div className="boxes">
         {boxes.data?.map((b) => (
-          <div key={b.id} className={`boxcard ${b.id === current ? "on" : ""}`}
-               onClick={async () => { if (b.id !== current) { const r = await api.activateBuybox(b.id); if (r.scoring) onToast("Scoring this buy box in the background…"); go(); } }}>
+          <div key={b.id} className={`boxcard ${b.id === current ? "on" : ""}`} role="button" tabIndex={0}
+               onClick={() => select(b.id)} onKeyDown={(e) => { if (e.key === "Enter") select(b.id); }}>
             <div className="nm">{b.name}</div>
-            <div className="st">{b.in_scope.toLocaleString("en-GB")} in scope · {b.strong.toLocaleString("en-GB")} score 70+</div>
-            <div className="st">{b.id === current ? "Selected" : b.scored_at ? "Click to switch" : "Not scored yet: click to score"}</div>
+            <div className="st">{b.scored_at ? <>{b.in_scope.toLocaleString("en-GB")} in scope · {b.strong.toLocaleString("en-GB")} score 70+</> : "Scoring…"}</div>
+            <div className="st">
+              {b.id === current ? "Editing below" : "Edit"}
+              {" · "}<a href={`/targets?bb=${b.id}&in_box=1`} onClick={(e) => e.stopPropagation()}>View targets</a>
+            </div>
           </div>
         ))}
         {!adding && <div className="boxcard new" onClick={() => setAdding(true)}>+ New buy box</div>}
@@ -303,9 +322,9 @@ function BoxManager({ current, onToast }: { current: number; onToast: (m: string
               if (kind === "template") body.template = val;
               if (kind === "copy") body.copy_id = Number(val);
               const r = await api.createBuybox(body);
-              if (r.background) onToast("Created. Scoring every company in the background; progress shows at the top.");
-              go();
-            }}>Create and switch to it</button>
+              if (r.background) onToast("Created. Scoring in the background; progress shows at the top.");
+              setAdding(false); setName(""); boxes.reload(); select(r.id);
+            }}>Create</button>
             <button className="btn quiet" onClick={() => setAdding(false)}>Cancel</button>
           </div>
           {source.startsWith("template:") && (

@@ -118,13 +118,13 @@ def _meta():
         bb = scoring.active_buy_box(c)
         counts = c.execute(
             """select (select count(*) from company) as companies,
-                      (select count(*) from score where buy_box_id = %s and not excluded) as in_scope,
+                      (select count(*) from company_best where %s::int is not null) as in_scope,
                       (select count(*) from user_company where user_id = %s and status not in ('new', 'rejected', 'passed')) as tracked,
                       (select count(*) from company_person) as owner_records,
                       (select max(finished_at) from import_run) as last_import,
                       (select count(distinct ch.company_number) from company_change ch
-                         join score s on s.company_number = ch.company_number and s.buy_box_id = %s and not s.excluded
-                         where ch.detected_at > now() - interval '30 days') as changed_30d""",
+                         join company_best s on s.company_number = ch.company_number
+                         where ch.detected_at > now() - interval '30 days' and %s::int is not null) as changed_30d""",
             (bb["id"], UID, bb["id"]),
         ).fetchone()
         regions = [r["region"] for r in c.execute("select distinct region from company where region is not null order by 1")]
@@ -161,16 +161,21 @@ SORTS = {
 def companies(
     q: str | None = None, region: str | None = None, tier: str | None = None, status: str | None = None,
     ownership: str | None = None, min_staff: int | None = None, max_staff: int | None = None,
-    min_score: float | None = None, min_owner_age: int | None = None, include_excluded: bool = False,
+    min_score: float | None = None, min_owner_age: int | None = None, include_excluded: bool = True,
     flag: str | None = None, sort: str = "score", dir: str = "desc", limit: int = 100, offset: int = 0,
     company_status: str | None = None, sic: str | None = None, changed_days: int | None = None,
     change_kind: str | None = None, min_value: float | None = None, max_value: float | None = None,
     min_years: int | None = None, format: str = "list", business_type: str | None = None,
-    has_website: bool | None = None,
+    has_website: bool | None = None, bb: str = "all", in_box: bool | None = None,
 ):
+    """All companies, with scores from one buy box (bb=<id>) or each company's
+    best score across buy boxes (bb=all). in_box limits to companies inside
+    the buy box (or any buy box); include_excluded=False means the same."""
+    if in_box is None:
+        in_box = not include_excluded
     with db.conn() as c:
-        bb = scoring.active_buy_box(c)
-        where, params = ["true"], {"bb": bb["id"], "uid": UID}
+        sj, sx, bb_id, bb_name = _score_join(c, bb)
+        where, params = ["true"], {"bb": bb_id, "uid": UID, "bbname": bb_name}
         if q:
             where.append("(c.name ilike %(q)s or c.company_number ilike %(q)s or c.postcode ilike %(q)s)")
             params["q"] = f"%{q.strip()}%"
@@ -222,10 +227,10 @@ def companies(
             params["btype"] = business_type
         if has_website is not None:
             where.append(("" if has_website else "not ") + "exists (select 1 from enrichment en where en.company_number = c.company_number and en.website is not null)")
-        if not include_excluded:
-            where.append("coalesce(not s.excluded, false)")
+        if in_box:
+            where.append(sx)
         if format == "map":
-            return _map_points(c, where, params)
+            return _map_points(c, where, params, sj)
         order = SORTS.get(sort, "s.score")
         direction = "asc" if dir == "asc" else "desc"
         lateral = ""
@@ -236,7 +241,7 @@ def companies(
             left join company_latest l on l.company_number = c.company_number
             left join estimate e on e.company_number = c.company_number
             left join company_ownership o on o.company_number = c.company_number
-            left join score s on s.company_number = c.company_number and s.buy_box_id = %(bb)s
+            {sj}
             left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
             {lateral}
             where {' and '.join(where)}"""
@@ -254,14 +259,15 @@ def companies(
                    l.employees, l.net_assets, l.period_end, l.staff_trend,
                    e.revenue_low, e.revenue_high, e.basis as revenue_basis,
                    o.ownership_type, o.oldest_birth_year, o.flags,
-                   s.score, s.coverage, s.excluded, s.exclusion, s.value_low, s.value_high, s.value_basis,
+                   s.score, s.coverage, not ({sx}) as excluded, s.exclusion, s.value_low, s.value_high, s.value_basis,
+                   s.box_name, s.boxes,
                    coalesce(uc.status, 'new') as status, uc.rating, uc.next_action, uc.next_action_on,
                    ch.last_change, ch.last_kinds, en.website, en.business_type
             from page p join company c on c.company_number = p.company_number
             left join company_latest l on l.company_number = c.company_number
             left join estimate e on e.company_number = c.company_number
             left join company_ownership o on o.company_number = c.company_number
-            left join score s on s.company_number = c.company_number and s.buy_box_id = %(bb)s
+            {sj}
             left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
             left join enrichment en on en.company_number = c.company_number
             left join lateral (
@@ -275,10 +281,35 @@ def companies(
     return {"total": total, "rows": rows}
 
 
+def _score_join(c, bb: str):
+    """(join SQL aliased s, "in the box" condition, buy box id) for bb = 'all',
+    'active' or an id. For 'all', s is each company's best score across boxes."""
+    if bb == "all":
+        return ("""left join (select cb.company_number, cb.score, cb.coverage, cb.value_low, cb.value_high,
+                                    cb.value_basis, cb.box_name, cb.boxes, null::text as exclusion
+                             from company_best cb) s on s.company_number = c.company_number""",
+                "s.company_number is not null", None, None)
+    box = None
+    if bb.isdigit():
+        box = c.execute("select id, name from buy_box where id = %s and user_id = %s", (int(bb), UID)).fetchone()
+    if not box:
+        box = scoring.active_buy_box(c)
+    return (f"""left join (select sc.*, %(bbname)s::text as box_name, null::text[] as boxes from score sc
+                           where sc.buy_box_id = {int(box['id'])}) s on s.company_number = c.company_number""",
+            "coalesce(not s.excluded, false)", box["id"], box["name"])
+
+
 @app.get("/api/companies/{num}")
-def company(num: str):
+def company(num: str, bb: str | None = None):
+    """One company. "score" is the chosen buy box's score (bb=<id>), or by
+    default its best score; "scores" lists its score in every buy box."""
     with db.conn() as c:
-        bb = scoring.active_buy_box(c)
+        boxes = [dict(b) for b in c.execute("select * from buy_box where user_id = %s order by id", (UID,))]
+        if not boxes:
+            boxes = [scoring.active_buy_box(c)]
+        best = c.execute("select buy_box_id from company_best where company_number = %s", (num,)).fetchone()
+        chosen = int(bb) if bb and bb.isdigit() else (best["buy_box_id"] if best else None)
+        bb = next((b for b in boxes if b["id"] == chosen), None) or next((b for b in boxes if b["is_active"]), boxes[0])
         row = c.execute("select * from company where company_number = %s", (num,)).fetchone()
         if not row:
             raise HTTPException(404, "Company not found")
@@ -336,16 +367,33 @@ def company(num: str):
         manual_values = {r["criterion_key"]: r for r in c.execute(
             "select criterion_key, value, note, updated_at from manual_score where user_id = %s and company_number = %s",
             (UID, num))}
-        manual = {"criteria": scoring.merged(bb["criteria"]).get("manual") or [], "values": manual_values}
-        if sc is None:
-            # Outside this buy box's universe: no stored row, so score it on the fly for display.
-            f = scoring.load_facts(c, num)
-            if f:
-                crit = scoring.merged(bb["criteria"])
-                live = scoring.score_company(f[0], crit, None, scoring.scope_test(crit))
-                sc = {**live, "buy_box_id": bb["id"], "company_number": num}
+        # Your criteria from every buy box (shared keys appear once).
+        crits, seen = [], set()
+        for b in boxes:
+            for m in scoring.merged(b["criteria"]).get("manual") or []:
+                if m["key"] not in seen:
+                    seen.add(m["key"])
+                    crits.append({**m, "boxes": [x["name"] for x in boxes
+                                                 if any(mm["key"] == m["key"] for mm in scoring.merged(x["criteria"]).get("manual") or [])]})
+        manual = {"criteria": crits, "values": manual_values}
+        stored = {r["buy_box_id"]: dict(r) for r in c.execute("select * from score where company_number = %s", (num,))}
+        facts = None
+        scores = []
+        for b in boxes:
+            r = stored.get(b["id"])
+            if r is None:
+                # Outside this buy box's universe: no stored row, so score it on the fly.
+                facts = facts if facts is not None else (scoring.load_facts(c, num) or [None])[0]
+                if facts:
+                    crit = scoring.merged(b["criteria"])
+                    r = {**scoring.score_company(facts, crit, None, scoring.scope_test(crit)), "live": True}
+            if r:
+                scores.append({"buy_box_id": b["id"], "buy_box": b["name"], "score": r["score"],
+                               "coverage": r["coverage"], "excluded": r["excluded"], "exclusion": r["exclusion"],
+                               "reasons": r["reasons"], "value_low": r.get("value_low"), "value_high": r.get("value_high")})
+        sc = next((x for x in scores if x["buy_box_id"] == bb["id"]), None)
     return {
-        "deal": deal, "manual": manual, "buy_box": {"id": bb["id"], "name": bb["name"]},
+        "deal": deal, "manual": manual, "buy_box": {"id": bb["id"], "name": bb["name"]}, "scores": scores,
         "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
         "changes": changes, "valuation": val,
         "company": row, "financials": fin, "estimate": est, "ownership": own, "people": people,
@@ -412,15 +460,15 @@ def set_task(num: str, t: TaskIn):
                                        (UID, num)).fetchone()["status"])
 
 
-def _map_points(c, where, params):
+def _map_points(c, where, params, sj):
     """Located companies matching the filters, plus links between them."""
     rows = c.execute(
         f"""select c.company_number, c.name, c.postcode, c.region, g.lat, g.lon, g.precision,
-                   s.score, s.excluded, coalesce(uc.status, 'new') as status, o.ownership_type,
+                   s.score, s.score is null as excluded, coalesce(uc.status, 'new') as status, o.ownership_type,
                    c.status as company_status
             from company c
             left join company_ownership o on o.company_number = c.company_number
-            left join score s on s.company_number = c.company_number and s.buy_box_id = %(bb)s
+            {sj}
             left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
             left join estimate e on e.company_number = c.company_number
             left join company_latest l on l.company_number = c.company_number
@@ -432,7 +480,7 @@ def _map_points(c, where, params):
     total = c.execute(
         f"""select count(*) as n from company c
             left join company_ownership o on o.company_number = c.company_number
-            left join score s on s.company_number = c.company_number and s.buy_box_id = %(bb)s
+            {sj}
             left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
             left join estimate e on e.company_number = c.company_number
             left join company_latest l on l.company_number = c.company_number
@@ -615,22 +663,19 @@ def outreach_add(o: OutreachIn):
 
 
 @app.get("/api/dashboard")
-def dashboard(bb: str = "active"):
+def dashboard(bb: str = "all"):
     d = cached(f"dashboard:{bb}", 120, lambda: _dashboard(bb))
     return {**d, "refresh": job_current()}
 
 
-def _dashboard(which: str = "active"):
+def _dashboard(which: str = "all"):
     """Home page data for one buy box, or "all" for an overview across them."""
     with db.conn() as c:
         active = scoring.active_buy_box(c)
         if which == "all":
             bb_name = "All buy boxes"
             c.execute("""create temp table dscope on commit drop as
-                select distinct on (s.company_number) s.company_number, s.score, s.coverage, s.value_low, s.value_high,
-                       b.name as box
-                from score s join buy_box b on b.id = s.buy_box_id and b.user_id = %s
-                where not s.excluded order by s.company_number, s.score desc""", (UID,))
+                select company_number, score, coverage, value_low, value_high, box_name as box from company_best""")
         else:
             bid = int(which) if which.isdigit() else active["id"]
             row = c.execute("select id, name from buy_box where id = %s and user_id = %s", (bid, UID)).fetchone() or active
@@ -777,10 +822,10 @@ def _sic_list():
     with db.conn() as c:
         bb = scoring.active_buy_box(c)
         counts = {r["code"]: r for r in c.execute(
-            """select code, count(*) as n,
-                      count(*) filter (where coalesce(not s.excluded, false)) as in_scope
+            """select code, count(*) as n, count(cb.company_number) as in_scope
                from company c cross join unnest(c.sic_codes) code
-               left join score s on s.company_number = c.company_number and s.buy_box_id = %s
+               left join company_best cb on cb.company_number = c.company_number
+               where %s::int is not null
                group by code""", (bb["id"],))}
         known = {r["code"]: r["description"] for r in c.execute("select code, description from sic_code")}
     codes = set(known) | set(counts)
@@ -880,7 +925,8 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
         if tracked:
             where.append("coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed')")
         elif scope == "buy_box":
-            where.append("(not coalesce(s.excluded, true) or coalesce(uc.status, 'new') <> 'new')")
+            where.append("(exists (select 1 from company_best cb where cb.company_number = ch.company_number) "
+                         "or coalesce(uc.status, 'new') <> 'new')")
         rows = c.execute(
             f"""select ch.id, ch.company_number, ch.kind, ch.field, ch.old_value, ch.new_value, ch.detected_at,
                        c.name, c.status as company_status, coalesce(uc.status, 'new') as status, s.score, s.excluded,
@@ -900,7 +946,7 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
                 left join score s on s.company_number = ch.company_number and s.buy_box_id = %(bb)s
                 where ch.detected_at > now() - make_interval(days => %(days)s)
                 {"and coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed')" if tracked else
-                 "and (not coalesce(s.excluded, true) or coalesce(uc.status, 'new') <> 'new')" if scope == "buy_box" else ""}
+                 "and (exists (select 1 from company_best cb where cb.company_number = ch.company_number) or coalesce(uc.status, 'new') <> 'new')" if scope == "buy_box" else ""}
                 group by 1 order by 2 desc""",
             params,
         ).fetchall()
@@ -909,10 +955,11 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
 
 @app.get("/api/searches")
 def searches():
+    """Saved searches are global. A search that filters by a buy box keeps it
+    in its params (bb); buy_box_name is shown as a label."""
     return _rows("""select s.*, b.name as buy_box_name from saved_search s
                     left join buy_box b on b.id = s.buy_box_id
-                    where s.user_id = %s order by (s.buy_box_id = (select id from buy_box where user_id = %s and is_active
-                    order by id limit 1)) desc nulls last, s.name""", (UID, UID))
+                    where s.user_id = %s order by s.name""", (UID,))
 
 
 class SearchIn(BaseModel):
@@ -927,15 +974,22 @@ def save_search(body: SearchIn):
         raise HTTPException(400, "Give the search a name")
     params = {k: str(v) for k, v in body.params.items() if v not in (None, "") and k not in ("page",)}
     with db.conn() as c:
-        bb = scoring.active_buy_box(c)
-        existing = c.execute("select id from saved_search where user_id = %s and buy_box_id = %s and name = %s",
-                             (UID, bb["id"], name)).fetchone()
+        box_id = None
+        if params.get("bb", "").isdigit():
+            row = c.execute("select id from buy_box where id = %s and user_id = %s", (int(params["bb"]), UID)).fetchone()
+            box_id = row["id"] if row else None
+            if not row:
+                params.pop("bb")
+        existing = c.execute(
+            "select id from saved_search where user_id = %s and name = %s order by (coalesce(buy_box_id, 0) = %s) desc, id limit 1",
+            (UID, name, box_id or 0)).fetchone()
         if existing:
-            return c.execute("update saved_search set params = %s where id = %s returning *",
-                             (json.dumps(params), existing["id"])).fetchone()
+            c.execute("delete from saved_search where user_id = %s and name = %s and id <> %s", (UID, name, existing["id"]))
+            return c.execute("update saved_search set params = %s, buy_box_id = %s where id = %s returning *",
+                             (json.dumps(params), box_id, existing["id"])).fetchone()
         return c.execute(
             "insert into saved_search (user_id, name, params, buy_box_id) values (%s, %s, %s, %s) returning *",
-            (UID, name, json.dumps(params), bb["id"]),
+            (UID, name, json.dumps(params), box_id),
         ).fetchone()
 
 
@@ -1046,10 +1100,19 @@ def link_graph(num: str, depth: int = 2):
     return {"nodes": list(nodes.values()), "edges": list(edges.values())}
 
 
+def _box(c, bb_id: int | None):
+    if bb_id:
+        row = c.execute("select * from buy_box where id = %s and user_id = %s", (bb_id, UID)).fetchone()
+        if not row:
+            raise HTTPException(404, "Buy box not found")
+        return dict(row)
+    return scoring.active_buy_box(c)
+
+
 @app.get("/api/buybox")
-def get_buybox():
+def get_buybox(id: int | None = None):
     with db.conn() as c:
-        bb = scoring.active_buy_box(c)
+        bb = _box(c, id)
     return {"id": bb["id"], "name": bb["name"], "description": bb.get("description"),
             "criteria": scoring.merged(bb["criteria"]), "defaults": scoring.DEFAULT_CRITERIA}
 
@@ -1059,25 +1122,39 @@ class BuyBoxIn(BaseModel):
     criteria: dict
 
 
-def _start_scoring(bb_id: int):
-    """Score one buy box in the background, with progress shown like a refresh."""
+def _start_scoring(bb_id: int | None = None) -> bool:
+    """Score buy boxes that need it (scored_at is null) in one background job.
+    If any job is already running, nothing starts now: the boxes stay marked
+    and are scored when that job finishes. Returns True if it had to wait."""
     import threading
 
     from . import jobs
+
+    with db.conn() as c:
+        if bb_id:
+            c.execute("update buy_box set scored_at = null where id = %s", (bb_id,))
+        cur = jobs.current(c)
+        if cur and cur["status"] == "running":
+            return True
 
     def work():
         job = None
         try:
             with db.conn() as c:
-                bb = dict(c.execute("select * from buy_box where id = %s", (bb_id,)).fetchone())
-                job = jobs.Job("scoring", [f"Scoring “{bb['name']}”"])
-                job.stage(f"Scoring “{bb['name']}”")
-                scoring.rescore(c, bb, progress=lambda msg, frac=None: job.progress(frac, msg))
-                c.commit()
+                pending = [dict(r) for r in c.execute(
+                    "select * from buy_box where user_id = %s and scored_at is null order by id", (UID,))]
+                if not pending:
+                    return
+                job = jobs.Job("scoring", [f"Scoring “{b['name']}”" for b in pending] + ["Ownership links"])
+                for b in pending:
+                    job.stage(f"Scoring “{b['name']}”")
+                    scoring.rescore(c, b, progress=lambda msg, frac=None: job.progress(frac, msg))
+                    c.commit()
+                job.stage("Ownership links")
                 from .ownership import rebuild_links
 
                 rebuild_links(c)
-            job.finish({"buy_box": bb["name"]})
+            job.finish({"buy_boxes": [b["name"] for b in pending]})
         except Exception as e:
             if job:
                 job.finish(None, status="failed", error=str(e))
@@ -1085,6 +1162,7 @@ def _start_scoring(bb_id: int):
             clear_cache()
 
     threading.Thread(target=work, daemon=True).start()
+    return False
 
 
 def _small_db(c) -> bool:
@@ -1092,21 +1170,22 @@ def _small_db(c) -> bool:
 
 
 @app.put("/api/buybox")
-def put_buybox(body: BuyBoxIn):
+def put_buybox(body: BuyBoxIn, id: int | None = None):
     with db.conn() as c:
-        bb = scoring.active_buy_box(c)
+        bb = _box(c, id)
         criteria = scoring.merged(body.criteria)
         c.execute(
             "update buy_box set criteria = %s, name = coalesce(%s, name), updated_at = now() where id = %s",
             (json.dumps(criteria), body.name, bb["id"]),
         )
-        bb = scoring.active_buy_box(c)
+        bb = _box(c, bb["id"])
         if _small_db(c):
             n = scoring.rescore(c, bb)
             return {"rescored": n, "criteria": criteria, "background": False}
+        c.execute("update buy_box set scored_at = null where id = %s", (bb["id"],))
         total = c.execute("select count(*) as n from company").fetchone()["n"]
-    _start_scoring(bb["id"])
-    return {"rescored": total, "criteria": criteria, "background": True}
+    queued = _start_scoring()
+    return {"rescored": total, "criteria": criteria, "background": True, "queued": queued}
 
 
 @app.get("/api/buyboxes")
@@ -1161,8 +1240,8 @@ def create_buybox(body: NewBuyBox):
         if _small_db(c):
             scoring.rescore(c, dict(bb))
             return {**dict(bb), "background": False}
-    _start_scoring(bb["id"])
-    return {**dict(bb), "background": True}
+    queued = _start_scoring(bb["id"])
+    return {**dict(bb), "background": True, "queued": queued}
 
 
 @app.post("/api/buyboxes/{bb_id}/activate")
@@ -1172,13 +1251,7 @@ def activate_buybox(bb_id: int):
         if not bb:
             raise HTTPException(404, "Buy box not found")
         c.execute("update buy_box set is_active = (id = %s) where user_id = %s", (bb_id, UID))
-        needs = bb["scored_at"] is None
-        if needs and _small_db(c):
-            scoring.rescore(c, dict(bb))
-            needs = False
-    if needs:
-        _start_scoring(bb_id)
-    return {"ok": True, "scoring": needs}
+    return {"ok": True, "scoring": False}
 
 
 class BuyBoxMeta(BaseModel):
@@ -1189,10 +1262,19 @@ class BuyBoxMeta(BaseModel):
 @app.patch("/api/buyboxes/{bb_id}")
 def rename_buybox(bb_id: int, body: BuyBoxMeta):
     with db.conn() as c:
-        return c.execute(
+        row = c.execute(
             """update buy_box set name = coalesce(%s, name), description = coalesce(%s, description), updated_at = now()
                where id = %s and user_id = %s returning id, name, description""",
             (body.name.strip() if body.name else None, body.description, bb_id, UID)).fetchone()
+        if row and body.name:
+            c.execute("update company_best set box_name = %s where buy_box_id = %s", (row["name"], bb_id))
+            c.execute("""update company_best cb set boxes = array(
+                             select b.name from score s join buy_box b on b.id = s.buy_box_id
+                             where s.company_number = cb.company_number and not s.excluded order by s.score desc)
+                         where cb.company_number in (select company_number from score where buy_box_id = %s and not excluded)""",
+                      (bb_id,))
+    clear_cache()
+    return row
 
 
 @app.delete("/api/buyboxes/{bb_id}")
@@ -1209,6 +1291,8 @@ def delete_buybox(bb_id: int):
         if was_active["is_active"]:
             c.execute("""update buy_box set is_active = true where id = (
                              select id from buy_box where user_id = %s order by id limit 1)""", (UID,))
+        scoring.refresh_best(c)
+    clear_cache()
     return {"ok": True}
 
 
@@ -1250,9 +1334,10 @@ def set_manual(num: str, body: ManualIn):
 
 @app.get("/api/review")
 def review_queue(status: str = "new", min_score: float | None = None, limit: int = 300,
-                 sic: str | None = None, region: str | None = None):
-    """Companies to review one by one in the active buy box, best first."""
-    r = companies(status=status, min_score=min_score, sic=sic, region=region, limit=min(limit, 1000))
+                 sic: str | None = None, region: str | None = None, bb: str = "all"):
+    """Companies to review one by one, inside a buy box (or any), best first."""
+    r = companies(status=status, min_score=min_score, sic=sic, region=region, limit=min(limit, 1000),
+                  bb=bb, in_box=True)
     return {"total": r["total"], "rows": [{"company_number": x["company_number"], "name": x["name"],
                                            "score": x["score"]} for x in r["rows"]]}
 
@@ -1364,6 +1449,7 @@ def start_refresh(months: int = 1):
             pass
         finally:
             clear_cache()
+            _start_scoring()  # any buy box changed while the refresh ran
 
     threading.Thread(target=work, daemon=True).start()
     import time

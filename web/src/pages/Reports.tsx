@@ -27,7 +27,7 @@ export default function Reports() {
         <section>
           <h2>Search funnel</h2>
           <HBars rows={data.funnel.map((f: any) => ({ label: f.label, n: f.n, key: f.status }))}
-                 accent={(k) => k === "in_talks"} onPick={(k) => nav(`/targets?status=${k}&include_excluded=1`)} />
+                 accent={(k) => k === "in_talks"} onPick={(k) => nav(`/targets?status=${k}`)} />
         </section>
         <section>
           <h2>Score spread</h2>
@@ -41,7 +41,7 @@ export default function Reports() {
         <section>
           <h2>Ownership</h2>
           <HBars rows={data.ownership.map((o: any) => ({ label: OWNERSHIP[o.type] ?? o.type, n: o.n, key: o.type }))}
-                 accent={(k) => k === "owner_held"} onPick={(k) => nav(`/targets?ownership=${k}&include_excluded=1`)} />
+                 accent={(k) => k === "owner_held"} onPick={(k) => nav(`/targets?ownership=${k}`)} />
         </section>
         <section>
           <h2>Oldest owner's age</h2>
@@ -57,7 +57,7 @@ export default function Reports() {
           <h2>Industries (SIC)</h2>
           {sic.data?.length ? (
             <HBars rows={sic.data.slice(0, 12).map((x) => ({ label: `${x.code} ${x.description || ""}`.trim(), n: x.n, key: x.code }))}
-                   onPick={(k) => nav(`/targets?sic=${k}&include_excluded=1`)} />
+                   onPick={(k) => nav(`/targets?sic=${k}`)} />
           ) : <div className="faint">No SIC codes yet.</div>}
         </section>
         <section>
@@ -66,13 +66,13 @@ export default function Reports() {
         </section>
         <section>
           <h2>Review tiers</h2>
-          <HBars rows={data.tiers.map((t: any) => ({ label: t.tier, n: t.n }))} onPick={(k) => k !== "Not set" && nav(`/targets?tier=${encodeURIComponent(k)}&include_excluded=1`)} />
+          <HBars rows={data.tiers.map((t: any) => ({ label: t.tier, n: t.n }))} onPick={(k) => k !== "Not set" && nav(`/targets?tier=${encodeURIComponent(k)}`)} />
         </section>
         <section>
           <h2>Flags</h2>
           {[...data.flags, ...data.address_flags].length ? (
             <HBars rows={[...data.flags, ...data.address_flags].map((f: any) => ({ label: FLAGS[f.flag] ?? f.flag, n: f.n, key: f.flag }))}
-                   onPick={(k) => nav(`/targets?flag=${k}&include_excluded=1`)} />
+                   onPick={(k) => nav(`/targets?flag=${k}`)} />
           ) : <div className="faint">No flags raised.</div>}
         </section>
         <section>

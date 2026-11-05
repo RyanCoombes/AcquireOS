@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
 import { ErrorLine, Flags, Score, Toast, useAsync } from "../components/bits";
 import { AreaChart as SmallLine } from "../components/charts";
@@ -13,7 +13,9 @@ import { ageFrom, CHANGE_KIND, chUrl, date, dateTime, describeChange, int, isBad
 export default function Company() {
   const { num = "" } = useParams();
   const nav = useNavigate();
-  const { data, error, setData, reload } = useAsync(() => api.company(num), [num]);
+  const [params, setParams] = useSearchParams();
+  const bbParam = /^\d+$/.test(params.get("bb") ?? "") ? Number(params.get("bb")) : null;
+  const { data, error, setData, reload } = useAsync(() => api.company(num, bbParam), [num, bbParam]);
   const [toast, setToast] = useState<string | null>(null);
 
   const setState = async (patch: Record<string, unknown>) => {
@@ -36,7 +38,12 @@ export default function Company() {
 
   if (error) return <ErrorLine error={error} />;
   if (!data) return <div className="empty">Loading…</div>;
-  const { company: c, financials: fin, estimate: est, ownership: own, score } = data;
+  const { company: c, financials: fin, estimate: est, ownership: own } = data;
+  const scores = data.scores ?? [];
+  const shownId = bbParam ?? data.buy_box.id;
+  const score = scores.find((x) => x.buy_box_id === shownId) ?? data.score;
+  const shownName = scores.find((x) => x.buy_box_id === shownId)?.buy_box ?? data.buy_box.name;
+  const pickBox = (id: number) => { const p = new URLSearchParams(params); p.set("bb", String(id)); setParams(p, { replace: true }); };
   const latest = [...fin].reverse().find((f) => !f.period_inferred);
   const age = ageFrom(own?.oldest_birth_year);
   const series = (k: keyof (typeof fin)[number]) =>
@@ -61,7 +68,8 @@ export default function Company() {
       </div>
 
       <div className="factline">
-        <div><b><Score value={score?.score ?? null} coverage={score?.coverage} /></b><span>Score{score ? ` · ${Math.round(Number(score.coverage))}% of criteria had data` : ""}</span></div>
+        <div><b><Score value={score && !score.excluded ? score.score : null} coverage={score?.coverage} /></b>
+          <span>{score?.excluded ? `Outside ${shownName}` : `Score in ${shownName}`}{score && !score.excluded ? ` · ${Math.round(Number(score.coverage))}% had data` : ""}</span></div>
         <div><b>{int(latest?.employees)}</b><span>Staff{latest ? ` · ${date(latest.period_end)}` : ""}</span></div>
         <div><b>{est ? range(est.revenue_low, est.revenue_high) : "—"}</b><span>Revenue · {est ? (est.basis === "filed" ? "filed" : "estimate") : "unknown"}</span></div>
         <div><b>{years(c.incorporation_date)}</b><span>Years trading</span></div>
@@ -69,7 +77,7 @@ export default function Company() {
         <div><b>{money(latest?.net_assets ?? null)}</b><span>Net assets</span></div>
       </div>
 
-      {score?.excluded && <div className="callout red"><b>Excluded by your buy box:</b> {score.exclusion}</div>}
+      {score?.excluded && <div className="callout red"><b>Outside {shownName}:</b> {score.exclusion}</div>}
       {data.changes.filter((x) => Date.now() - new Date(x.detected_at).getTime() < 30 * 864e5).length > 0 && (
         <div className="callout">
           <b>Changed recently:</b>{" "}
@@ -81,7 +89,19 @@ export default function Company() {
       <div className="company-grid">
         <div className="main">
           <section>
-            <div className="sechead"><h2>Why this score</h2><span className="right"><Link to="/buy-box">Edit buy box</Link></span></div>
+            <div className="sechead"><h2>Why this score</h2>
+              <span className="right"><Link to={`/buy-box?id=${shownId}`}>Edit {shownName}</Link></span></div>
+            {scores.length > 1 && (
+              <div className="boxtabs" role="tablist" aria-label="Score in each buy box">
+                {scores.map((x) => (
+                  <button key={x.buy_box_id} role="tab" aria-selected={x.buy_box_id === shownId}
+                          className={`${x.buy_box_id === shownId ? "on" : ""} ${x.excluded ? "out" : ""}`} onClick={() => pickBox(x.buy_box_id)}>
+                    <span className="nm">{x.buy_box}</span>
+                    <span className="sc">{x.excluded ? "outside" : Math.round(Number(x.score))}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             {score ? (
               <table className="reasons">
                 <tbody>

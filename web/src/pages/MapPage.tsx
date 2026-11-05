@@ -13,7 +13,8 @@ export default function MapPage() {
   const [showLinks, setShowLinks] = useState(false);
   const q = useMemo(() => {
     const p: Record<string, string> = { format: "map", ...Object.fromEntries(params.entries()) };
-    if (p.include_excluded === "1") p.include_excluded = "true";
+    // The map shows companies in a buy box unless you ask for all of them.
+    if (p.include_excluded === "1") delete p.include_excluded; else p.in_box = "true";
     return p;
   }, [params]);
   const data = useAsync(() => api.mapData(q), [params.toString()]);
@@ -52,9 +53,16 @@ export default function MapPage() {
         <div className="field">
           <label>Show</label>
           <div className="seg">
-            <button className={!params.get("include_excluded") ? "on" : ""} onClick={() => set("include_excluded", null)}>Fits buy box</button>
+            <button className={!params.get("include_excluded") ? "on" : ""} onClick={() => set("include_excluded", null)}>In a buy box</button>
             <button className={params.get("include_excluded") === "1" ? "on" : ""} onClick={() => set("include_excluded", "1")}>All companies</button>
           </div>
+        </div>
+        <div className="field">
+          <label htmlFor="m-bb">Buy box</label>
+          <select id="m-bb" value={params.get("bb") ?? ""} onChange={(e) => set("bb", e.target.value)}>
+            <option value="">Any</option>
+            {meta.data?.buy_boxes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
         </div>
         <div className="field">
           <label htmlFor="m-score">Score at least</label>

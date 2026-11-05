@@ -60,6 +60,8 @@ export interface Row {
   staff_trend: number[] | null;
   website?: string | null;
   business_type?: string | null;
+  box_name?: string | null;
+  boxes?: string[] | null;
 }
 
 export interface Change {
@@ -76,13 +78,14 @@ export interface Valuation {
 export interface Assumptions { margin_low: number; margin_high: number; multiple_low: number; multiple_high: number }
 
 export interface SavedSearch { id: number; name: string; params: Record<string, string>; buy_box_id?: number | null; buy_box_name?: string | null }
-export interface ManualCriterion { key: string; label: string; weight: number; help?: string }
+export interface ManualCriterion { key: string; label: string; weight: number; help?: string; boxes?: string[] }
 export interface ManualValue { criterion_key: string; value: number; note: string | null; updated_at: string }
 export interface BuyBoxRow {
   id: number; name: string; description: string | null; template: string | null; is_active: boolean;
   scored_at: string | null; in_scope: number; strong: number; searches: number;
 }
 
+export interface BoxScore { score: string; coverage: string; excluded: boolean; exclusion: string | null; reasons: Reason[] }
 export interface Reason { key: string; label: string; points: number; max: number; status: "good" | "partial" | "miss" | "unknown" | "unscored"; text: string; manual?: boolean }
 
 export interface Link {
@@ -123,7 +126,8 @@ export interface CompanyDetail {
     registration_number: string | null; role: string; natures: string[]; notified_on: string | null; ceased_on: string | null;
   }[];
   links: Link[];
-  score: { score: string; coverage: string; excluded: boolean; exclusion: string | null; reasons: Reason[] } | null;
+  score: BoxScore | null;
+  scores: (BoxScore & { buy_box_id: number; buy_box: string })[];
   state: { status: Status; rating: number | null; tags: string[]; next_action?: string | null; next_action_on?: string | null; valuation?: Partial<Assumptions> };
   changes: Change[];
   valuation: Valuation;
@@ -164,7 +168,8 @@ export const api = {
   meta: () => req<Meta>("/api/meta"),
   companies: (params: Record<string, string>) =>
     req<{ total: number; rows: Row[] }>("/api/companies?" + new URLSearchParams(params)),
-  company: (n: string) => req<CompanyDetail>(`/api/companies/${encodeURIComponent(n)}`),
+  company: (n: string, bb?: number | null) =>
+    req<CompanyDetail>(`/api/companies/${encodeURIComponent(n)}${bb ? `?bb=${bb}` : ""}`),
   setState: (n: string, body: Record<string, unknown>) =>
     req(`/api/companies/${encodeURIComponent(n)}/state`, { method: "PUT", body: JSON.stringify(body) }),
   addNote: (n: string, body: string) =>
@@ -179,8 +184,10 @@ export const api = {
   addOutreach: (body: Record<string, unknown>) => req<Outreach>("/api/outreach", { method: "POST", body: JSON.stringify(body) }),
   reports: () => req<Record<string, any>>("/api/reports"),
   graph: (n: string, depth = 2) => req<{ nodes: GNode[]; edges: GEdge[] }>(`/api/links/${encodeURIComponent(n)}?depth=${depth}`),
-  buybox: () => req<{ id: number; name: string; description: string | null; criteria: any; defaults: any }>("/api/buybox"),
-  saveBuybox: (criteria: any) => req<{ rescored: number }>("/api/buybox", { method: "PUT", body: JSON.stringify({ criteria }) }),
+  buybox: (id?: number | null) =>
+    req<{ id: number; name: string; description: string | null; criteria: any; defaults: any }>(`/api/buybox${id ? `?id=${id}` : ""}`),
+  saveBuybox: (id: number, criteria: any) =>
+    req<{ rescored: number; background?: boolean; queued?: boolean }>(`/api/buybox?id=${id}`, { method: "PUT", body: JSON.stringify({ criteria }) }),
   preview: (kind: string, file: File, sheet?: string) => {
     const fd = new FormData();
     fd.append("kind", kind);

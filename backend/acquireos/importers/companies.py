@@ -350,6 +350,9 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
     )
     refresh_estimates(conn)
     flag_mass_addresses(conn)
+    from ..scoring import refresh_latest
+
+    refresh_latest(conn)
     from .. import sic as sic_mod
 
     sic_mod.seed(conn)

@@ -23,23 +23,25 @@ export default function Review() {
   const status = params.get("status") ?? "new";
   const minScore = params.get("min_score") ?? "";
   const sic = params.get("sic") ?? "";
-  const q: Record<string, string> = { status };
+  const bb = params.get("bb") ?? "";
+  const bbId = /^\d+$/.test(bb) ? Number(bb) : null;
+  const q: Record<string, string> = { status, bb: bb || "all" };
   if (minScore) q.min_score = minScore;
   if (sic) q.sic = sic;
-  const queue = useAsync(() => api.review(q), [status, minScore, sic]);
+  const queue = useAsync(() => api.review(q), [status, minScore, sic, bb]);
   const meta = useAsync(() => api.meta(), []);
   const [i, setI] = useState(0);
   const [done, setDone] = useState<Record<string, Status>>({});
   const [focus, setFocus] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
   const [note, setNote] = useState("");
-  useEffect(() => { setI(0); setDone({}); }, [status, minScore, sic]);
+  useEffect(() => { setI(0); setDone({}); }, [status, minScore, sic, bb]);
 
   const rows = queue.data?.rows ?? [];
   const cur = rows[i];
-  const detail = useAsync(() => (cur ? api.company(cur.company_number) : Promise.resolve(null)), [cur?.company_number]);
+  const detail = useAsync(() => (cur ? api.company(cur.company_number, bbId) : Promise.resolve(null)), [cur?.company_number, bbId]);
   // fetch the next one in advance so moving on is instant
-  useEffect(() => { if (rows[i + 1]) api.company(rows[i + 1].company_number).catch(() => {}); }, [i, rows]);
+  useEffect(() => { if (rows[i + 1]) api.company(rows[i + 1].company_number, bbId).catch(() => {}); }, [i, rows, bbId]);
   useEffect(() => { setFocus(0); setNote(""); }, [cur?.company_number]);
 
   const d = detail.data as CompanyDetail | null;
@@ -71,7 +73,7 @@ export default function Review() {
       if (k === "arrowup") { e.preventDefault(); setFocus((f) => Math.max(f - 1, 0)); return; }
       if (k === "arrowright" || k === " " || k === "j") { e.preventDefault(); setI((x) => Math.min(x + 1, rows.length)); return; }
       if (k === "arrowleft" || k === "k") { e.preventDefault(); setI((x) => Math.max(x - 1, 0)); return; }
-      if (k === "o" && cur) { nav(`/c/${cur.company_number}`); return; }
+      if (k === "o" && cur) { nav(`/c/${cur.company_number}${bbId ? `?bb=${bbId}` : ""}`); return; }
       const a = ACTIONS.find((x) => x.key === k);
       if (a) { e.preventDefault(); act(a.status); }
     };
@@ -94,12 +96,20 @@ export default function Review() {
         <div>
           <h1>Review</h1>
           <div className="lede">
-            One company at a time from <b className="ink">{meta.data?.buy_box.name}</b>, best score first.
+            One company at a time from{" "}
+            <b className="ink">{bbId ? meta.data?.buy_boxes.find((b) => b.id === bbId)?.name : "any of your buy boxes"}</b>, best score first.
             Score your criteria with <span className="kbd">0</span>–<span className="kbd">5</span>, then decide with one key.
           </div>
         </div>
       </div>
       <div className="band">
+        <div className="field">
+          <label htmlFor="rv-bb">Buy box</label>
+          <select id="rv-bb" value={bb} className={bb ? "set" : ""} onChange={(e) => set("bb", e.target.value)}>
+            <option value="">Any buy box</option>
+            {meta.data?.buy_boxes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </div>
         <div className="field">
           <label>Queue</label>
           <div className="seg">
@@ -155,7 +165,7 @@ export default function Review() {
                     <div><b>{ageFrom(d.ownership?.oldest_birth_year) ?? "—"}</b><span>Oldest owner</span></div>
                     <div><b style={{ fontSize: 16 }}>{d.ownership ? OWNERSHIP[d.ownership.ownership_type] : "—"}</b><span>Ownership <Flags flags={d.ownership?.flags} address={d.company.address_flag} /></span></div>
                   </div>
-                  {d.score?.excluded && <div className="callout red">Excluded by this buy box: {d.score.exclusion}</div>}
+                  {d.score?.excluded && <div className="callout red">Outside {d.buy_box.name}: {d.score.exclusion}</div>}
                   {d.enrichment?.summary && <p style={{ marginTop: 0 }}>{d.enrichment.summary}</p>}
                   <div className="muted small" style={{ marginBottom: 12 }}>
                     SIC: {d.sics.map((x) => `${x.code} ${x.description}`).join("; ") || "none filed"}

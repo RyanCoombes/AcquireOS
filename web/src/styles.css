@@ -620,8 +620,16 @@ section .mapbox { border-radius: 0; }
   background: var(--panel); padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line); }
 
 /* ---------------------------------------------------------------- buy boxes, review, your scores */
-.boxswitch { padding: 0 6px 12px; display: flex; flex-direction: column; gap: 4px; }
-.boxswitch select { width: 100%; font-weight: 600; background-color: var(--teal-soft); border-color: transparent; color: var(--teal-2); }
+.boxtag { margin-top: 3px; font-size: 11px; font-weight: 600; color: var(--teal-2); max-width: 120px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.boxtabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.boxtabs button { display: inline-flex; align-items: center; gap: 8px; padding: 5px 6px 5px 11px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel); font: inherit; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.boxtabs button:hover { border-color: var(--line-2); }
+.boxtabs button .sc { min-width: 26px; padding: 1px 7px; border-radius: 999px; background: var(--teal-soft); color: var(--teal-2);
+  font-weight: 650; font-variant-numeric: tabular-nums; text-align: center; }
+.boxtabs button.out .sc { background: var(--line); color: var(--ink-3); font-weight: 500; }
+.boxtabs button.on { border-color: var(--teal); box-shadow: 0 0 0 3px var(--teal-tint); color: var(--ink); font-weight: 600; }
 .myscore { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
 .myscore:first-of-type { border-top: 0; }
 .myscore .lab { font-weight: 560; }

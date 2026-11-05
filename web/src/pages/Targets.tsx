@@ -20,13 +20,14 @@ const COLS: { key: string; label: string; num?: boolean; sm?: boolean; nosort?: 
   { key: "status", label: "My status" },
 ];
 
-// The three ways in. Each is just a preset of URL parameters.
+// The ways in. Each is just a preset of URL parameters; the buy box
+// filter (bb) is kept when you switch view.
 const VIEWS: { key: string; label: string; params: Record<string, string> }[] = [
-  { key: "fit", label: "Fits my buy box", params: {} },
-  { key: "all", label: "All companies", params: { include_excluded: "1" } },
-  { key: "changed", label: "Changed recently", params: { include_excluded: "1", changed_days: "30", sort: "changed" } },
+  { key: "all", label: "All companies", params: {} },
+  { key: "fit", label: "In a buy box", params: { in_box: "1" } },
+  { key: "changed", label: "Changed recently", params: { changed_days: "30", sort: "changed" } },
 ];
-const FILTER_KEYS = ["business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
+const FILTER_KEYS = ["bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
   "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
 const MORE_KEYS = ["business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
 
@@ -39,14 +40,17 @@ export default function Targets() {
   const page = Number(query.page ?? 0);
   const apiParams: Record<string, string> = { ...query, limit: String(PAGE), offset: String(page * PAGE) };
   delete apiParams.page;
-  if (apiParams.include_excluded === "1") apiParams.include_excluded = "true";
+  // Old links and saved searches used include_excluded; today the list is all companies unless in_box is set.
+  if (apiParams.include_excluded === "1") delete apiParams.include_excluded;
+  if (apiParams.in_box === "1") apiParams.in_box = "true";
   const list = useAsync(() => api.companies(apiParams), [params.toString()]);
   const [cursor, setCursor] = useState(0);
   const [more, setMore] = useState(() => MORE_KEYS.some((k) => params.has(k)));
   const [toast, setToast] = useState<string | null>(null);
   useEffect(() => setCursor(0), [params.toString()]);
 
-  const view = query.changed_days && query.sort === "changed" ? "changed" : query.include_excluded === "1" ? "all" : "fit";
+  const view = query.changed_days && query.sort === "changed" ? "changed" : query.in_box === "1" ? "fit" : "all";
+  const boxId = query.bb && /^\d+$/.test(query.bb) ? Number(query.bb) : null;
   const set = (k: string, v: string | null) => {
     const p = new URLSearchParams(params);
     if (v === null || v === "") p.delete(k); else p.set(k, v);
@@ -75,11 +79,11 @@ export default function Targets() {
       if (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName)) return;
       if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); setCursor((c) => Math.min(c + 1, rows.length - 1)); }
       if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); setCursor((c) => Math.max(c - 1, 0)); }
-      if (e.key === "Enter" && rows[cursor]) nav(`/c/${rows[cursor].company_number}`);
+      if (e.key === "Enter" && rows[cursor]) nav(`/c/${rows[cursor].company_number}${query.bb ? `?bb=${query.bb}` : ""}`);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rows, cursor, nav]);
+  }, [rows, cursor, nav, query.bb]);
   useEffect(() => { document.querySelector("tr.cursor")?.scrollIntoView({ block: "nearest" }); }, [cursor]);
 
   const m = meta.data;
@@ -104,8 +108,9 @@ export default function Targets() {
           <div className="lede">
             {m ? (
               <>
-                <b className="ink">{int(m.counts.in_scope)}</b> of {int(m.counts.companies)} companies fit{" "}
-                <Link to="/buy-box">{m.buy_box.name}</Link>. {int(m.counts.tracked)} in your pipeline.
+                Every company on the register: <b className="ink">{int(m.counts.companies)}</b>, of which{" "}
+                <b className="ink">{int(m.counts.in_scope)}</b> fit at least one of your{" "}
+                <Link to="/buy-box">buy boxes</Link>. {int(m.counts.tracked)} in your pipeline.
                 {m.counts.changed_30d > 0 && <> <Link to="/changes">{int(m.counts.changed_30d)} changed</Link> in the last 30 days.</>}
               </>
             ) : " "}
@@ -127,24 +132,21 @@ export default function Targets() {
             <nav className="viewtabs" aria-label="Views">
               {VIEWS.map((v) => (
                 <button key={v.key} className={view === v.key && !currentSaved ? "on" : ""}
-                        onClick={() => setParams(new URLSearchParams(v.params), { replace: true })}>{v.label}</button>
+                        onClick={() => setParams(new URLSearchParams({ ...v.params, ...(query.bb ? { bb: query.bb } : {}) }), { replace: true })}>{v.label}</button>
               ))}
             </nav>
             {saved.data && saved.data.length > 0 && (
               <div className="saved">
                 <span className="faint">Saved:</span>
                 {saved.data.map((s) => {
-                  const other = s.buy_box_id && m && s.buy_box_id !== m.buy_box.id;
+                  const p = { ...s.params };
+                  // Searches saved before buy boxes became filters: pin them to their box.
+                  if (!p.bb && s.buy_box_id) { p.bb = String(s.buy_box_id); if (p.include_excluded !== "1") p.in_box = "1"; }
+                  delete p.include_excluded;
                   return (
                   <span key={s.id} className={`savedlink ${currentSaved?.id === s.id ? "on" : ""}`} title={s.buy_box_name ? `Buy box: ${s.buy_box_name}` : ""}>
-                    <button onClick={async () => {
-                      if (other) {
-                        await api.activateBuybox(s.buy_box_id!);
-                        window.location.href = "/targets?" + new URLSearchParams(s.params).toString();
-                        return;
-                      }
-                      setParams(new URLSearchParams(s.params), { replace: true });
-                    }}>{s.name}{other ? <span className="faint"> · {s.buy_box_name}</span> : null}</button>
+                    <button onClick={() => setParams(new URLSearchParams(p), { replace: true })}>
+                      {s.name}{s.buy_box_name ? <span className="faint"> · {s.buy_box_name}</span> : null}</button>
                     <button className="x" title={`Delete “${s.name}”`} aria-label={`Delete saved search ${s.name}`}
                             onClick={async () => { if (confirm(`Delete saved search “${s.name}”?`)) { await api.deleteSearch(s.id); saved.reload(); } }}>×</button>
                   </span>
@@ -155,6 +157,14 @@ export default function Targets() {
           </div>
 
           <div className="band">
+            <div className="field">
+              <label htmlFor="f-bb">Buy box</label>
+              <select id="f-bb" value={boxId ?? ""} className={boxId ? "set" : ""}
+                      onChange={(e) => set("bb", e.target.value)}>
+                <option value="">{view === "fit" ? "Any buy box" : "Best score, any box"}</option>
+                {(m?.buy_boxes ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}{b.scored_at ? "" : " (scoring…)"}</option>)}
+              </select>
+            </div>
             <div className="field">
               <label htmlFor="f-q">Search</label>
               <input id="f-q" type="search" key={`q-${query.q ?? ""}`} defaultValue={query.q ?? ""} placeholder="Name, number, postcode"
@@ -170,7 +180,7 @@ export default function Targets() {
             <NumField label="Score" k="min_score" placeholder="at least" query={query} set={set} />
             <button className="btn quiet" onClick={() => setMore(!more)} aria-expanded={more}>{more ? "Fewer filters" : "More filters"}</button>
             <div className="band-actions">
-              {activeFilters > 0 && <button className="btn quiet" onClick={() => setParams(new URLSearchParams(view === "all" ? { include_excluded: "1" } : {}), { replace: true })}>Clear</button>}
+              {activeFilters > 0 && <button className="btn quiet" onClick={() => setParams(new URLSearchParams(VIEWS.find((v) => v.key === view)?.params ?? {}), { replace: true })}>Clear</button>}
               <button className="btn" onClick={saveCurrent}>{currentSaved ? "Update saved search" : "Save search"}</button>
             </div>
             {more && (
@@ -212,8 +222,12 @@ export default function Targets() {
 
           <ErrorLine error={list.error} />
           <div className="resultline">
-            <span><b>{int(total)}</b> {total === 1 ? "company" : "companies"}{view === "fit" && !activeFilters ? " in your buy box" : ""}</span>
-            {view !== "fit" && <span className="faint">Excluded companies are shown in grey with the reason.</span>}
+            <span><b>{int(total)}</b> {total === 1 ? "company" : "companies"}
+              {view === "fit" ? (boxId ? <> in <b>{m?.buy_boxes.find((b) => b.id === boxId)?.name}</b></> : " in at least one buy box") : ""}</span>
+            <span className="faint">
+              {boxId ? "Scores are from this buy box; companies outside it are in grey with the reason."
+                : "Score is each company's best across your buy boxes; blank means it is in none of them (or not scored yet)."}
+            </span>
           </div>
           <table className="list">
             <thead>
@@ -228,7 +242,8 @@ export default function Targets() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => <TargetRow key={r.company_number} r={r} cursor={i === cursor} onOpen={() => nav(`/c/${r.company_number}`)} />)}
+              {rows.map((r, i) => <TargetRow key={r.company_number} r={r} cursor={i === cursor} showBox={!boxId}
+                                             onOpen={() => nav(`/c/${r.company_number}${boxId ? `?bb=${boxId}` : ""}`)} />)}
             </tbody>
           </table>
           {!list.loading && rows.length === 0 && <div className="empty"><b>Nothing matches.</b> Try clearing some filters, or switch to All companies.</div>}
@@ -288,13 +303,20 @@ function NumRange({ label, lo, hi, query, set, wide }: { label: string; lo: stri
   );
 }
 
-function TargetRow({ r, cursor, onOpen }: { r: Row; cursor: boolean; onOpen: () => void }) {
+function TargetRow({ r, cursor, onOpen, showBox }: { r: Row; cursor: boolean; onOpen: () => void; showBox: boolean }) {
   const age = ageFrom(r.oldest_birth_year);
   const bad = isBadStatus(r.company_status);
   const recent = r.last_change && Date.now() - new Date(r.last_change).getTime() < 30 * 864e5;
   return (
     <tr className={`${cursor ? "cursor" : ""} ${r.excluded ? "excluded" : ""}`} onClick={onOpen}>
-      <td><Score value={r.score} coverage={r.coverage} /></td>
+      <td>
+        <Score value={r.score} coverage={r.coverage} />
+        {showBox && r.box_name && (
+          <div className="boxtag" title={r.boxes && r.boxes.length > 1 ? `In ${r.boxes.length} buy boxes: ${r.boxes.join(", ")}` : `Buy box: ${r.box_name}`}>
+            {r.box_name}{r.boxes && r.boxes.length > 1 ? ` +${r.boxes.length - 1}` : ""}
+          </div>
+        )}
+      </td>
       <td>
         <div className="name">
           {r.name}

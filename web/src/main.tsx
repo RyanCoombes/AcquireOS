@@ -44,25 +44,6 @@ function Logo() {
   );
 }
 
-function BoxSwitch({ meta }: { meta: Meta | null }) {
-  const nav = useNavigate();
-  if (!meta?.buy_boxes?.length) return null;
-  const active = meta.buy_boxes.find((b) => b.is_active);
-  return (
-    <div className="boxswitch">
-      <label className="label" htmlFor="bb-switch">Buy box</label>
-      <select id="bb-switch" value={active?.id ?? ""} onChange={async (e) => {
-        if (e.target.value === "manage") { nav("/buy-box"); return; }
-        await api.activateBuybox(Number(e.target.value));
-        window.location.reload();
-      }}>
-        {meta.buy_boxes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-        <option value="manage">Manage buy boxes…</option>
-      </select>
-    </div>
-  );
-}
-
 function Side({ meta }: { meta: Meta | null }) {
   const c = meta?.counts;
   const item = (to: string, icon: string, label: string, count?: number | null, end = false) => (
@@ -74,7 +55,6 @@ function Side({ meta }: { meta: Meta | null }) {
   return (
     <nav className="side" aria-label="Main">
       <Link to="/" className="mark"><Logo /><span>AcquireOS</span></Link>
-      <BoxSwitch meta={meta} />
       {item("/", "home", "Home", null, true)}
       {item("/targets", "targets", "Targets", c?.in_scope)}
       {item("/review", "review", "Review")}
@@ -85,7 +65,7 @@ function Side({ meta }: { meta: Meta | null }) {
       {item("/connections", "connections", "Connections")}
       {item("/reports", "reports", "Reports")}
       <div className="group">Set up</div>
-      {item("/buy-box", "buybox", "Buy box")}
+      {item("/buy-box", "buybox", "Buy boxes")}
       {item("/import", "import", "Data")}
       {item("/connect", "claude", "Connect Claude")}
       <div className="foot">
@@ -119,7 +99,7 @@ function TopBar() {
       <form className="search" role="search" onSubmit={(e) => {
         e.preventDefault();
         const q = ref.current?.value.trim() ?? "";
-        nav(q ? `/targets?q=${encodeURIComponent(q)}&include_excluded=1` : "/targets");
+        nav(q ? `/targets?q=${encodeURIComponent(q)}` : "/targets");
         ref.current?.blur();
       }}>
         <svg viewBox="0 0 24 24" aria-hidden><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>

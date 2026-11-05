@@ -41,6 +41,9 @@ DEFAULT_CRITERIA = {
                           "cloud", "networks", "IT services", "IT solutions", "analytics", "cyber"],
         "postcode_areas": [],
         "min_years": 3,
+        # A holding company that owns a company in the universe is in scope too
+        # (you may buy the parent rather than the trading company).
+        "include_parents": True,
     },
     "exclude": {
         "statuses": ["dissolved", "liquidation", "administration", "receivership", "converted-closed"],
@@ -156,7 +159,8 @@ def _money(v):
     return f"£{v:.0f}"
 
 
-def score_company(c: dict, criteria: dict, today: date | None = None, scope=None) -> dict:
+def score_company(c: dict, criteria: dict, today: date | None = None, scope=None,
+                  parent_of: dict | None = None) -> dict:
     """c holds the company's facts (see load_facts). Returns score dict.
     scope: optional universe test; companies outside it are excluded."""
     today = today or date.today()
@@ -167,10 +171,17 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
         pts = round(weight * frac, 1) if status != STATUS_UNKNOWN else 0.0
         reasons.append({"key": key, "label": label, "points": pts, "max": weight, "status": status, "text": text})
 
-    # exclusions first
+    # exclusions first; the universe before anything else, so a company outside
+    # it is always reported (and stored) as outside it
     ex = cr["exclude"]
     exclusion = None
-    if c.get("status") and c["status"].lower() in [s.lower() for s in ex.get("statuses", [])]:
+    status_ok = (c.get("status") or "active").lower() not in [x.lower() for x in ex.get("statuses", [])]
+    children = (parent_of or {}).get(c.get("company_number")) if (cr.get("universe") or {}).get("include_parents", True) else None
+    if status_ok and scope is not None and not children and not scope({
+            "status": (c.get("status") or "active").lower(), "postcode": c.get("postcode"),
+            "inc": c.get("incorporation_date"), "sic": c.get("sic_codes") or [], "name": c.get("name")}):
+        exclusion = "Outside your universe (SIC codes, name keywords, area or age)"
+    elif c.get("status") and c["status"].lower() in [s.lower() for s in ex.get("statuses", [])]:
         exclusion = f"Company status is {c['status']}"
     elif c.get("review_tier") and c["review_tier"] in ex.get("tiers", []):
         exclusion = f"Review tier is {c['review_tier']}"
@@ -188,10 +199,6 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
             if kw and re.search(r"\b" + re.escape(kw.lower()) + r"\b", hay):
                 exclusion = f"Matches excluded keyword “{kw}”"
                 break
-    if not exclusion and scope is not None and not scope({
-            "status": (c.get("status") or "active").lower(), "postcode": c.get("postcode"),
-            "inc": c.get("incorporation_date"), "sic": c.get("sic_codes") or [], "name": c.get("name")}):
-        exclusion = "Outside your universe (SIC codes, name keywords, area or age)"
     regions = cr.get("regions") or []
     if not exclusion and regions and (c.get("region") or "") not in regions:
         exclusion = f"Outside chosen regions ({', '.join(regions)})"
@@ -274,6 +281,11 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
         add("sic", "Industry code", sc["weight"], 1 if hit else 0, STATUS_GOOD if hit else STATUS_MISS,
             f"SIC {', '.join(codes)}" + (" includes a preferred code" if hit else "; none preferred"))
 
+    if children:
+        names = ", ".join(children[:3]) + (f" and {len(children) - 3} more" if len(children) > 3 else "")
+        reasons.insert(0, {"key": "parent", "label": "Parent company", "points": 0.0, "max": 0, "status": STATUS_GOOD,
+                           "text": f"Owns {names}, in your universe"})
+
     # Your own criteria (scored 0-5 by you). Unscored ones are left out of the
     # total, so a company you have not reviewed is neither helped nor hurt.
     manual = c.get("manual") or {}
@@ -328,13 +340,20 @@ left join enrichment en on en.company_number = c.company_number
 """
 
 
-def refresh_latest(conn, company_numbers: list[str] | None = None):
+def refresh_latest(conn, company_numbers: list[str] | None = None, from_table: str | None = None):
     """Rebuild company_latest: newest filed figures, prior net assets and
-    up to six years of staff numbers per company."""
-    where = "where company_number = any(%(nums)s)" if company_numbers else ""
-    params = {"nums": company_numbers} if company_numbers else {}
+    up to six years of staff numbers per company. Limit it to some companies
+    with company_numbers, or to those listed in a temp table (from_table,
+    one column: company_number)."""
+    if from_table:
+        where = f"where company_number in (select company_number from {from_table})"
+        fw = f"and company_number in (select company_number from {from_table})"
+        params: dict = {}
+    else:
+        where = "where company_number = any(%(nums)s)" if company_numbers else ""
+        params = {"nums": company_numbers} if company_numbers else {}
+        fw = "and company_number = any(%(nums)s)" if company_numbers else ""
     conn.execute(f"delete from company_latest {where}", params)
-    fw = "and company_number = any(%(nums)s)" if company_numbers else ""
     conn.execute(
         f"""insert into company_latest (company_number, period_end, employees, turnover, operating_profit,
                 net_assets, cash, net_assets_prev, staff_trend)
@@ -411,9 +430,11 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
         """select company_number from user_company where status <> 'new'
            union select company_number from manual_score""")}
 
+    parent_of = parents_in_universe(conn, criteria, company_number)
+
     def rows_for(facts, store_all=False):
         for f in facts:
-            sc = score_company(f, criteria, today, scope)
+            sc = score_company(f, criteria, today, scope, parent_of)
             # Outside the universe and not one you are working on: no row
             # (saves gigabytes across the whole register).
             if not store_all and sc["exclusion"] and sc["exclusion"].startswith("Outside your universe") \
@@ -452,16 +473,27 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
         conn.execute("delete from score where buy_box_id = %s and company_number = %s", (bb["id"], company_number))
         flush(rows)
         return 1
-    if progress:
-        progress("Updating latest figures", 0.02)
-    refresh_latest(conn)
-    total = conn.execute("select count(*) as n from company").fetchone()["n"] or 1
+    # Latest figures are refreshed after loads (accounts, company files), not
+    # here, so changing a buy box does not redo that work. Fill them in once
+    # if they have never been built.
+    if conn.execute("select 1 from company_latest limit 1").fetchone() is None:
+        if progress:
+            progress("Updating latest figures", 0.02)
+        refresh_latest(conn)
+    # Let the database pick the candidates: the universe (a slightly wider net
+    # than the exact Python test, which still runs) plus companies you are
+    # working on. Everything else would be dropped anyway.
+    where_sql, wparams = universe_sql(criteria)
+    if parent_of:
+        where_sql = where_sql[:-1] + " or c.company_number = any(%(u_parents)s))"
+        wparams["u_parents"] = list(parent_of)
+    total = conn.execute(f"select count(*) as n from company c {where_sql}", wparams).fetchone()["n"] or 1
     conn.execute("delete from score where buy_box_id = %s", (bb["id"],))
     n = 0
     buf: list = []
     with conn.cursor(name="score_facts") as cur:
         cur.itersize = batch
-        cur.execute(FACTS_SQL.format(where="", rwhere=""))
+        cur.execute(FACTS_SQL.format(where=where_sql, rwhere=""), wparams)
         for r in cur:
             buf.extend(rows_for([_fact(r)]))
             n += 1
@@ -472,13 +504,100 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
                     progress(f"Scored {n:,} of {total:,} companies", 0.05 + 0.95 * n / total)
     flush(buf)
     conn.execute("update buy_box set scored_at = now() where id = %s", (bb["id"],))
+    refresh_best(conn)
+    return n
+
+
+def parents_in_universe(conn, criteria: dict, company_number: str | None = None) -> dict[str, list[str]]:
+    """{parent company number: [names of companies it owns that are in the
+    universe]}, from the owner (PSC) records. Empty if the option is off."""
+    u = (criteria or {}).get("universe") or {}
+    if not u.get("include_parents", True):
+        return {}
+    where_sql, params = universe_sql(criteria, keep=False)
+    extra = "and p.registration_number = %(only)s" if company_number else ""
+    params["only"] = company_number
+    rows = conn.execute(f"""
+        select p.registration_number as parent, c.name as child
+        from company_person cp
+        join person p on p.id = cp.person_id and p.kind = 'corporate' and p.registration_number is not null
+        join company c on c.company_number = cp.company_number
+        {where_sql} and cp.role = 'psc' and cp.ceased_on is null {extra}""", params).fetchall()
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        out.setdefault(r["parent"], []).append(r["child"])
+    return out
+
+
+def universe_sql(criteria: dict, keep: bool = True) -> tuple[str, dict]:
+    """SQL WHERE for the universe, deliberately a little wider than the exact
+    test in companies.universe_filter (which is applied afterwards)."""
+    u = (criteria or {}).get("universe") or {}
+    sic = [p + "%" for p in u.get("sic_prefixes") or []]
+    ksic = [p + "%" for p in u.get("keyword_sic_prefixes") or []]
+    kws = ["%" + k.lower() + "%" for k in u.get("name_keywords") or []]
+    areas = [a.upper() for a in u.get("postcode_areas") or []]
+    years = int(u.get("min_years") or 0)
+    params: dict = {"u_sic": sic, "u_ksic": ksic, "u_kw": kws, "u_areas": areas}
+    match = []
+    if sic:
+        match.append("exists (select 1 from unnest(c.sic_codes) x where x like any(%(u_sic)s))")
+    if kws:
+        kw = "lower(c.name) like any(%(u_kw)s)"
+        if ksic:
+            kw += " and exists (select 1 from unnest(c.sic_codes) x where x like any(%(u_ksic)s))"
+        match.append(f"({kw})")
+    conds = ["coalesce(c.status, 'active') = 'active'"]
+    if match:
+        conds.append("(" + " or ".join(match) + ")")
+    if areas:
+        conds.append("substring(upper(c.postcode) from '^([A-Z]{1,2})[0-9]') = any(%(u_areas)s)")
+    if years:
+        conds.append(f"(c.incorporation_date is null or c.incorporation_date <= current_date - interval '{years} years')")
+    if not keep:
+        return f"where ({' and '.join(conds)})", params
+    keep_sql = """c.company_number in (select company_number from user_company where status <> 'new'
+                                    union select company_number from manual_score)"""
+    return f"where (({' and '.join(conds)}) or {keep_sql})", params
+
+
+def refresh_best(conn, company_number: str | None = None):
+    """Rebuild company_best (best score across buy boxes) for all or one company."""
+    where = "and s.company_number = %(n)s" if company_number else ""
+    if company_number:
+        conn.execute("delete from company_best where company_number = %s", (company_number,))
+    else:
+        conn.execute("truncate company_best")
+    conn.execute(f"""
+        insert into company_best (company_number, buy_box_id, box_name, score, coverage, value_low, value_high,
+                                  value_basis, boxes)
+        select distinct on (s.company_number) s.company_number, s.buy_box_id, b.name, s.score, s.coverage,
+               s.value_low, s.value_high, s.value_basis,
+               array(select b2.name from score s2 join buy_box b2 on b2.id = s2.buy_box_id
+                     where s2.company_number = s.company_number and not s2.excluded order by s2.score desc)
+        from score s join buy_box b on b.id = s.buy_box_id
+        where not s.excluded {where}
+        order by s.company_number, s.score desc""", {"n": company_number})
+
+
+def rescore_all(conn, progress=None) -> int:
+    """Score every buy box, then rebuild the best-score table."""
+    boxes = conn.execute("select * from buy_box where user_id = 1 order by id").fetchall()
+    n = 0
+    for i, bb in enumerate(boxes):
+        def sub(msg, frac=None, i=i):
+            if progress:
+                progress(f"{bb['name']}: {msg}", None if frac is None else (i + frac) / len(boxes))
+        n += rescore(conn, dict(bb), progress=sub)
+    refresh_best(conn)
     return n
 
 
 def rescore_company_all_boxes(conn, company_number: str):
-    """After a manual score: update this company in every buy box."""
+    """After a manual score or edit: update this company in every buy box."""
     for bb in conn.execute("select * from buy_box where user_id = 1").fetchall():
         rescore(conn, dict(bb), company_number=company_number)
+    refresh_best(conn, company_number)
 
 
 def scope_test(criteria: dict):

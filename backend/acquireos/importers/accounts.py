@@ -292,7 +292,8 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
     name = ", ".join(p.name for p in paths)
     run_id = conn.execute("insert into import_run (kind, filename) values ('accounts', %s) returning id",
                           (name[:500],)).fetchone()["id"]
-    conn.execute("drop table if exists acc_stage")
+    conn.execute("drop table if exists acc_stage; drop table if exists acc_touched")
+    conn.execute("create temp table acc_touched (company_number text primary key)")
     conn.execute(f"""create temp table acc_stage (company_number text, period_end date, balance_date date,
                     source text, {", ".join(f"{f} numeric" for f in FIELDS)})""")
 
@@ -322,6 +323,7 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
                 {', '.join(f"{f} = coalesce(excluded.{f}, fp.{f})" for f in FIELDS)}
             where fp.period_inferred or fp.source_balance_date is null
                or excluded.source_balance_date >= fp.source_balance_date""").rowcount
+        conn.execute("insert into acc_touched select distinct company_number from acc_stage on conflict do nothing")
         conn.execute("""
             update company c set last_accounts_date = greatest(c.last_accounts_date, x.d)
             from (select company_number, max(balance_date) as d from acc_stage group by 1) x
@@ -373,6 +375,11 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
              and abs(i.period_end - r.period_end) <= 45"""
     )
     refresh_estimates(conn)
+    from ..scoring import refresh_latest
+
+    if progress:
+        progress("Updating each company's latest figures", 0.99)
+    refresh_latest(conn, from_table="acc_touched")
     conn.execute(
         "update import_run set rows_in=%s, rows_ok=%s, messages=%s, finished_at=now() where id=%s",
         (seen, matched, json.dumps([]), run_id),

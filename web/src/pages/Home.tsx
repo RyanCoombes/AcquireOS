@@ -13,7 +13,10 @@ function greeting() {
 export default function Home() {
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
-  const which = params.get("bb") ?? "active";
+  const which = params.get("bb") ?? "all";
+  // Links into Targets carry the buy box being viewed, as a filter.
+  const tq = (extra: Record<string, string> = {}) =>
+    "/targets?" + new URLSearchParams({ ...(which === "all" ? {} : { bb: which }), ...extra }).toString();
   const { data, error, reload } = useAsync(() => api.dashboardFor(which), [which]);
   const [starting, setStarting] = useState(false);
   if (error) return <ErrorLine error={error} />;
@@ -51,10 +54,9 @@ export default function Home() {
           <div className="muted">
             {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
             {" · "}showing{" "}
-            <select className="inline-select" value={which} onChange={(e) => setParams(e.target.value === "active" ? {} : { bb: e.target.value }, { replace: true })}>
-              <option value="active">{(data.boxes ?? []).find((b: any) => b.is_active)?.name ?? "Current buy box"} (current)</option>
-              {(data.boxes ?? []).filter((b: any) => !b.is_active).map((b: any) => <option key={b.id} value={String(b.id)}>{b.name}</option>)}
-              <option value="all">All buy boxes</option>
+            <select className="inline-select" value={which} onChange={(e) => setParams(e.target.value === "all" ? {} : { bb: e.target.value }, { replace: true })}>
+              <option value="all">all buy boxes</option>
+              {(data.boxes ?? []).map((b: any) => <option key={b.id} value={String(b.id)}>{b.name}</option>)}
             </select>
           </div>
         </div>
@@ -64,7 +66,7 @@ export default function Home() {
           <button className="btn" onClick={refreshNow} disabled={running || starting}>
             <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>Refresh data
           </button>
-          <Link className="btn primary" to="/targets">Open targets</Link>
+          <Link className="btn primary" to={tq()}>Open targets</Link>
         </div>
       </div>
 
@@ -76,7 +78,7 @@ export default function Home() {
             <tbody>
               {data.boxes.map((b: any) => (
                 <tr key={b.id}>
-                  <td><b>{b.name}</b>{b.is_active && <span className="tag" style={{ marginLeft: 8 }}>current</span>}</td>
+                  <td><b>{b.name}</b></td>
                   <td className="num">{int(b.in_scope)}</td><td className="num">{int(b.strong)}</td><td className="num">{int(b.pipeline)}</td>
                   <td className="num faint small">{b.scored_at ? relDays(b.scored_at) : "not yet"}</td>
                   <td className="num"><button className="btn quiet" onClick={() => setParams({ bb: String(b.id) }, { replace: true })}>View</button></td>
@@ -88,7 +90,7 @@ export default function Home() {
       )}
 
       <div className="kpis">
-        <Link className="kpi" to="/targets">
+        <Link className="kpi" to={tq({ in_box: "1" })}>
           <span className="k"><i />{which === "all" ? "In any buy box" : "In this buy box"}</span>
           <span className="v">{int(h.in_scope)}</span>
           <span className="s">{int(h.strong)} score 70 or more</span>
@@ -103,7 +105,7 @@ export default function Home() {
           <span className="v">{int(h.changed_30d)}</span>
           <span className="s">{int(h.status_30d)} status changes · {int(h.changed_7d)} this week</span>
         </Link>
-        <Link className="kpi" to="/targets?min_owner_age=60">
+        <Link className="kpi" to={tq({ in_box: "1", min_owner_age: "60" })}>
           <span className="k"><i style={{ background: "#8a919d" }} />Median owner age</span>
           <span className="v">{h.median_owner_age ? Math.round(h.median_owner_age) : "—"}</span>
           <span className="s">{int(h.owners_60)} owners aged 60+</span>
@@ -118,11 +120,11 @@ export default function Home() {
       <div className="home-grid">
         <section className="span-7">
           <div className="sechead"><h2>Best new targets</h2><span className="faint small">Highest scores you haven't given a status yet</span>
-            <span className="right"><Link to="/targets?status=new">See all</Link></span></div>
+            <span className="right"><Link to={tq({ in_box: "1", status: "new" })}>See all</Link></span></div>
           <table>
             <tbody>
               {data.top.map((t: any) => (
-                <tr key={t.company_number} style={{ cursor: "pointer" }} onClick={() => nav(`/c/${t.company_number}`)}>
+                <tr key={t.company_number} style={{ cursor: "pointer" }} onClick={() => nav(`/c/${t.company_number}${which === "all" ? "" : `?bb=${which}`}`)}>
                   <td style={{ width: 110 }}><Score value={t.score} /></td>
                   <td><div className="name">{t.name}</div><div className="sub">{which === "all" && t.box ? <><b>{t.box}</b> · </> : null}{t.region ?? "Region not set"} · {t.ownership_type ? OWNERSHIP[t.ownership_type] : "owners not traced"}</div></td>
                   <td className="num hide-sm">{int(t.employees)} staff</td>
@@ -192,13 +194,13 @@ export default function Home() {
         <section className="span-4">
           <div className="sechead"><h2>Search funnel</h2></div>
           <HBars rows={data.funnel.map((f: any) => ({ label: f.label, n: f.n, key: f.status }))}
-                 accent={(k) => ["offer", "heads", "diligence", "spa", "completion"].includes(k)} onPick={(k) => nav(`/targets?status=${k}&include_excluded=1`)} />
+                 accent={(k) => ["offer", "heads", "diligence", "spa", "completion"].includes(k)} onPick={(k) => nav(tq({ status: k }))} />
         </section>
 
         <section className="span-4">
           <div className="sechead"><h2>Who owns them</h2></div>
           <HBars rows={data.ownership.map((o: any) => ({ label: OWNERSHIP[o.type] ?? o.type, n: o.n, key: o.type }))}
-                 accent={(k) => k === "owner_held"} onPick={(k) => nav(`/targets?ownership=${k}`)} />
+                 accent={(k) => k === "owner_held"} onPick={(k) => nav(tq({ in_box: "1", ownership: k }))} />
         </section>
       </div>
     </>

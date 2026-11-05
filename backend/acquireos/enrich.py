@@ -133,7 +133,7 @@ def audit_queue(conn, check: str = "all", limit: int = 20, min_score: float = 0,
                est.basis as revenue_basis, o.ownership_type,
                (select count(*) from research r where r.company_number = c.company_number) as research_count
         from company c
-        left join score s on s.company_number = c.company_number and s.buy_box_id = %(bb)s
+        left join (select company_number, score, false as excluded from company_best) s on s.company_number = c.company_number
         left join user_company uc on uc.company_number = c.company_number and uc.user_id = 1
         left join enrichment e on e.company_number = c.company_number
         left join estimate est on est.company_number = c.company_number

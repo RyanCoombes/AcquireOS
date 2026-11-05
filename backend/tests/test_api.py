@@ -20,7 +20,8 @@ def test_api_flow(c):
             assert r.status_code == 200, r.text
         lst = cl.get("/api/companies").json()
         assert lst["total"] >= 3
-        assert lst["rows"][0]["score"] >= lst["rows"][-1]["score"]
+        sc = [float(r["score"]) for r in lst["rows"] if r["score"] is not None]
+        assert sc == sorted(sc, reverse=True)  # scored first, best first; unscored after
         d = cl.get("/api/companies/01000001").json()
         assert d["score"]["reasons"] and len(d["financials"]) == 2
         assert cl.put("/api/companies/01000001/state", json={"status": "contacted"}).json()["status"] == "contacted"
@@ -32,7 +33,7 @@ def test_api_flow(c):
         assert len(g["nodes"]) >= 2
         bb = cl.get("/api/buybox").json()
         bb["criteria"]["regions"] = ["Wales"]
-        assert cl.put("/api/buybox", json={"criteria": bb["criteria"]}).json()["rescored"] == 7
+        assert cl.put("/api/buybox", json={"criteria": bb["criteria"]}).json()["rescored"] == 6  # the 70100 holding company is outside the universe and skipped
         assert cl.get("/api/export.csv").status_code == 200
         assert cl.get("/api/pipeline").json()["rows"]
         d = cl.get("/api/dashboard")
@@ -92,9 +93,15 @@ def test_buyboxes_manual_and_review(c):
         assert boxes["SaaS"]["is_active"] and not boxes["My buy box"]["is_active"] and boxes["SaaS"]["scored_at"]
         copy = cl.post("/api/buyboxes", json={"name": "Copy", "source": "copy", "copy_id": first}).json()
         assert cl.get("/api/meta").json()["buy_box"]["name"] == "Copy"
-        # saved search belongs to the active buy box
+        # saved searches are global; one that filters by a buy box remembers it
         s = cl.post("/api/searches", json={"name": "Wales", "params": {"region": "Wales"}}).json()
+        assert s["buy_box_id"] is None
+        s = cl.post("/api/searches", json={"name": "Wales", "params": {"region": "Wales", "bb": str(copy["id"])}}).json()
         assert s["buy_box_id"] == copy["id"]
+        assert [x["name"] for x in cl.get("/api/searches").json()].count("Wales") == 1
+        # renaming a box keeps the best-score labels in step
+        cl.patch(f"/api/buyboxes/{copy['id']}", json={"name": "Copy box"})
+        assert all("Copy" not in (b or []) for b in [r.get("boxes") for r in cl.get("/api/companies").json()["rows"]])
         # your own scores: affect the score, shared across boxes
         before = cl.get("/api/companies/01000001").json()["score"]["score"]
         r = cl.put("/api/companies/01000001/manual", json={"key": "owner_openness", "value": 5}).json()
@@ -118,3 +125,31 @@ def test_buyboxes_manual_and_review(c):
         assert cl.delete(f"/api/buyboxes/{copy['id']}").status_code == 200
         assert cl.delete(f"/api/buyboxes/{new['id']}").status_code == 200
         assert cl.delete(f"/api/buyboxes/{first}").status_code == 400
+
+
+def test_buy_boxes_are_filters_over_all_companies(c):
+    from acquireos.api import app
+
+    with TestClient(app) as cl:
+        f = FIX / "ranked_sample.csv"
+        p = cl.post("/api/import/preview", data={"kind": "companies"}, files={"file": (f.name, f.read_bytes(), "text/csv")}).json()
+        cl.post("/api/import/commit", json={"kind": "companies", "token": p["token"], "suffix": p["suffix"],
+                                            "filename": f.name, "mapping": p["mapping"]})
+        saas = cl.post("/api/buyboxes", json={"name": "SaaS", "source": "template", "template": "saas"}).json()
+        # every company is listed, scored or not, with the best score and its box
+        allc = cl.get("/api/companies?limit=50").json()
+        assert allc["total"] == 7
+        scored = [r for r in allc["rows"] if r["score"] is not None]
+        assert scored and all(r["box_name"] in ("My buy box", "SaaS") for r in scored)
+        assert any(r["score"] is None for r in allc["rows"])  # e.g. the holding company outside every universe
+        # filter to one buy box, or to companies in any box
+        one = cl.get(f"/api/companies?bb={saas['id']}&in_box=true").json()
+        anyb = cl.get("/api/companies?in_box=true").json()
+        assert one["total"] <= anyb["total"] <= 7
+        # a company page has its score in every buy box
+        d = cl.get("/api/companies/01000001").json()
+        assert {s["buy_box"] for s in d["scores"]} == {"My buy box", "SaaS"}
+        d2 = cl.get(f"/api/companies/01000001?bb={saas['id']}").json()
+        assert d2["buy_box"]["name"] == "SaaS"
+        # Home overview by default
+        assert cl.get("/api/dashboard").json()["scope"] == "all"
