@@ -86,15 +86,25 @@ def cached(key: str, ttl: float, fn):
     return val
 
 
-def clear_cache():
-    _CACHE.clear()
+# Register-wide summaries (counts over millions of rows) only change when a
+# data job runs, so your own edits do not throw them away; jobs clear them.
+DATA_KEYS = ("company_count", "sic", "coverage", "meta_data")
+
+
+def clear_cache(data: bool = True):
+    if data:
+        _CACHE.clear()
+    else:
+        for k in [k for k in _CACHE if k not in DATA_KEYS]:
+            _CACHE.pop(k, None)
 
 
 @app.middleware("http")
 async def _clear_cache_on_write(request: Request, call_next):
     resp = await call_next(request)
-    if request.method in ("POST", "PUT", "DELETE") and request.url.path.startswith("/api/"):
-        clear_cache()
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/"):
+        # Imports and refreshes change the data itself; other writes only yours.
+        clear_cache(data=request.url.path.startswith(("/api/import", "/api/refresh", "/api/buybox")))
     return resp
 
 
@@ -114,23 +124,32 @@ def meta():
     return cached("meta", 60, _meta)
 
 
-def _meta():
+def _meta_data():
+    """The register-wide part of meta: slow on millions of rows, and only
+    changed by data jobs (cached until one runs, or an hour)."""
     with db.conn() as c:
-        bb = scoring.active_buy_box(c)
         counts = c.execute(
             """select (select count(*) from company) as companies,
-                      (select count(*) from company_best where %s::int is not null) as in_scope,
-                      (select count(*) from user_company where user_id = %s and status not in ('new', 'rejected', 'passed')) as tracked,
+                      (select count(*) from company_best) as in_scope,
                       (select count(*) from company_person) as owner_records,
                       (select max(finished_at) from import_run) as last_import,
                       (select count(distinct ch.company_number) from company_change ch
                          join company_best s on s.company_number = ch.company_number
-                         where ch.detected_at > now() - interval '30 days' and %s::int is not null) as changed_30d""",
-            (bb["id"], UID, bb["id"]),
-        ).fetchone()
+                         where ch.detected_at > now() - interval '30 days') as changed_30d""").fetchone()
         regions = [r["region"] for r in c.execute("select distinct region from company where region is not null order by 1")]
         tiers = [r["review_tier"] for r in c.execute("select distinct review_tier from company where review_tier is not null order by 1")]
         company_statuses = [r["status"] for r in c.execute("select status, count(*) from company where status is not null group by 1 order by 2 desc")]
+    return {"counts": dict(counts), "regions": regions, "tiers": tiers, "company_statuses": company_statuses}
+
+
+def _meta():
+    d = cached("meta_data", 3600, _meta_data)
+    regions, tiers, company_statuses = d["regions"], d["tiers"], d["company_statuses"]
+    with db.conn() as c:
+        bb = scoring.active_buy_box(c)
+        counts = {**d["counts"], **c.execute(
+            "select count(*) as tracked from user_company where user_id = %s and status not in ('new', 'rejected', 'passed')",
+            (UID,)).fetchone()}
         boxes = [dict(r) for r in c.execute(
             "select id, name, is_active, scored_at from buy_box where user_id = %s order by id", (UID,))]
     return {
@@ -239,10 +258,16 @@ def companies(
                 where.append("c.status = %(cstatus)s"); params["cstatus"] = company_status
         if sic:
             # One or more codes or prefixes, comma separated: "62, 63110".
-            prefixes = [x.strip().rstrip("*") + "%" for x in sic.split(",") if x.strip()]
+            prefixes = [x.strip().rstrip("*") for x in sic.split(",") if x.strip()]
             if prefixes:
-                where.append("exists (select 1 from unnest(c.sic_codes) x where x like any(%(sic)s))")
-                params["sic"] = prefixes
+                # Expand prefixes ("62") to the codes they cover, then use the
+                # GIN index: "shares any code with this list".
+                # Every code present on the register (cached list, as in the SIC picker).
+                present = [r["code"] for r in sic_list() if r["level"] == "code"]
+                codes = sorted({code for code in present if code.startswith(tuple(prefixes))}
+                               | {p_.zfill(5) for p_ in prefixes if len(p_) >= 4})
+                where.append("c.sic_codes && %(sic)s::text[]")
+                params["sic"] = codes
         if changed_days:
             where.append("exists (select 1 from company_change x where x.company_number = c.company_number "
                          "and x.detected_at > now() - make_interval(days => %(cdays)s))"); params["cdays"] = changed_days
@@ -285,7 +310,11 @@ def companies(
             # Matches company_name_sort_idx, so A-Z paging over millions is instant.
             order_sql = f"c.name {direction}, c.company_number {direction}"
         else:
-            order_sql = f"{SORTS.get(sort, 's.score')} {direction} nulls last, c.name, c.company_number"
+            col = SORTS.get(sort, "s.score")
+            # In a buy box every row has a score, so plain "score desc" lets the
+            # score indexes do the sorting (with "nulls last" Postgres sorts it all).
+            nulls = "" if (in_box and col == "s.score") else " nulls last"
+            order_sql = f"{col} {direction}{nulls}, c.name, c.company_number"
         lateral = ""
         if sort == "changed":
             lateral = """left join lateral (select max(detected_at) as last_change from company_change x
@@ -339,7 +368,7 @@ def companies(
         if not (rows or offset):
             total = 0
         elif where == ["true"]:
-            total = cached("company_count", 300, lambda: _count_all())
+            total = cached("company_count", 3600, lambda: _count_all())
         else:
             total = c.execute(f"select count(*) as n from (select 1 {filt} limit {COUNT_CAP + 1}) x", params).fetchone()["n"]
             if total > COUNT_CAP:
@@ -422,7 +451,7 @@ def _score_join(c, bb: str):
         box = scoring.active_buy_box(c)
     return (f"""left join (select sc.*, %(bbname)s::text as box_name, null::text[] as boxes from score sc
                            where sc.buy_box_id = {int(box['id'])}) s on s.company_number = c.company_number""",
-            "coalesce(not s.excluded, false)", box["id"], box["name"])
+            "s.excluded = false", box["id"], box["name"])
 
 
 @app.get("/api/companies/{num}")
@@ -841,14 +870,20 @@ def _dashboard(which: str = "all"):
         ).fetchone()
         hist = c.execute("select width_bucket(score, 0, 100.0001, 10) as b, count(*) as n from dscope group by 1 order by 1").fetchall()
         top = c.execute(
-            """select c.company_number, c.name, c.region, d.score, d.value_low, d.value_high, d.box, l.employees,
+            """with top as (
+                   -- pick the 8 first, then join their details (not the whole scope)
+                   select d.* from dscope d
+                   where d.score >= 40
+                     and not exists (select 1 from user_company uc where uc.company_number = d.company_number
+                                     and uc.user_id = %(uid)s and uc.status <> 'new')
+                     and exists (select 1 from company c2 where c2.company_number = d.company_number and c2.status = 'active')
+                   order by d.score desc, d.coverage desc limit 8)
+               select c.company_number, c.name, c.region, d.score, d.value_low, d.value_high, d.box, l.employees,
                       o.oldest_birth_year, o.ownership_type
-               from dscope d join company c on c.company_number = d.company_number
+               from top d join company c on c.company_number = d.company_number
                left join company_latest l on l.company_number = c.company_number
                left join company_ownership o on o.company_number = c.company_number
-               left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
-               where coalesce(uc.status, 'new') = 'new'
-               order by d.score desc, d.coverage desc limit 8""", p).fetchall()
+               order by d.score desc, d.coverage desc""", p).fetchall()
         recent = c.execute(
             """select ch.company_number, ch.kind, ch.field, ch.old_value, ch.new_value, ch.detected_at, c.name,
                       coalesce(uc.status, 'new') as status
@@ -879,12 +914,12 @@ def _dashboard(which: str = "all"):
                group by 1 having count(*) >= 3 order by 1""").fetchall()
         boxes = c.execute(
             """select b.id, b.name, b.is_active, b.scored_at,
-                      count(s.*) filter (where not s.excluded) as in_scope,
-                      count(s.*) filter (where not s.excluded and s.score >= 70) as strong,
-                      count(uc.*) filter (where not s.excluded and uc.status not in ('new','rejected','passed')) as pipeline
-               from buy_box b left join score s on s.buy_box_id = b.id
-               left join user_company uc on uc.company_number = s.company_number and uc.user_id = %(uid)s
-               where b.user_id = %(uid)s group by b.id order by b.id""", p).fetchall()
+                      (select count(*) from score s where s.buy_box_id = b.id and not s.excluded) as in_scope,
+                      (select count(*) from score s where s.buy_box_id = b.id and not s.excluded and s.score >= 70) as strong,
+                      (select count(*) from user_company uc join score s on s.company_number = uc.company_number
+                         and s.buy_box_id = b.id and not s.excluded
+                       where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed')) as pipeline
+               from buy_box b where b.user_id = %(uid)s order by b.id""", p).fetchall()
     fmap = {r["status"]: r["n"] for r in funnel}
     # Recent years are only partly filed (accounts are due up to nine months
     # after the year end), so drop years with under half the usual coverage.
@@ -941,7 +976,7 @@ def geocode_status():
 
 @app.get("/api/sic")
 def sic_list():
-    return cached("sic", 300, _sic_list)
+    return cached("sic", 3600, _sic_list)
 
 
 def _sic_list():
@@ -1597,7 +1632,7 @@ def refresh_status():
 def coverage():
     """How much of the register has owners and accounts loaded, and which
     files they came from, so gaps can be explained rather than guessed at."""
-    return cached("coverage", 300, _coverage)
+    return cached("coverage", 3600, _coverage)
 
 
 def _coverage():

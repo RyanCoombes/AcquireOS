@@ -125,7 +125,7 @@ export default function Home() {
 
       <div className="home-grid">
         <section className="span-7">
-          <div className="sechead"><h2>Best new targets</h2><span className="faint small">Highest scores you haven't given a status yet</span>
+          <div className="sechead"><h2>Best new targets</h2><span className="faint small">Active companies scoring 40+ that you haven't given a status yet</span>
             <span className="right"><Link to={tq({ in_box: "1", status: "new" })}>See all</Link></span></div>
           <table>
             <tbody>

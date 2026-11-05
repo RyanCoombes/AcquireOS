@@ -217,6 +217,9 @@ def rebuild_links(conn, walk_ready: bool = False, step=None, progress=None):
     number of pairs sensible across the whole register."""
     own_steps = step is None
     step = step or Steps(progress, 0.0, 1.0, total=5)
+    # Reuse the walk if this connection built it earlier (e.g. in the owners step).
+    if not walk_ready and conn.execute("select to_regclass('pg_temp.own_walk') is not null as ok").fetchone()["ok"]:
+        walk_ready = True
     if not walk_ready:
         step("Following ownership chains through holding companies")
         _build_walk(conn)
@@ -239,7 +242,7 @@ def rebuild_links(conn, walk_ready: bool = False, step=None, progress=None):
         from own_walk w join company c on ao_company_name_key(c.name) = ao_company_name_key(w.name)
         where w.depth = 0 and w.kind = 'corporate' and w.registration_number is null and c.company_number <> w.root
         on conflict do nothing""")
-    scope = """exists (select 1 from score sc where sc.company_number = x.root and not sc.excluded)
+    scope = """exists (select 1 from company_best sc where sc.company_number = x.root)
                or exists (select 1 from user_company uc where uc.company_number = x.root and uc.status <> 'new')""" if scored else "true"
     step("Linking companies that share an owner")
     # Each individual owner and the companies they own. Owners of 2-25

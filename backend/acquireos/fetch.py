@@ -262,6 +262,14 @@ def fetch_psc(conn, keep: bool = False) -> dict:
     return r
 
 
+ANALYZE_AFTER = {
+    "Company register": ("company",),
+    "Owners (PSC)": ("person", "company_person", "parent_psc", "company_ownership"),
+    "Scoring": ("score", "company_best"),
+    "Ownership links": ("company_link",),
+}
+
+
 def refresh(conn, accounts_months: int = 1, psc: bool = True, reread_old: bool = False) -> dict:
     """The monthly job: company data, then owners, then accounts (newest month
     first), then scoring, links and map locations. Each part is committed as
@@ -272,6 +280,9 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True, reread_old: bool =
     # Bulk loads: do not wait for each commit to reach the disk. A power cut
     # could lose the last few seconds, which a re-run restores.
     conn.execute("set synchronous_commit = off")
+    # The loads use multi-GB temp tables; the default 8MB buffer would spill
+    # nearly everything to disk. Must be set before the first temp table.
+    conn.execute("set temp_buffers = '512MB'")
     out: dict = {}
 
     def part(label, fn):
@@ -279,6 +290,10 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True, reread_old: bool =
             JOB.stage(label)
         try:
             out[label] = fn()
+            conn.commit()
+            # Fresh statistics after big rewrites, so the next steps plan well.
+            for t in ANALYZE_AFTER.get(label, ()):
+                conn.execute(f"analyze {t}")
             conn.commit()
         except Exception as e:
             conn.rollback()

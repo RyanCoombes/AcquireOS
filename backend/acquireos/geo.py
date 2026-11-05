@@ -39,7 +39,7 @@ def missing_postcodes(conn, limit: int | None = None) -> list[str]:
     # Only companies that matter: in the buy box, in the pipeline, or linked
     # to one. The whole register has around 1.7 million postcodes.
     scored = conn.execute("select 1 from score limit 1").fetchone() is not None
-    scope = """and (exists (select 1 from score s where s.company_number = c.company_number and not s.excluded)
+    scope = """and (exists (select 1 from company_best s where s.company_number = c.company_number)
                     or exists (select 1 from user_company u where u.company_number = c.company_number and u.status <> 'new')
                     or exists (select 1 from company_link l where l.b = c.company_number))""" if scored else ""
     rows = conn.execute(

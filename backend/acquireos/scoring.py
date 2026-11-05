@@ -426,6 +426,7 @@ def active_buy_box(conn, user_id: int = 1) -> dict:
 
 
 def rescore(conn, buy_box: dict | None = None, company_number: str | None = None, batch: int = 20_000,
+            best: bool = True,
             progress=None) -> int:
     """Score every company (streamed in batches) or one company."""
     from . import valuation
@@ -515,7 +516,8 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
                     progress(f"Scored {n:,} of {total:,} companies", 0.05 + 0.95 * n / total)
     flush(buf)
     conn.execute("update buy_box set scored_at = now() where id = %s", (bb["id"],))
-    refresh_best(conn)
+    if best:
+        refresh_best(conn, company_number)  # one company's change only touches its own row
     return n
 
 
@@ -578,7 +580,9 @@ def refresh_best(conn, company_number: str | None = None):
     if company_number:
         conn.execute("delete from company_best where company_number = %s", (company_number,))
     else:
-        conn.execute("truncate company_best")
+        # delete, not truncate: truncate locks every reader out of the
+        # directory until the whole scoring job commits.
+        conn.execute("delete from company_best")
     conn.execute(f"""
         insert into company_best (company_number, buy_box_id, box_name, score, coverage, value_low, value_high,
                                   value_basis, boxes)
@@ -599,15 +603,15 @@ def rescore_all(conn, progress=None) -> int:
         def sub(msg, frac=None, i=i):
             if progress:
                 progress(f"{bb['name']}: {msg}", None if frac is None else (i + frac) / len(boxes))
-        n += rescore(conn, dict(bb), progress=sub)
-    refresh_best(conn)
+        n += rescore(conn, dict(bb), progress=sub, best=False)
+    refresh_best(conn)  # once, after every box
     return n
 
 
 def rescore_company_all_boxes(conn, company_number: str):
     """After a manual score or edit: update this company in every buy box."""
     for bb in conn.execute("select * from buy_box where user_id = 1").fetchall():
-        rescore(conn, dict(bb), company_number=company_number)
+        rescore(conn, dict(bb), company_number=company_number, best=False)
     refresh_best(conn, company_number)
 
 
