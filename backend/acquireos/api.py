@@ -905,56 +905,79 @@ def dashboard(bb: str = "all"):
     return {**d, "refresh": job_current()}
 
 
+def _scope(c, which: str):
+    """(SQL for the scored companies in scope aliased d, params, buy box name).
+    Reads company_best or score directly, through their indexes; no copy."""
+    active = scoring.active_buy_box(c)
+    if which == "all":
+        return ("(select company_number, score, coverage, value_low, value_high, box_name as box from company_best) d",
+                {}, "All buy boxes")
+    bid = int(which) if which.isdigit() else active["id"]
+    row = c.execute("select id, name from buy_box where id = %s and user_id = %s", (bid, UID)).fetchone() or active
+    return ("""(select s.company_number, s.score, s.coverage, s.value_low, s.value_high, %(bbname)s::text as box
+                from score s where s.buy_box_id = %(bbid)s and not s.excluded) d""",
+            {"bbname": row["name"], "bbid": row["id"]}, row["name"])
+
+
+def compute_dashboard_stats(c, which: str) -> dict:
+    """The register-wide part of the Home page for one scope: counts and
+    spreads over every scored company. Worked out after each load or scoring
+    run and stored, so the page itself only runs small queries."""
+    d_sql, p, _ = _scope(c, which)
+    head = c.execute(
+        f"""select
+             (select count(*) from {d_sql}) as in_scope,
+             (select count(*) from {d_sql} where d.score >= 70) as strong,
+             (select percentile_cont(0.5) within group (order by extract(year from current_date) - o.oldest_birth_year)
+                from company_ownership o join {d_sql} using (company_number) where o.oldest_birth_year is not null) as median_owner_age,
+             (select count(*) from company_ownership o join {d_sql} using (company_number)
+                where o.oldest_birth_year <= extract(year from current_date) - 60) as owners_60,
+             (select count(*) from company_latest l join {d_sql} using (company_number)
+                where cardinality(l.staff_trend) >= 3) as with_history""", p).fetchone()
+    hist = c.execute(f"select width_bucket(d.score, 0, 100.0001, 10) as b, count(*) as n from {d_sql} group by 1 order by 1", p).fetchall()
+    ownership = c.execute(
+        f"""select coalesce(o.ownership_type,'unknown') as type, count(*) as n from {d_sql}
+            left join company_ownership o using (company_number) group by 1 order by 2 desc""", p).fetchall()
+    trend = c.execute(
+        f"""select extract(year from period_end)::int as year, count(distinct company_number) as companies,
+                   percentile_cont(0.5) within group (order by employees) as median_staff,
+                   sum(employees) as total_staff
+            from financial_period where not period_inferred and employees is not null
+              and company_number in (select company_number from {d_sql})
+            group by 1 having count(*) >= 3 order by 1""", p).fetchall()
+    return {"head": dict(head), "hist": [dict(h) for h in hist], "ownership": [dict(o) for o in ownership],
+            "trend": [dict(t) for t in trend]}
+
+
 def _dashboard(which: str = "all"):
     """Home page data for one buy box, or "all" for an overview across them."""
     with db.conn() as c:
-        active = scoring.active_buy_box(c)
-        if which == "all":
-            bb_name = "All buy boxes"
-            c.execute("""create temp table dscope on commit drop as
-                select company_number, score, coverage, value_low, value_high, box_name as box from company_best""")
-        else:
-            bid = int(which) if which.isdigit() else active["id"]
-            row = c.execute("select id, name from buy_box where id = %s and user_id = %s", (bid, UID)).fetchone() or active
-            bb_name = row["name"]
-            c.execute("""create temp table dscope on commit drop as
-                select s.company_number, s.score, s.coverage, s.value_low, s.value_high, %s::text as box
-                from score s where s.buy_box_id = %s and not s.excluded""", (bb_name, row["id"]))
-        c.execute("create index on dscope (company_number)")
-        c.execute("analyze dscope")
-        p = {"uid": UID}
-        head = c.execute(
-            """select
-                 (select count(*) from company) as companies,
-                 (select count(*) from dscope) as in_scope,
-                 (select count(*) from dscope where score >= 70) as strong,
+        d_sql, p, bb_name = _scope(c, which)
+        p["uid"] = UID
+        stored = stats_get(c, f"dashboard:{which}", lambda cc: compute_dashboard_stats(cc, which))
+        live = c.execute(
+            f"""select
+                 (select ao_rowcount('company')) as companies,
                  (select count(*) from user_company where user_id = %(uid)s and status not in ('new','rejected','passed')) as pipeline,
                  (select count(*) from user_company where user_id = %(uid)s and status in ('contacted','in_talks','nda','offer','heads','diligence','spa','completion')) as talking,
-                 (select count(distinct ch.company_number) from company_change ch join dscope d using (company_number)
+                 (select count(distinct ch.company_number) from company_change ch join {d_sql} using (company_number)
                     where ch.detected_at > now() - interval '7 days') as changed_7d,
-                 (select count(distinct ch.company_number) from company_change ch join dscope d using (company_number)
+                 (select count(distinct ch.company_number) from company_change ch join {d_sql} using (company_number)
                     where ch.detected_at > now() - interval '30 days') as changed_30d,
-                 (select count(*) from company_change ch join dscope d using (company_number)
+                 (select count(*) from company_change ch join {d_sql} using (company_number)
                     where ch.kind = 'status' and ch.detected_at > now() - interval '30 days') as status_30d,
-                 (select percentile_cont(0.5) within group (order by extract(year from current_date) - o.oldest_birth_year)
-                    from company_ownership o join dscope d using (company_number) where o.oldest_birth_year is not null) as median_owner_age,
-                 (select count(*) from company_ownership o join dscope d using (company_number)
-                    where o.oldest_birth_year <= extract(year from current_date) - 60) as owners_60,
-                 (select count(*) from company_latest l join dscope d using (company_number)
-                    where cardinality(l.staff_trend) >= 3) as with_history,
-                 (select sum((d.value_low + d.value_high) / 2) from dscope d join user_company uc using (company_number)
+                 (select sum((d.value_low + d.value_high) / 2) from {d_sql} join user_company uc using (company_number)
                     where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed')) as pipeline_value,
-                 (select sum(d.value_low) from dscope d join user_company uc using (company_number)
+                 (select sum(d.value_low) from {d_sql} join user_company uc using (company_number)
                     where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed')) as pipeline_value_low,
-                 (select sum(d.value_high) from dscope d join user_company uc using (company_number)
+                 (select sum(d.value_high) from {d_sql} join user_company uc using (company_number)
                     where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed')) as pipeline_value_high""",
-            p,
-        ).fetchone()
-        hist = c.execute("select width_bucket(score, 0, 100.0001, 10) as b, count(*) as n from dscope group by 1 order by 1").fetchall()
+            p).fetchone()
+        head = {**stored["head"], **dict(live)}
         top = c.execute(
-            """with top as (
-                   -- pick the 8 first, then join their details (not the whole scope)
-                   select d.* from dscope d
+            f"""with top as (
+                   -- the first 8 by score (through the score index), then their details
+                   select d.* from {d_sql}
                    where d.score >= 40
                      and not exists (select 1 from user_company uc where uc.company_number = d.company_number
                                      and uc.user_id = %(uid)s and uc.status <> 'new')
@@ -967,12 +990,12 @@ def _dashboard(which: str = "all"):
                left join company_ownership o on o.company_number = c.company_number
                order by d.score desc, d.coverage desc""", p).fetchall()
         recent = c.execute(
-            """select ch.company_number, ch.kind, ch.field, ch.old_value, ch.new_value, ch.detected_at, c.name,
+            f"""select ch.company_number, ch.kind, ch.field, ch.old_value, ch.new_value, ch.detected_at, c.name,
                       coalesce(uc.status, 'new') as status
                from company_change ch join company c on c.company_number = ch.company_number
                left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
                where ch.detected_at > now() - interval '30 days' and ch.kind <> 'new_company'
-                 and (exists (select 1 from dscope d where d.company_number = ch.company_number)
+                 and (exists (select 1 from {d_sql} where d.company_number = ch.company_number)
                       or coalesce(uc.status, 'new') <> 'new')
                order by (coalesce(uc.status,'new') <> 'new') desc, (ch.kind = 'status') desc, ch.detected_at desc
                limit 8""", p).fetchall()
@@ -982,34 +1005,26 @@ def _dashboard(which: str = "all"):
                where uc.user_id = %(uid)s and uc.next_action_on is not null and uc.status not in ('rejected','passed')
                order by uc.next_action_on limit 6""", p).fetchall()
         funnel = c.execute("select status, count(*) as n from user_company where user_id = %(uid)s group by 1", p).fetchall()
-        ownership = c.execute(
-            """select coalesce(o.ownership_type,'unknown') as type, count(*) as n from dscope d
-               left join company_ownership o using (company_number) group by 1 order by 2 desc""").fetchall()
         freshness = c.execute(
             "select kind, max(finished_at) as last from import_run where finished_at is not null group by kind").fetchall()
-        trend = c.execute(
-            """select extract(year from period_end)::int as year, count(distinct company_number) as companies,
-                      percentile_cont(0.5) within group (order by employees) as median_staff,
-                      sum(employees) as total_staff
-               from financial_period where not period_inferred and employees is not null
-                 and company_number in (select company_number from dscope)
-               group by 1 having count(*) >= 3 order by 1""").fetchall()
-        boxes = c.execute(
-            """select b.id, b.name, b.is_active, b.scored_at,
-                      (select count(*) from score s where s.buy_box_id = b.id and not s.excluded) as in_scope,
-                      (select count(*) from score s where s.buy_box_id = b.id and not s.excluded and s.score >= 70) as strong,
-                      (select count(*) from user_company uc join score s on s.company_number = uc.company_number
-                         and s.buy_box_id = b.id and not s.excluded
-                       where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed')) as pipeline
-               from buy_box b where b.user_id = %(uid)s order by b.id""", p).fetchall()
+        boxes = []
+        for b in c.execute("select id, name, is_active, scored_at from buy_box where user_id = %(uid)s order by id", p).fetchall():
+            bs = stats_get(c, f"dashboard:{b['id']}", lambda cc, i=b["id"]: compute_dashboard_stats(cc, str(i)))["head"]
+            pipeline = c.execute(
+                """select count(*) as n from user_company uc join score s on s.company_number = uc.company_number
+                     and s.buy_box_id = %s and not s.excluded
+                   where uc.user_id = %s and uc.status not in ('new','rejected','passed')""", (b["id"], UID)).fetchone()["n"]
+            boxes.append({**dict(b), "in_scope": bs["in_scope"], "strong": bs["strong"], "pipeline": pipeline})
     fmap = {r["status"]: r["n"] for r in funnel}
+    hist = stored["hist"]
     # Recent years are only partly filed (accounts are due up to nine months
     # after the year end), so drop years with under half the usual coverage.
+    trend = stored["trend"]
     peak = max((t["companies"] for t in trend), default=0)
     trend = [t for t in trend if t["companies"] >= peak * 0.5]
     return {
         "head": head, "score_hist": [{"b": i, "n": next((h["n"] for h in hist if h["b"] == i), 0)} for i in range(1, 11)],
-        "top": top, "recent": recent, "due": due, "ownership": ownership,
+        "top": top, "recent": recent, "due": due, "ownership": stored["ownership"],
         "funnel": [{"status": st, "label": STATUS_LABELS[st], "n": fmap.get(st, 0)} for st in STATUSES if st != "new"],
         "freshness": {r["kind"]: r["last"] for r in freshness}, "trend": trend,
         "buy_box": bb_name, "scope": which, "boxes": boxes,
@@ -1077,7 +1092,11 @@ def compute_sic_counts(c) -> list[dict]:
 
 def refresh_stats(c):
     """Recompute stored summaries after a data load (called by the jobs)."""
-    for key, fn in (("sic_counts", compute_sic_counts), ("coverage", _coverage_compute), ("meta_lists", compute_meta_lists)):
+    todo = [("sic_counts", compute_sic_counts), ("coverage", _coverage_compute), ("meta_lists", compute_meta_lists),
+            ("dashboard:all", lambda cc: compute_dashboard_stats(cc, "all"))]
+    for b in c.execute("select id from buy_box where user_id = %s", (UID,)).fetchall():
+        todo.append((f"dashboard:{b['id']}", lambda cc, i=b["id"]: compute_dashboard_stats(cc, str(i))))
+    for key, fn in todo:
         c.execute("insert into stats (key, value) values (%s, %s) on conflict (key) do update set value = excluded.value, updated_at = now()",
                   (key, json.dumps(fn(c), default=str)))
 

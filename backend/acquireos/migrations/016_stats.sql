@@ -12,3 +12,15 @@ create table if not exists stats (
 create or replace function ao_rowcount(t text) returns bigint language sql stable as $$
     select greatest(reltuples, 0)::bigint from pg_class where oid = t::regclass
 $$;
+
+-- Never-analysed tables (reltuples -1, or 0 when small) are counted properly.
+create or replace function ao_rowcount(t text) returns bigint language plpgsql stable as $$
+declare est real; n bigint;
+begin
+    select reltuples into est from pg_class where oid = t::regclass;
+    if est is null or est <= 0 then
+        execute format('select count(*) from %s', t) into n;
+        return n;
+    end if;
+    return est::bigint;
+end $$;
