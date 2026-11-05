@@ -7,6 +7,7 @@ import io
 import secrets
 from contextlib import asynccontextmanager
 import json
+import re
 import shutil
 import uuid
 from datetime import date
@@ -204,9 +205,10 @@ def companies(
     with db.conn() as c:
         sj, sx, bb_id, bb_name = _score_join(c, bb)
         where, params = ["true"], {"bb": bb_id, "uid": UID, "bbname": bb_name}
-        if q:
-            where.append("(c.name ilike %(q)s or c.company_number ilike %(q)s or c.postcode ilike %(q)s)")
-            params["q"] = f"%{q.strip()}%"
+        search_capped = False
+        if q and q.strip():
+            cands, search_capped = _search_candidates(c, q)
+            where.append("c.company_number = any(%(qcands)s)"); params["qcands"] = cands
         if region:
             where.append("c.region = %(region)s"); params["region"] = region
         if tier:
@@ -276,7 +278,10 @@ def companies(
         if format == "map":
             return _map_points(c, where, params, sj)
         direction = "asc" if dir == "asc" else "desc"
-        if sort == "name":
+        if sort == "relevance" and "qcands" in params:
+            # Search order: exact number, postcode, names starting with it, names containing it.
+            order_sql = "array_position(%(qcands)s::text[], c.company_number), c.name"
+        elif sort == "name":
             # Matches company_name_sort_idx, so A-Z paging over millions is instant.
             order_sql = f"c.name {direction}, c.company_number {direction}"
         else:
@@ -339,10 +344,62 @@ def companies(
             total = c.execute(f"select count(*) as n from (select 1 {filt} limit {COUNT_CAP + 1}) x", params).fetchone()["n"]
             if total > COUNT_CAP:
                 total, capped = COUNT_CAP, True
-    return {"total": total, "capped": capped, "rows": rows}
+        capped = capped or search_capped
+    return {"total": total, "capped": capped, "rows": rows, "search_limited": search_capped}
 
 
 COUNT_CAP = 100_000
+SEARCH_CAP = 5_000
+_PC_RE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?(\s*\d[A-Z]{0,2})?$")
+_NUM_RE = re.compile(r"^([A-Z]{2})?\d{1,8}$")
+
+
+def _like_escape(s: str) -> str:
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _search_candidates(c, q: str) -> tuple[list[str], bool]:
+    """Company numbers matching a search, found with indexes rather than a
+    scan of millions of rows: the exact company number, postcodes starting
+    with it, names starting with it, then names containing it. Returns
+    (numbers, limited) where limited means a very common term matched more
+    than SEARCH_CAP companies and only the first ones are listed."""
+    from . import normalise as nm
+
+    qs = " ".join(q.strip().split())
+    qu = qs.upper()
+    found: dict[str, None] = {}
+    compact = qu.replace(" ", "")
+    if _NUM_RE.match(compact):
+        num = nm.company_number(compact)
+        for r in c.execute("select company_number from company where company_number = any(%s)", ([num, compact],)):
+            found[r["company_number"]] = None
+    limited = False
+    if _PC_RE.match(qu):
+        if " " not in qu and len(compact) <= 4:
+            pattern = _like_escape(compact) + " %"  # outward code only: LS1 means LS1 x, not LS10
+        else:
+            pattern = _like_escape(nm.postcode(qu) or qu) + "%"
+        rows = c.execute("select company_number from company where postcode like %s limit %s",
+                         (pattern, SEARCH_CAP + 1)).fetchall()
+        limited = limited or len(rows) > SEARCH_CAP
+        for r in rows[:SEARCH_CAP]:
+            found[r["company_number"]] = None
+    rows = c.execute("select company_number from company where name like %s order by name limit %s",
+                     (_like_escape(qu) + "%", SEARCH_CAP + 1)).fetchall()
+    limited = limited or len(rows) > SEARCH_CAP
+    for r in rows[:SEARCH_CAP]:
+        found[r["company_number"]] = None
+    if len(qs) >= 3 and len(found) < SEARCH_CAP:
+        # Names containing the words anywhere (trigram index). Each word must appear.
+        words = [w for w in qu.split(" ") if w]
+        conds = " and ".join(["name ilike %s"] * len(words))
+        rows = c.execute(f"select company_number from company where {conds} limit %s",
+                         (*[f"%{_like_escape(w)}%" for w in words], SEARCH_CAP + 1)).fetchall()
+        limited = limited or len(rows) > SEARCH_CAP
+        for r in rows[:SEARCH_CAP]:
+            found[r["company_number"]] = None
+    return list(found)[: SEARCH_CAP * 2], limited
 
 
 def _count_all() -> int:

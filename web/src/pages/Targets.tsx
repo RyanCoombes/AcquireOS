@@ -61,6 +61,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const query = useMemo(() => Object.fromEntries(params.entries()), [params]);
   const page = Number(query.page ?? 0);
   const apiParams: Record<string, string> = { ...DEFAULTS[mode], ...query, limit: String(PAGE), offset: String(page * PAGE) };
+  // A search lists the best matches first unless you pick a column to sort by.
+  if (query.q && !query.sort) { apiParams.sort = "relevance"; delete apiParams.dir; }
   delete apiParams.page;
   // Old links and saved searches used include_excluded / in_box=1.
   delete apiParams.include_excluded;
@@ -84,7 +86,15 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
     p.delete("page");
     setParams(p, { replace: true });
   };
-  const sort = query.sort ?? DEFAULTS[mode].sort;
+  // Search as you type: the list updates a moment after you stop typing.
+  const [qText, setQText] = useState(query.q ?? "");
+  useEffect(() => { setQText(query.q ?? ""); }, [query.q]);
+  useEffect(() => {
+    if (qText.trim() === (query.q ?? "")) return;
+    const t = setTimeout(() => set("q", qText.trim()), 350);
+    return () => clearTimeout(t);
+  }, [qText]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sort = query.sort ?? (query.q ? "relevance" : DEFAULTS[mode].sort);
   const dir = query.dir ?? DEFAULTS[mode].dir;
   const toggleSort = (k: string) => {
     const p = new URLSearchParams(params);
@@ -159,9 +169,9 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const search = (
     <div className="field">
       <label htmlFor="f-q">Search</label>
-      <input id="f-q" type="search" key={`q-${query.q ?? ""}`} defaultValue={query.q ?? ""} placeholder="Name, number, postcode"
-             onKeyDown={(e) => { if (e.key === "Enter") set("q", (e.target as HTMLInputElement).value); }}
-             onBlur={(e) => set("q", e.target.value)} />
+      <input id="f-q" type="search" value={qText} placeholder="Name, number or postcode" autoComplete="off"
+             onChange={(e) => setQText(e.target.value)}
+             onKeyDown={(e) => { if (e.key === "Enter") set("q", qText.trim()); }} />
     </div>
   );
   const industryPicker = (w: string | number) => (
@@ -303,7 +313,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
             <span><b>{int(total)}{capped ? "+" : ""}</b> {total === 1 ? "company" : "companies"}
               {inBox ? (boxName ? <> in <b>{boxName}</b></> : " in at least one buy box") : ""}</span>
             <span className="faint">
-              {capped ? "Counting stops at 100,000; add a filter to narrow it down. " : ""}
+              {list.data?.search_limited ? "Lots of companies match that; showing the first 5,000. Type more to narrow it down. "
+                : capped ? "Counting stops at 100,000; add a filter to narrow it down. " : ""}
               {mode === "directory" ? (boxName ? `Best fit is the score in ${boxName}.` : "Best fit is each company's highest score across your buy boxes, where it is in one.")
                 : boxName ? "Scores are from this buy box." : "Each company's best score across your buy boxes, tagged with the box."}
             </span>

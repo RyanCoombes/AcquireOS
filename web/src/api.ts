@@ -179,7 +179,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   meta: () => req<Meta>("/api/meta"),
   companies: (params: Record<string, string>) =>
-    req<{ total: number; capped?: boolean; rows: Row[] }>("/api/companies?" + new URLSearchParams(params)),
+    req<{ total: number; capped?: boolean; search_limited?: boolean; rows: Row[] }>("/api/companies?" + new URLSearchParams(params)),
   company: (n: string, bb?: number | null) =>
     req<CompanyDetail>(`/api/companies/${encodeURIComponent(n)}${bb ? `?bb=${bb}` : ""}`),
   setState: (n: string, body: Record<string, unknown>) =>

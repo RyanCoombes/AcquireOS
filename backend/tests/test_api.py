@@ -182,3 +182,27 @@ def test_directory_sort_status_groups_and_coverage(c):
         assert nums("active") | nums("insolvency") | nums("dissolved") | nums("strike_off") | nums("other") == {r["company_number"] for r in az["rows"]}
         cov = cl.get("/api/coverage").json()
         assert cov["active"] >= 1 and "with_accounts" in cov and "accounts_files" in cov
+
+
+def test_search_by_name_number_and_postcode(c):
+    from acquireos.api import app
+
+    with TestClient(app) as cl:
+        f = FIX / "ranked_sample.csv"
+        p = cl.post("/api/import/preview", data={"kind": "companies"}, files={"file": (f.name, f.read_bytes(), "text/csv")}).json()
+        cl.post("/api/import/commit", json={"kind": "companies", "token": p["token"], "suffix": p["suffix"],
+                                            "filename": f.name, "mapping": p["mapping"]})
+
+        def names(q, **kw):
+            r = cl.get("/api/companies", params={"q": q, "sort": "relevance", **kw}).json()
+            return [x["company_number"] for x in r["rows"]]
+        assert names("example systems")[0] == "01000001"      # any case, words in order
+        assert names("systems example") == names("example systems")  # each word, any order
+        assert names("1000001") == ["01000001"]              # number without the leading zero
+        assert names("SC123456") == ["SC123456"]
+        assert "01000001" in names("SA1")                     # outward postcode
+        assert "01000001" in names("sa1 1aa")                 # full postcode, any case
+        assert names("zzzz") == []
+        assert names("100%") == [] and names("_") == []       # LIKE wildcards are taken literally
+        # filters still apply on top of a search
+        assert names("example", company_status="dissolved") == []
