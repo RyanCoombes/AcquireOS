@@ -192,6 +192,7 @@ export default function Import() {
 
 function ChFeed({ onDone }: { onDone: () => void }) {
   const [months, setMonths] = useState(24);
+  const [reread, setReread] = useState(false);
   const { job, refresh } = useJob();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -204,7 +205,7 @@ function ChFeed({ onDone }: { onDone: () => void }) {
 
   const start = async () => {
     setBusy(true); setMsg(null);
-    try { await api.startRefresh(months); refresh(); } catch (e: any) { setMsg(e.message); }
+    try { await api.startRefresh(months, reread); refresh(); } catch (e: any) { setMsg(e.message); }
     setBusy(false);
   };
   const stop = async () => {
@@ -230,6 +231,10 @@ function ChFeed({ onDone }: { onDone: () => void }) {
                 <select value={months} onChange={(e) => setMonths(Number(e.target.value))}>
                   {[1, 3, 6, 12, 24].map((m) => <option key={m} value={m}>{m}</option>)}
                 </select>
+              </label>
+              <label className="check small" title="Months loaded before AcquireOS read balance sheet and cost figures are downloaded and read again">
+                <input type="checkbox" checked={reread} onChange={(e) => setReread(e.target.checked)} />
+                Re-read older months for new figures
               </label>
               <button className="btn primary" disabled={busy} onClick={start}>Download and load now</button>
             </>

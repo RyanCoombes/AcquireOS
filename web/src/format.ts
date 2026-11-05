@@ -89,6 +89,7 @@ export const CHANGE_KIND: Record<string, string> = {
   accounts: "New accounts",
   staff: "Staff",
   owner: "Owners",
+  charge: "New charge",
 };
 
 export function describeChange(c: { kind: string; field: string | null; old_value: string | null; new_value: string | null }): string {
@@ -101,6 +102,7 @@ export function describeChange(c: { kind: string; field: string | null; old_valu
     case "name": return `Renamed from ${c.old_value}`;
     case "address": return `Registered office moved to ${c.new_value}`;
     case "sic": return `SIC ${c.old_value || "none"} → ${c.new_value}`;
+    case "charge": return `New charge registered: ${c.new_value} outstanding (was ${c.old_value})`;
     default: return `${c.field ?? c.kind}: ${c.old_value ?? ""} → ${c.new_value ?? ""}`;
   }
 }

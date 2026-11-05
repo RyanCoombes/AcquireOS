@@ -40,7 +40,22 @@ CONCEPTS: dict[str, list[str]] = {
     "debtors": ["Debtors", "DebtorsDueWithinOneYear"],
     "dividends": ["DividendsPaid", "DividendsPaidOnShares", "DividendsPaidClassifiedAsFinancingActivities",
                   "EquityDividendsPaid"],
+    # Balance sheet totals. Creditors are usually tagged with a "within / after
+    # one year" breakdown, which we do not read, so they are worked out from
+    # these totals instead (current assets - net current assets, and so on).
+    "fixed_assets": ["FixedAssets", "NonCurrentAssets", "TotalFixedAssets"],
+    "intangible_assets": ["IntangibleAssets", "IntangibleAssetsIncludingGoodwill", "IntangibleFixedAssets"],
+    "current_assets": ["CurrentAssets", "TotalCurrentAssets"],
+    "net_current_assets": ["NetCurrentAssetsLiabilities", "NetCurrentAssets"],
+    "total_assets_less_cl": ["TotalAssetsLessCurrentLiabilities"],
+    # Profit and loss detail: only in fuller accounts.
+    "gross_profit": ["GrossProfitLoss", "GrossProfit"],
+    "director_pay": ["DirectorRemuneration", "DirectorsRemuneration", "DirectorRemunerationBenefitsIncludingPayments",
+                     "DirectorsRemunerationAndOtherBenefits"],
+    "staff_costs": ["StaffCostsEmployeeBenefitsExpense", "StaffCosts", "WagesSalaries"],
 }
+# Bumped when new figures are read, so months read earlier can be read again.
+LOADER_VERSION = 2
 _LOCAL_TO_FIELD = {local: (field, rank) for field, names in CONCEPTS.items() for rank, local in enumerate(names)}
 
 NAME_RE = re.compile(r"_(?P<num>[A-Z0-9]{8})_(?P<date>\d{8})\.(?:html|xhtml|xml)$", re.I)
@@ -290,8 +305,8 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
             for r in cur:
                 wanted.add(r["company_number"])
     name = ", ".join(p.name for p in paths)
-    run_id = conn.execute("insert into import_run (kind, filename) values ('accounts', %s) returning id",
-                          (name[:500],)).fetchone()["id"]
+    run_id = conn.execute("insert into import_run (kind, filename, loader_version) values ('accounts', %s, %s) returning id",
+                          (name[:500], LOADER_VERSION)).fetchone()["id"]
     conn.execute("drop table if exists acc_stage; drop table if exists acc_touched")
     conn.execute("create temp table acc_touched (company_number text primary key)")
     conn.execute(f"""create temp table acc_stage (company_number text, period_end date, balance_date date,

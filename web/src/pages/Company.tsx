@@ -151,6 +151,7 @@ export default function Company() {
                   </tbody>
                 </table>
                 {est && <p className="muted small">Revenue: {range(est.revenue_low, est.revenue_high)}. Method: {est.method}.</p>}
+                <BalanceSheet fin={fin} />
               </>
             ) : <div className="faint">No accounts imported.</div>}
           </section>
@@ -254,7 +255,22 @@ export default function Company() {
               <dt>Industry (SIC)</dt><dd>{c.sic_codes.join(", ") || "—"}</dd>
               <dt>Registered office</dt><dd>{c.registered_address ?? "—"} <Flags address={c.address_flag} /></dd>
               <dt>Review tier</dt><dd>{c.review_tier ?? "—"}</dd>
-              {c.last_accounts_date && <><dt>Last accounts</dt><dd>Made up to {date(c.last_accounts_date)}</dd></>}
+              {c.last_accounts_date && <><dt>Last accounts</dt><dd>Made up to {date(c.last_accounts_date)}
+                {c.accounts_category ? <span className="faint"> · {accountsLabel(c.accounts_category)}</span> : null}</dd></>}
+              {c.accounts_next_due && <><dt>Next accounts due</dt><dd className={overdue(c.accounts_next_due, c.status) ? "neg" : ""}>
+                {date(c.accounts_next_due)}{overdue(c.accounts_next_due, c.status) ? " · overdue" : ""}</dd></>}
+              {c.confirmation_next_due && <><dt>Confirmation statement due</dt><dd className={overdue(c.confirmation_next_due, c.status) ? "neg" : ""}>
+                {date(c.confirmation_next_due)}{overdue(c.confirmation_next_due, c.status) ? " · overdue" : ""}</dd></>}
+              {c.charges_total != null && <><dt title="Mortgages and debentures: loans secured on the company's assets">Charges</dt><dd>
+                {c.charges_total === 0 ? "None registered" : <>
+                  <b className={c.charges_outstanding ? "" : "faint"}>{c.charges_outstanding ?? 0} outstanding</b>
+                  {c.charges_part_satisfied ? `, ${c.charges_part_satisfied} part repaid` : ""}
+                  {c.charges_satisfied ? `, ${c.charges_satisfied} repaid` : ""} · {c.charges_total} in total.{" "}
+                  <a href={`${chUrl(c.company_number)}/charges`} target="_blank" rel="noreferrer">Who holds them ↗</a></>}
+              </dd></>}
+              {c.previous_names && c.previous_names.length > 0 && <><dt>Previous names</dt><dd>
+                {c.previous_names.map((p, i) => <div key={i}>{p.name}{p.until ? <span className="faint"> · until {date(p.until)}</span> : null}</div>)}
+              </dd></>}
               <dt>Source</dt><dd>{c.source ?? "—"} · updated {dateTime(c.updated_at)} ({relDays(c.updated_at)})</dd>
               {Object.entries(c.extra ?? {}).map(([k, v]) => (
                 <FactRow key={k} k={k} v={v} />
@@ -424,4 +440,69 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, 
 const hostOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u; } };
 function natureLabel(n: string) {
   return n.replace(/-/g, " ").replace(/ percent/, "%").replace(/ownership of shares/, "shares").replace(/voting rights/, "votes");
+}
+
+
+function overdue(d: string | null | undefined, status: string | null) {
+  return !!d && (status ?? "").startsWith("active") && new Date(d).getTime() < Date.now() - 864e5;
+}
+
+const ACCOUNTS_LABEL: Record<string, string> = {
+  "micro entity": "micro-entity accounts", "small": "small company accounts", "total exemption full": "small (unaudited) accounts",
+  "total exemption small": "small (unaudited) accounts", "unaudited abridged": "abridged small accounts", "audited abridged": "abridged small accounts",
+  "partial exemption": "small accounts (partial exemption)", "medium": "medium-sized company accounts", "full": "full accounts",
+  "group": "group accounts: it has subsidiaries", "audit exemption subsidiary": "subsidiary exemption: owned by a group",
+  "filing exemption subsidiary": "subsidiary exemption: owned by a group", "dormant": "dormant accounts",
+  "no accounts filed": "no accounts filed yet", "initial": "initial accounts",
+};
+export function accountsLabel(cat: string) { return ACCOUNTS_LABEL[cat] ?? cat; }
+
+/** Balance sheet and cost detail, where the accounts include it. Creditors
+    are worked out from the totals the accounts state. */
+function BalanceSheet({ fin }: { fin: CompanyDetail["financials"] }) {
+  const n = (v: string | null | undefined) => (v === null || v === undefined ? null : Number(v));
+  const rows = [...fin].reverse().filter((f) => !f.period_inferred).map((f) => {
+    const ca = n(f.current_assets), nca = n(f.net_current_assets), tal = n(f.total_assets_less_cl), na = n(f.net_assets);
+    // Worked out from totals; a negative result means the filing's totals do not add up, so show nothing.
+    const short = ca !== null && nca !== null && ca - nca >= 0 ? ca - nca : null;
+    const long = tal !== null && na !== null && tal - na >= 0 ? tal - na : null;
+    return { f, short, long };
+  }).filter(({ f, short, long }) => [f.fixed_assets, f.intangible_assets, f.current_assets, f.gross_profit, f.director_pay, f.staff_costs]
+    .some((v) => v !== null && v !== undefined) || short !== null || long !== null);
+  if (!rows.length) return null;
+  type Col = { label: string; get: (r: (typeof rows)[number]) => number | string | null | undefined; sub?: (r: (typeof rows)[number]) => string | null };
+  const all: Col[] = [
+    { label: "Fixed assets", get: (r) => r.f.fixed_assets,
+      sub: (r) => (r.f.intangible_assets != null && Number(r.f.intangible_assets) !== 0 ? `${money(r.f.intangible_assets)} intangible` : null) },
+    { label: "Owed within a year", get: (r) => r.short },
+    { label: "Owed after a year", get: (r) => r.long },
+    { label: "Gross profit", get: (r) => r.f.gross_profit },
+    { label: "Staff costs", get: (r) => r.f.staff_costs },
+    { label: "Directors' pay", get: (r) => r.f.director_pay },
+  ];
+  // Only the columns these accounts actually give.
+  const cols = all.filter((c) => rows.some((r) => c.get(r) !== null && c.get(r) !== undefined));
+  return (
+    <>
+      <h3 style={{ margin: "18px 0 6px", fontSize: 14 }}>Balance sheet and costs</h3>
+      <table>
+        <thead><tr><th>Period end</th>{cols.map((c) => <th key={c.label} className="num">{c.label}</th>)}</tr></thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.f.period_end}>
+              <td className="nowrap">{date(r.f.period_end)}</td>
+              {cols.map((c) => {
+                const v = c.get(r); const sub = c.sub?.(r);
+                return <td key={c.label} className={`num ${Number(v) < 0 ? "neg" : ""}`}>
+                  {v === null || v === undefined ? "—" : money(v, { precise: true })}{sub && <div className="sub">{sub}</div>}</td>;
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="faint small">“Owed within a year” is current assets minus net current assets; “owed after a year” is the rest of the
+        liabilities and provisions (total assets less current liabilities, minus net assets). Charges are loans secured on assets; see the record below. Most small companies file abridged accounts
+        without profit and loss detail, so those columns are often blank.</p>
+    </>
+  );
 }

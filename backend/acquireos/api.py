@@ -143,12 +143,26 @@ def _meta():
         "tiers": tiers,
         "company_statuses": company_statuses,
         "status_groups": [{"value": k, "label": v[0]} for k, v in STATUS_GROUPS.items()],
+        "account_sizes": [{"value": k, "label": v[0]} for k, v in ACCOUNT_SIZES.items()],
         "map": {"tiles": config.MAP_TILE_URL, "attribution": config.MAP_ATTRIBUTION},
         "counts": counts,
         "buy_box": {"id": bb["id"], "name": bb["name"]},
         "buy_boxes": boxes,
     }
 
+
+# Accounts categories from the register, grouped by what they say about size.
+ACCOUNT_SIZES = {
+    "micro": ("Micro", ["micro entity"]),
+    "small": ("Small", ["small", "total exemption full", "total exemption small", "unaudited abridged",
+                        "partial exemption", "audited abridged"]),
+    "medium": ("Medium", ["medium"]),
+    "full": ("Full (large)", ["full"]),
+    "group": ("Group (has subsidiaries)", ["group"]),
+    "subsidiary": ("Subsidiary exemption (owned by a group)", ["audit exemption subsidiary", "filing exemption subsidiary"]),
+    "dormant": ("Dormant", ["dormant"]),
+    "none": ("None filed yet", ["no accounts filed", "accounts type not available", "initial"]),
+}
 
 # Company status groups for filtering. Companies House statuses are lower-cased
 # on load; "removed from register" is ours, for companies that left the file.
@@ -180,6 +194,7 @@ def companies(
     change_kind: str | None = None, min_value: float | None = None, max_value: float | None = None,
     min_years: int | None = None, format: str = "list", business_type: str | None = None,
     has_website: bool | None = None, bb: str = "all", in_box: bool | None = None,
+    accounts_size: str | None = None, overdue: str | None = None, charges: str | None = None,
 ):
     """All companies, with scores from one buy box (bb=<id>) or each company's
     best score across buy boxes (bb=all). in_box limits to companies inside
@@ -245,6 +260,17 @@ def companies(
             params["btype"] = business_type
         if has_website is not None:
             where.append(("" if has_website else "not ") + "exists (select 1 from enrichment en where en.company_number = c.company_number and en.website is not null)")
+        if accounts_size and accounts_size in ACCOUNT_SIZES:
+            where.append("c.accounts_category = any(%(acats)s)"); params["acats"] = ACCOUNT_SIZES[accounts_size][1]
+        if overdue in ("accounts", "confirmation", "any"):
+            conds = {"accounts": ["c.accounts_next_due < current_date"],
+                     "confirmation": ["c.confirmation_next_due < current_date"]}
+            parts = conds.get(overdue) or conds["accounts"] + conds["confirmation"]
+            where.append("(" + " or ".join(parts) + ") and c.status like 'active%%'")
+        if charges == "outstanding":
+            where.append("c.charges_outstanding > 0")
+        elif charges == "none":
+            where.append("coalesce(c.charges_outstanding, 0) = 0 and c.charges_total is not null")
         if in_box:
             where.append(sx)
         if format == "map":
@@ -278,6 +304,9 @@ def companies(
             )
             select c.company_number, c.name, c.region, c.postcode, c.review_tier, c.incorporation_date,
                    c.sic_codes, c.address_flag, c.status as company_status,
+                   c.accounts_category, c.charges_outstanding,
+                   (c.status like 'active%%' and c.accounts_next_due < current_date) as accounts_overdue,
+                   (c.status like 'active%%' and c.confirmation_next_due < current_date) as confirmation_overdue,
                    l.employees, l.net_assets, l.period_end, l.staff_trend,
                    e.revenue_low, e.revenue_high, e.basis as revenue_basis,
                    o.ownership_type, o.oldest_birth_year, o.flags,
@@ -1471,7 +1500,7 @@ def job_cancel(job_id: int):
 
 
 @app.post("/api/refresh")
-def start_refresh(months: int = 1):
+def start_refresh(months: int = 1, reread: bool = False):
     """Start the Companies House download and load in the background."""
     import threading
 
@@ -1484,7 +1513,7 @@ def start_refresh(months: int = 1):
 
     def work():
         try:
-            fetch.run_job("refresh", accounts_months=max(1, min(months, 36)))
+            fetch.run_job("refresh", accounts_months=max(1, min(months, 36)), reread_old=reread)
         except Exception:
             pass
         finally:

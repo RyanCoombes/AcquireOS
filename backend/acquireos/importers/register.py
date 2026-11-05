@@ -43,7 +43,21 @@ COLS = {
     "sic2": ["siccode_sictext_2"],
     "sic3": ["siccode_sictext_3"],
     "sic4": ["siccode_sictext_4"],
+    "acc_cat": ["accounts_accountcategory"],
+    "acc_due": ["accounts_nextduedate"],
+    "cs_due": ["confstmtnextduedate"],
+    "mort_total": ["mortgages_nummortcharges"],
+    "mort_out": ["mortgages_nummortoutstanding"],
+    "mort_part": ["mortgages_nummortpartsatisfied"],
+    "mort_sat": ["mortgages_nummortsatisfied"],
+    **{f"prev{i}_name": [f"previousname_{i}_companyname"] for i in range(1, 11)},
+    **{f"prev{i}_date": [f"previousname_{i}_condate"] for i in range(1, 11)},
 }
+# Bumped when the loader starts keeping more fields: a snapshot read by an
+# older version is read again rather than skipped.
+LOADER_VERSION = 2
+_STAGE_COLS = ("num, name, addr, pc, category, status, dissolved, inc, last_acc, sic, sic_text, "
+               "acc_cat, acc_due, cs_due, mort_total, mort_out, mort_part, mort_sat, prev_names")
 # Fewer rows than this and a file is not treated as the full register.
 FULL_REGISTER_MIN_ROWS = 500_000
 
@@ -86,15 +100,21 @@ def _d(v: str | None) -> str | None:
         return d.isoformat() if d else None
 
 
+def _int(v: str | None) -> int | None:
+    v = (v or "").strip()
+    return int(v) if v.isdigit() else None
+
+
 def _stage_python(conn, rows, col, est_rows, progress) -> int:
     """Row-by-row reader (slower; used if the fast path cannot read a file)."""
     conn.execute("""create temp table reg_stage (
         num text, name text, addr text, pc text, category text, status text, dissolved date, inc date,
-        last_acc date, sic text[], sic_text text[]) on commit drop""")
+        last_acc date, sic text[], sic_text text[], acc_cat text, acc_due date, cs_due date,
+        mort_total int, mort_out int, mort_part int, mort_sat int, prev_names jsonb) on commit drop""")
     rows_in = 0
     seen: set[str] = set()
     with conn.cursor().copy(
-        "copy reg_stage (num, name, addr, pc, category, status, dissolved, inc, last_acc, sic, sic_text) from stdin"
+        f"copy reg_stage ({_STAGE_COLS}) from stdin"
     ) as cp:
         for row in rows:
             g = lambda k: (row.get(col[k]) or "").strip() if col[k] else ""  # noqa: E731
@@ -111,9 +131,14 @@ def _stage_python(conn, rows, col, est_rows, progress) -> int:
                 if m and m.group(1).zfill(5) not in codes:
                     codes.append(m.group(1).zfill(5))
             pc = n.postcode(g("pc")) or (g("pc").upper() or None)
+            prev = [{"name": g(f"prev{i}_name"), "until": _d(g(f"prev{i}_date"))}
+                    for i in range(1, 11) if g(f"prev{i}_name")]
             cp.write_row((num, g("name") or num, ", ".join(p for p in parts if p) or None, pc,
                           g("category") or None, (g("status") or "").lower() or None, _d(g("dissolved")),
-                          _d(g("inc")), _d(g("last_acc")), codes, sic_raw))
+                          _d(g("inc")), _d(g("last_acc")), codes, sic_raw,
+                          (g("acc_cat") or "").lower() or None, _d(g("acc_due")), _d(g("cs_due")),
+                          _int(g("mort_total")), _int(g("mort_out")), _int(g("mort_part")), _int(g("mort_sat")),
+                          json.dumps(prev) if prev else None))
             if progress and rows_in % 50_000 == 0:
                 progress(f"Reading the register: {rows_in:,} companies", min(rows_in / est_rows, 1) * 0.6)
     return rows_in
@@ -156,6 +181,10 @@ def _stage_fast(conn, path: Path, headers: list[str], progress) -> int:
     def dt(key):
         return f"case when {c(key)} ~ '^\\d{{2}}/\\d{{2}}/\\d{{4}}$' then to_date({c(key)}, 'DD/MM/YYYY') end"
 
+    def num(key):
+        return f"case when {c(key)} ~ '^\\d{{1,6}}$' then {c(key)}::int end"
+
+    prev_rows = ", ".join(f"({c(f'prev{i}_name')}, {dt(f'prev{i}_date')}, {i})" for i in range(1, 11))
     sic_parts = ", ".join(c(k) for k in ("sic1", "sic2", "sic3", "sic4"))
     addr_parts = ", ".join(c(k) for k in ("careof", "pobox", "line1", "line2", "town", "county", "pc"))
     if progress:
@@ -167,7 +196,12 @@ def _stage_fast(conn, path: Path, headers: list[str], progress) -> int:
                    nullif(concat_ws(', ', {addr_parts}), '') as addr, upper({c("pc")}) as pc0,
                    {c("category")} as category, lower({c("status")}) as status,
                    {dt("dissolved")} as dissolved, {dt("inc")} as inc, {dt("last_acc")} as last_acc,
-                   array_remove(array[{sic_parts}], null) as sic_text
+                   array_remove(array[{sic_parts}], null) as sic_text,
+                   lower({c("acc_cat")}) as acc_cat, {dt("acc_due")} as acc_due, {dt("cs_due")} as cs_due,
+                   {num("mort_total")} as mort_total, {num("mort_out")} as mort_out,
+                   {num("mort_part")} as mort_part, {num("mort_sat")} as mort_sat,
+                   (select jsonb_agg(jsonb_build_object('name', v.nm, 'until', v.d) order by v.o)
+                    from (values {prev_rows}) v(nm, d, o) where v.nm is not null) as prev_names
             from reg_raw
         ), n as (
             select r.*, case
@@ -185,7 +219,7 @@ def _stage_fast(conn, path: Path, headers: list[str], progress) -> int:
                    select lpad(substring(t from '^\s*(\d{{4,5}})'), 5, '0') as code, min(ord) as o
                    from unnest(sic_text) with ordinality u(t, ord)
                    where t ~ '^\s*\d{{4,5}}' group by 1) z), '{{}}') as sic,
-               sic_text
+               sic_text, acc_cat, acc_due, cs_due, mort_total, mort_out, mort_part, mort_sat, prev_names
         from n order by num, seq desc""")
     conn.execute("drop table reg_raw")
     return conn.execute("select count(*) as n from reg_stage").fetchone()["n"]
@@ -203,8 +237,8 @@ def load(conn, path: Path, register_date: date | None = None, full: bool = True,
     col = {k: next((idx[a] for a in aliases if a in idx), None) for k, aliases in COLS.items()}
     snap = register_date or snapshot_date(path)
     run_id = conn.execute(
-        "insert into import_run (kind, filename) values ('register', %s) returning id", (path.name,)
-    ).fetchone()["id"]
+        "insert into import_run (kind, filename, loader_version) values ('register', %s, %s) returning id",
+        (path.name, LOADER_VERSION)).fetchone()["id"]
 
     conn.execute("drop table if exists reg_stage; drop table if exists reg_new; drop table if exists reg_raw; drop table if exists reg_diff")
     rows_in = None
@@ -231,16 +265,20 @@ def load(conn, path: Path, register_date: date | None = None, full: bool = True,
         select s.*, ao_address_key(s.addr) as akey,
                c.company_number is null as is_new,
                c.status as o_status, c.name as o_name, c.registered_address as o_addr, c.address_key as o_akey,
-               c.sic_codes as o_sic, c.register_date as o_reg,
+               c.sic_codes as o_sic, c.register_date as o_reg, c.charges_outstanding as o_charges,
                greatest(c.last_accounts_date, cl.period_end) as o_acc,
                (c.company_number is null or c.register_date is null
                 or (c.name, c.status, c.company_type, c.incorporation_date, c.dissolution_date, c.registered_address,
-                    c.postcode, c.last_accounts_date, c.sic_codes)
+                    c.postcode, c.last_accounts_date, c.sic_codes, c.accounts_category, c.accounts_next_due,
+                    c.confirmation_next_due, c.charges_total, c.charges_outstanding, c.charges_part_satisfied,
+                    c.charges_satisfied, c.previous_names)
                    is distinct from
                    (s.name, s.status, s.category, coalesce(s.inc, c.incorporation_date), s.dissolved,
                     coalesce(s.addr, c.registered_address), coalesce(s.pc, c.postcode),
                     greatest(c.last_accounts_date, s.last_acc),
-                    case when cardinality(s.sic) > 0 then s.sic else c.sic_codes end)) as changed
+                    case when cardinality(s.sic) > 0 then s.sic else c.sic_codes end,
+                    s.acc_cat, s.acc_due, s.cs_due, s.mort_total, s.mort_out, s.mort_part, s.mort_sat,
+                    s.prev_names)) as changed
         from reg_stage s
         left join company c on c.company_number = s.num
         left join company_latest cl on cl.company_number = s.num""")
@@ -267,12 +305,14 @@ def load(conn, path: Path, register_date: date | None = None, full: bool = True,
     conn.execute(r"""
         insert into company as c (company_number, name, status, company_type, incorporation_date, dissolution_date,
             sic_codes, nature_of_business, registered_address, postcode, address_key, address_flag, region,
-            source, register_date, last_accounts_date)
+            source, register_date, last_accounts_date, accounts_category, accounts_next_due, confirmation_next_due,
+            charges_total, charges_outstanding, charges_part_satisfied, charges_satisfied, previous_names)
         select s.num, s.name, s.status, s.category, s.inc, s.dissolved, s.sic,
                array_to_string(s.sic_text, ', '), s.addr, s.pc, s.akey,
                case when s.pc = 'CF14 8LH' then 'ch_default'
                     when s.pc in ('N1 7GU', 'WC2H 9JQ', 'EC1V 2NX') then 'formation_agent' end,
-               ao_region(s.pc), %(src)s, %(snap)s, s.last_acc
+               ao_region(s.pc), %(src)s, %(snap)s, s.last_acc, s.acc_cat, s.acc_due, s.cs_due,
+               s.mort_total, s.mort_out, s.mort_part, s.mort_sat, s.prev_names
         from reg_diff s where s.changed
         on conflict (company_number) do update set
             name = excluded.name,
@@ -293,6 +333,14 @@ def load(conn, path: Path, register_date: date | None = None, full: bool = True,
             source = excluded.source,
             register_date = excluded.register_date,
             last_accounts_date = greatest(c.last_accounts_date, excluded.last_accounts_date),
+            accounts_category = excluded.accounts_category,
+            accounts_next_due = excluded.accounts_next_due,
+            confirmation_next_due = excluded.confirmation_next_due,
+            charges_total = excluded.charges_total,
+            charges_outstanding = excluded.charges_outstanding,
+            charges_part_satisfied = excluded.charges_part_satisfied,
+            charges_satisfied = excluded.charges_satisfied,
+            previous_names = excluded.previous_names,
             updated_at = now()
         where c.register_date is null or excluded.register_date >= c.register_date
         """, {"src": f"Companies House register {snap.isoformat()}", "snap": snap})
@@ -362,6 +410,8 @@ def _record_changes(conn, run_id, snap) -> int:
          "and (select array_agg(x order by x) from unnest(o_sic) x) <> (select array_agg(x order by x) from unnest(sic) x)"),
         ("accounts", "period_end", "o_acc::text", "last_acc::text",
          "last_acc is not null and o_acc is not null and last_acc > o_acc"),
+        ("charge", "charges_outstanding", "o_charges::text", "mort_out::text",
+         "o_charges is not null and mort_out is not null and mort_out > o_charges"),
     ]:
         total += conn.execute(
             f"""insert into company_change (company_number, import_run_id, kind, field, old_value, new_value)

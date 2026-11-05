@@ -167,8 +167,8 @@ def fetch_company_data(conn, keep: bool = False) -> dict:
     from .importers import register
 
     name = found[0][1].rsplit("/", 1)[-1]
-    if conn.execute("select 1 from import_run where kind = 'register' and filename = %s and finished_at is not null",
-                    (name,)).fetchone():
+    if conn.execute("""select 1 from import_run where kind = 'register' and filename = %s and finished_at is not null
+                       and loader_version >= %s""", (name, register.LOADER_VERSION)).fetchone():
         log(f"Skipping {name}: this register snapshot is already loaded")
         return {"skipped": name}
     path = download(found[0][1])
@@ -180,11 +180,15 @@ def fetch_company_data(conn, keep: bool = False) -> dict:
     return r
 
 
-def accounts_plan(conn, months: int, skip_loaded: bool = True) -> list[tuple[str, str, bool]]:
+def accounts_plan(conn, months: int, skip_loaded: bool = True, reread_old: bool = False) -> list[tuple[str, str, bool]]:
     """[(label, url, already_loaded)] NEWEST first, so the latest figures
-    arrive first and history fills in behind them."""
+    arrive first and history fills in behind them. With reread_old, months
+    read by an older version of the loader (fewer figures) count as not loaded."""
+    from .importers.accounts import LOADER_VERSION
+
     loaded = {r["filename"] for r in conn.execute(
-        "select filename from import_run where kind = 'accounts' and finished_at is not null")}
+        "select filename from import_run where kind = 'accounts' and finished_at is not null and loader_version >= %s",
+        (LOADER_VERSION if reread_old else 0,))}
     chosen = links("accounts")[:months]
     out = []
     for key, url in chosen:
@@ -257,7 +261,7 @@ def fetch_psc(conn, keep: bool = False) -> dict:
     return r
 
 
-def refresh(conn, accounts_months: int = 1, psc: bool = True) -> dict:
+def refresh(conn, accounts_months: int = 1, psc: bool = True, reread_old: bool = False) -> dict:
     """The monthly job: company data, then owners, then accounts (newest month
     first), then scoring, links and map locations. Each part is committed as
     it finishes, so a stop or failure keeps what was already loaded."""
@@ -290,7 +294,7 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True) -> dict:
     if psc:
         part("Owners (PSC)", lambda: fetch_psc(conn))
     try:
-        plan = accounts_plan(conn, accounts_months)
+        plan = accounts_plan(conn, accounts_months, reread_old=reread_old)
     except Exception as e:
         plan = []
         out["accounts"] = {"error": str(e)}
@@ -324,7 +328,7 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True) -> dict:
     return out
 
 
-def run_job(kind: str = "refresh", accounts_months: int = 1) -> dict:
+def run_job(kind: str = "refresh", accounts_months: int = 1, reread_old: bool = False) -> dict:
     """Run refresh() as a tracked job (progress visible on every page)."""
     global JOB
     from . import db
@@ -334,7 +338,7 @@ def run_job(kind: str = "refresh", accounts_months: int = 1) -> dict:
     try:
         db.migrate()
         with db.conn() as c:
-            result = refresh(c, accounts_months=accounts_months)
+            result = refresh(c, accounts_months=accounts_months, reread_old=reread_old)
         failed = [k for k, v in result.items() if isinstance(v, dict) and v.get("error")]
         JOB.finish(result, status="done", error=("Some parts failed: " + ", ".join(failed)) if failed else None)
         return result

@@ -48,9 +48,9 @@ const DEFAULTS: Record<Mode, Record<string, string>> = {
   directory: { sort: "name", dir: "asc" },
   targets: { sort: "score", dir: "desc", in_box: "true" },
 };
-const FILTER_KEYS = ["bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
+const FILTER_KEYS = ["accounts_size", "overdue", "charges", "bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
   "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
-const MORE_KEYS = ["business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
+const MORE_KEYS = ["overdue", "charges", "business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
 
 export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const base = mode === "directory" ? "/companies" : "/targets";
@@ -178,6 +178,12 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const ownerAge = <NumField label="Owner aged" k="min_owner_age" placeholder="at least" query={query} set={set} />;
   const ownership = <Select label="Ownership" k="ownership" query={query} set={set} options={Object.entries(OWNERSHIP).map(([v, l]) => [v, l])} />;
   const myStatus = <Select label="My status" k="status" query={query} set={set} options={(m?.statuses ?? []).map((x) => [x.value, x.label])} />;
+  const accountsSize = <Select label="Accounts filed" k="accounts_size" query={query} set={set}
+                              options={(m?.account_sizes ?? []).map((g) => [g.value, g.label] as [string, string])} />;
+  const overdueSel = <Select label="Overdue filings" k="overdue" query={query} set={set}
+                             options={[["any", "Accounts or confirmation"], ["accounts", "Accounts overdue"], ["confirmation", "Confirmation statement overdue"]]} />;
+  const chargesSel = <Select label="Charges (secured loans)" k="charges" query={query} set={set}
+                             options={[["outstanding", "Has outstanding charges"], ["none", "No outstanding charges"]]} />;
   const score = <NumField label={mode === "directory" ? "Best fit" : "Score"} k="min_score" placeholder="at least" query={query} set={set} />;
 
   return (
@@ -252,7 +258,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
           <div className="band">
             {mode === "targets" && boxSelect}
             {search}
-            {mode === "directory" ? <>{companyStatus}{industry}{region}{staff}{yearsTrading}</>
+            {mode === "directory" ? <>{companyStatus}{industry}{region}{staff}{yearsTrading}{accountsSize}</>
               : <>{staff}{ownerAge}{ownership}{region}{myStatus}{score}</>}
             <button className="btn quiet" onClick={() => setMore(!more)} aria-expanded={more}>{more ? "Fewer filters" : "More filters"}</button>
             <div className="band-actions">
@@ -262,7 +268,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
             {more && (
               <div className="band-more">
                 {mode === "directory" ? <>{fitSelect}{score}{ownership}{ownerAge}{myStatus}</>
-                  : <>{companyStatus}{industryWide}{yearsTrading}</>}
+                  : <>{companyStatus}{industryWide}{yearsTrading}{accountsSize}</>}
+                {overdueSel}{chargesSel}
                 <div className="field">
                   <label>Indicative value</label>
                   <div className="range">
@@ -403,6 +410,8 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim }: {
         {r.postcode ? ` · ${r.postcode}` : ""}
         {r.region ? ` · ${r.region}` : ""}
         {dim && r.exclusion ? <span className="flag red"> · {r.exclusion}</span> : null}
+        {r.accounts_overdue ? <span className="flag red"> · accounts overdue</span> : r.confirmation_overdue ? <span className="flag red"> · confirmation overdue</span> : null}
+        {r.charges_outstanding ? <span className="flag"> · {r.charges_outstanding} charge{r.charges_outstanding === 1 ? "" : "s"}</span> : null}
         {" "}<Flags flags={r.flags} address={r.address_flag} />
       </div>
     </td>

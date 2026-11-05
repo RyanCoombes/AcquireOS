@@ -36,6 +36,7 @@ def main(argv=None):
     p = sub.add_parser("fetch", help="Download and load Companies House bulk data")
     p.add_argument("what", choices=["company-data", "accounts", "psc", "all"])
     p.add_argument("--months", type=int, default=1, help="Months of accounts to load, newest first (default 1)")
+    p.add_argument("--reread", action="store_true", help="Read again months loaded before newer figures were added")
     p.add_argument("--keep", action="store_true", help="Keep downloaded files instead of deleting them")
 
     sub.add_parser("scheduler", help="Run the monthly refresh on a schedule (used by the Docker stack)")
@@ -95,13 +96,13 @@ def main(argv=None):
             if a.what == "company-data":
                 _print(Path("company data"), fetch.fetch_company_data(c, keep=a.keep))
             elif a.what == "accounts":
-                for r in fetch.fetch_accounts(c, months=a.months, keep=a.keep):
+                for r in fetch.fetch_accounts(c, plan=fetch.accounts_plan(c, a.months, reread_old=a.reread), keep=a.keep):
                     print(r)
             elif a.what == "psc":
                 _print(Path("owners"), fetch.fetch_psc(c, keep=a.keep))
             else:
                 c.commit()
-                print(fetch.run_job("refresh", accounts_months=a.months))
+                print(fetch.run_job("refresh", accounts_months=a.months, reread_old=a.reread))
                 return
             rebuild(c)
         elif a.cmd == "import-psc":

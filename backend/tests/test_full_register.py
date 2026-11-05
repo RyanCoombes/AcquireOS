@@ -161,7 +161,13 @@ def test_already_loaded_snapshots_are_skipped(loaded, monkeypatch):
         "company": [("2026-11-01x", "https://x/BasicCompanyDataAsOneFile-2026-11-01.zip")],
         "psc": [("2026-11-03p", "https://x/persons-with-significant-control-snapshot-2026-11-03.zip")]}[kind])
     monkeypatch.setattr(fetch, "download", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not download")))
+    # read by an older loader (fewer fields): not skipped, it is read again
     c.execute("insert into import_run (kind, filename, finished_at) values ('register', 'BasicCompanyDataAsOneFile-2026-11-01.zip', now())")
+    import pytest
+    with pytest.raises(AssertionError, match="should not download"):
+        fetch.fetch_company_data(c)
+    c.execute("insert into import_run (kind, filename, finished_at, loader_version) values ('register', 'BasicCompanyDataAsOneFile-2026-11-01.zip', now(), %s)",
+              (register.LOADER_VERSION,))
     c.execute("insert into import_run (kind, filename, finished_at) values ('psc', 'persons-with-significant-control-snapshot-2026-11-03.zip', now())")
     assert fetch.fetch_company_data(c) == {"skipped": "BasicCompanyDataAsOneFile-2026-11-01.zip"}
     assert "skipped" in fetch.fetch_psc(c)
@@ -176,7 +182,8 @@ def test_fast_register_path_matches_careful_reader(c):
     assert not any("Fast load failed" in m for m in msgs), msgs
     fast = {r["company_number"]: r for r in c.execute(
         "select company_number, name, status, sic_codes, registered_address, postcode, incorporation_date, "
-        "dissolution_date, last_accounts_date, company_type from company")}
+        "dissolution_date, last_accounts_date, company_type, accounts_category, accounts_next_due, confirmation_next_due, "
+        "charges_total, charges_outstanding, charges_part_satisfied, charges_satisfied, previous_names from company")}
     c.execute("delete from company_change; delete from company")
     headers, rows = open_table(BULK)
     idx = {register.norm_header(h): h for h in headers}
@@ -190,6 +197,16 @@ def test_fast_register_path_matches_careful_reader(c):
         assert (f["name"], f["status"], f["sic_codes"], f["registered_address"], f["postcode"]) == \
                (s["name"], s["status"], s["sic"], s["addr"], s["pc"]), num
         assert (f["incorporation_date"], f["dissolution_date"], f["last_accounts_date"]) == (s["inc"], s["dissolved"], s["last_acc"])
+        assert (f["accounts_category"], f["accounts_next_due"], f["confirmation_next_due"], f["charges_total"],
+                f["charges_outstanding"], f["charges_part_satisfied"], f["charges_satisfied"], f["previous_names"]) == \
+               (s["acc_cat"], s["acc_due"], s["cs_due"], s["mort_total"], s["mort_out"], s["mort_part"], s["mort_sat"],
+                s["prev_names"]), num
+    e = fast["01000001"]
+    assert e["accounts_category"] == "small" and str(e["accounts_next_due"]) == "2027-12-31"
+    assert str(e["confirmation_next_due"]) == "2027-03-14"
+    assert (e["charges_total"], e["charges_outstanding"], e["charges_satisfied"]) == (3, 1, 2)
+    assert e["previous_names"] == [{"name": "EXAMPLE ELECTRICAL LTD", "until": "2010-06-05"},
+                                   {"name": "EXAMPLE HOLDINGS 2001 LTD", "until": "2001-02-01"}]
 
 
 def test_failed_load_keeps_the_download_for_a_rerun(loaded, monkeypatch, tmp_path):
@@ -207,3 +224,23 @@ def test_failed_load_keeps_the_download_for_a_rerun(loaded, monkeypatch, tmp_pat
     assert f.exists()  # not deleted, so the next run reuses it
     loaded.rollback()
     assert fetch.accounts_plan(loaded, 1)[0][2] is False  # and the month is not marked as loaded
+
+
+def test_accounts_extra_figures_are_read():
+    doc = (b'<html><ix:header><xbrli:context id="ci"><xbrli:period><xbrli:instant>2026-03-31</xbrli:instant></xbrli:period></xbrli:context>'
+           b'<xbrli:context id="cy"><xbrli:period><xbrli:startDate>2025-04-01</xbrli:startDate><xbrli:endDate>2026-03-31</xbrli:endDate></xbrli:period></xbrli:context>'
+           b'<xbrli:context id="cw"><xbrli:entity><xbrli:segment>within one year</xbrli:segment></xbrli:entity><xbrli:period><xbrli:instant>2026-03-31</xbrli:instant></xbrli:period></xbrli:context>'
+           b'</ix:header>'
+           b'<ix:nonFraction name="core:FixedAssets" contextRef="ci">120,000</ix:nonFraction>'
+           b'<ix:nonFraction name="core:IntangibleAssets" contextRef="ci">20,000</ix:nonFraction>'
+           b'<ix:nonFraction name="core:CurrentAssets" contextRef="ci">400,000</ix:nonFraction>'
+           b'<ix:nonFraction name="core:NetCurrentAssetsLiabilities" contextRef="ci">150,000</ix:nonFraction>'
+           b'<ix:nonFraction name="core:TotalAssetsLessCurrentLiabilities" contextRef="ci">270,000</ix:nonFraction>'
+           b'<ix:nonFraction name="core:Creditors" contextRef="cw">250,000</ix:nonFraction>'
+           b'<ix:nonFraction name="core:GrossProfitLoss" contextRef="cy">900,000</ix:nonFraction>'
+           b'<ix:nonFraction name="core:DirectorRemuneration" contextRef="cy">85,000</ix:nonFraction>'
+           b'<ix:nonFraction name="core:StaffCostsEmployeeBenefitsExpense" contextRef="cy">1,200,000</ix:nonFraction></html>')
+    v = accounts.parse(doc)[date(2026, 3, 31)]
+    assert v["fixed_assets"] == 120000 and v["intangible_assets"] == 20000 and v["current_assets"] == 400000
+    assert v["net_current_assets"] == 150000 and v["total_assets_less_cl"] == 270000
+    assert v["gross_profit"] == 900000 and v["director_pay"] == 85000 and v["staff_costs"] == 1200000

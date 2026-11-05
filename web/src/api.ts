@@ -21,6 +21,7 @@ export interface Meta {
   counts: { companies: number; in_scope: number; tracked: number; owner_records: number; last_import: string | null; changed_30d: number };
   company_statuses: string[];
   status_groups: { value: string; label: string }[];
+  account_sizes: { value: string; label: string }[];
   map: { tiles: string; attribution: string };
   buy_boxes: { id: number; name: string; is_active: boolean; scored_at: string | null }[];
   buy_box: { id: number; name: string };
@@ -63,6 +64,10 @@ export interface Row {
   business_type?: string | null;
   box_name?: string | null;
   boxes?: string[] | null;
+  accounts_category?: string | null;
+  charges_outstanding?: number | null;
+  accounts_overdue?: boolean | null;
+  confirmation_overdue?: boolean | null;
 }
 
 export interface Change {
@@ -110,11 +115,17 @@ export interface CompanyDetail {
     registered_address: string | null; postcode: string | null; address_flag: string | null;
     region: string | null; review_tier: string | null; extra: Record<string, unknown>; source: string | null;
     updated_at: string; dissolution_date: string | null; status_changed_at: string | null; last_accounts_date: string | null;
+    accounts_category?: string | null; accounts_next_due?: string | null; confirmation_next_due?: string | null;
+    charges_total?: number | null; charges_outstanding?: number | null; charges_part_satisfied?: number | null;
+    charges_satisfied?: number | null; previous_names?: { name: string; until: string | null }[] | null;
   };
   financials: {
     period_end: string; period_inferred: boolean; employees: number | null; turnover: string | null;
     profit_loss: string | null; operating_profit: string | null; net_assets: string | null;
     cash: string | null; debtors: string | null; dividends: string | null; source: string | null;
+    fixed_assets?: string | null; intangible_assets?: string | null; current_assets?: string | null;
+    net_current_assets?: string | null; total_assets_less_cl?: string | null; gross_profit?: string | null;
+    director_pay?: string | null; staff_costs?: string | null;
   }[];
   estimate: { revenue_low: string; revenue_high: string; basis: string; method: string } | null;
   ownership: {
@@ -213,7 +224,8 @@ export const api = {
     req(`/api/issues/${id}/resolve`, { method: "POST", body: JSON.stringify({ status, resolution }) }),
   saveEnrichment: (n: string, body: Record<string, unknown>) =>
     req(`/api/companies/${encodeURIComponent(n)}/enrichment`, { method: "POST", body: JSON.stringify(body) }),
-  startRefresh: (months = 1) => req<Record<string, any>>(`/api/refresh?months=${months}`, { method: "POST" }),
+  startRefresh: (months = 1, reread = false) =>
+    req<Record<string, any>>(`/api/refresh?months=${months}${reread ? "&reread=true" : ""}`, { method: "POST" }),
   refreshStatus: () => req<Record<string, any>>("/api/refresh"),
   jobCurrent: () => req<Job>("/api/jobs/current"),
   buyboxes: () => req<BuyBoxRow[]>("/api/buyboxes"),
