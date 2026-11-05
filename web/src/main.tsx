@@ -15,6 +15,7 @@ import Changes from "./pages/Changes";
 import MapPage from "./pages/MapPage";
 import Connect from "./pages/Connect";
 import JobBar from "./components/JobBar";
+import Review from "./pages/Review";
 
 const ICONS: Record<string, string> = {
   home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z",
@@ -26,6 +27,7 @@ const ICONS: Record<string, string> = {
   buybox: "M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M16 4v4M10 10v4M18 16v4",
   import: "M12 3v12M7 10l5 5 5-5M4 21h16",
   map: "M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14",
+  review: "M4 4h16v12H4zM8 20h8M12 16v4M8 9l2 2 4-4",
   claude: "M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8",
 };
 
@@ -42,6 +44,25 @@ function Logo() {
   );
 }
 
+function BoxSwitch({ meta }: { meta: Meta | null }) {
+  const nav = useNavigate();
+  if (!meta?.buy_boxes?.length) return null;
+  const active = meta.buy_boxes.find((b) => b.is_active);
+  return (
+    <div className="boxswitch">
+      <label className="label" htmlFor="bb-switch">Buy box</label>
+      <select id="bb-switch" value={active?.id ?? ""} onChange={async (e) => {
+        if (e.target.value === "manage") { nav("/buy-box"); return; }
+        await api.activateBuybox(Number(e.target.value));
+        window.location.reload();
+      }}>
+        {meta.buy_boxes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        <option value="manage">Manage buy boxes…</option>
+      </select>
+    </div>
+  );
+}
+
 function Side({ meta }: { meta: Meta | null }) {
   const c = meta?.counts;
   const item = (to: string, icon: string, label: string, count?: number | null, end = false) => (
@@ -53,8 +74,10 @@ function Side({ meta }: { meta: Meta | null }) {
   return (
     <nav className="side" aria-label="Main">
       <Link to="/" className="mark"><Logo /><span>AcquireOS</span></Link>
+      <BoxSwitch meta={meta} />
       {item("/", "home", "Home", null, true)}
       {item("/targets", "targets", "Targets", c?.in_scope)}
+      {item("/review", "review", "Review")}
       {item("/pipeline", "pipeline", "Pipeline", c?.tracked)}
       {item("/changes", "changes", "Changes", c?.changed_30d)}
       <div className="group">Analyse</div>
@@ -122,6 +145,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/targets" element={<Targets />} />
+            <Route path="/review" element={<Review />} />
             <Route path="/c/:num" element={<Company />} />
             <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/changes" element={<Changes />} />

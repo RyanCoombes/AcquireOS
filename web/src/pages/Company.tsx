@@ -5,6 +5,7 @@ import { ErrorLine, Flags, Score, Toast, useAsync } from "../components/bits";
 import { AreaChart as SmallLine } from "../components/charts";
 import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
+import MyScores from "../components/MyScores";
 import { Enrichment, Location } from "../components/CompanyExtras";
 import { ageFrom, CHANGE_KIND, chUrl, date, dateTime, describeChange, int, isBadStatus, LINK_KIND, money, MONTHS, OWNERSHIP, range, relDays, toNum, years } from "../format";
 
@@ -87,11 +88,11 @@ export default function Company() {
                   {score.reasons.map((r) => (
                     <tr key={r.key}>
                       <td style={{ width: 150 }}>
-                        <span className={`reason-mark ${r.status}`}>{{ good: "✓", partial: "~", miss: "✕", unknown: "?" }[r.status]}</span>
+                        <span className={`reason-mark ${r.status === "unscored" ? "unknown" : r.status}`}>{({ good: "✓", partial: "~", miss: "✕", unknown: "?", unscored: "–" } as Record<string, string>)[r.status]}</span>
                         {r.label}
                       </td>
                       <td className={r.status === "unknown" ? "faint" : ""}>{r.text}</td>
-                      <td className="num pts">{r.status === "unknown" ? <span className="faint">no data</span> : `${r.points} / ${r.max}`}</td>
+                      <td className="num pts">{r.status === "unknown" ? <span className="faint">no data</span> : r.status === "unscored" ? <span className="faint">not counted</span> : `${r.points} / ${r.max}`}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -243,7 +244,7 @@ export default function Company() {
         </div>
 
         <aside>
-          <MyCall data={data} num={num} setState={setState} onNote={(n) => setData({ ...data, notes: [n, ...data.notes] })} onOutreach={reload} />
+          <MyCall data={data} num={num} setState={setState} onNote={(n) => setData({ ...data, notes: [n, ...data.notes] })} onOutreach={reload} onScored={reload} />
         </aside>
       </div>
       <Toast msg={toast} onDone={() => setToast(null)} />
@@ -255,9 +256,9 @@ function FactRow({ k, v }: { k: string; v: unknown }) {
   return <><dt className="small">{k.replace(/_/g, " ")}</dt><dd className="small">{String(v)}</dd></>;
 }
 
-function MyCall({ data, num, setState, onNote, onOutreach }: {
+function MyCall({ data, num, setState, onNote, onOutreach, onScored }: {
   data: CompanyDetail; num: string; setState: (p: Record<string, unknown>) => Promise<void>;
-  onNote: (n: CompanyDetail["notes"][number]) => void; onOutreach: () => void;
+  onNote: (n: CompanyDetail["notes"][number]) => void; onOutreach: () => void; onScored: () => void;
 }) {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -270,6 +271,11 @@ function MyCall({ data, num, setState, onNote, onOutreach }: {
     <>
       <section>
         <DealProgress data={data} num={num} setState={setState} />
+      </section>
+
+      <section>
+        <h2>Your scores</h2>
+        <MyScores num={num} criteria={data.manual.criteria} values={data.manual.values} onChange={() => onScored()} />
       </section>
 
       <section>

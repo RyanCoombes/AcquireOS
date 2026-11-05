@@ -35,6 +35,30 @@ of targets.
 Your notes, ratings and decisions are stored apart from imported data.
 Re-importing or refreshing never overwrites them.
 
+## Buy boxes, your own scores and Review
+
+- **Several buy boxes.** Each is its own search: universe (SIC codes, name
+  keywords, postcode areas, age), scoring weights, exclusions, valuation
+  assumptions and your own criteria. Start one blank, as a copy, or from a
+  template (Managed IT services, Software and SaaS, Data and analytics,
+  FMCG); templates are starting points to edit. Switch from the sidebar.
+  Your pipeline, notes, stages and your own scores are shared across all of
+  them. Saved searches belong to the buy box they were saved in.
+- **Your own criteria.** Each buy box can have criteria only you can judge
+  (recurring revenue quality, customer spread, owner open to selling, team
+  beyond the owner…). You score a company 0–5 on each; the buy box decides
+  how much each counts. Unscored criteria are left out of the total, so
+  companies you have not reviewed are neither helped nor hurt. Scores belong
+  to the company, so a criterion used in several buy boxes is scored once.
+- **Review.** One company at a time, best score first: key facts, charts and
+  score reasons on the left; on the right, score your criteria with the
+  number keys and decide with one key (S shortlist, A assess further,
+  W watch, P pass, R reject, → skip, O open the full page).
+- **Home** can show one buy box or an overview of all of them.
+- Scores are stored only for companies in each buy box's universe, plus your
+  pipeline and anything you have scored, which keeps several buy boxes over
+  the whole register to a sensible size.
+
 ## Deal stages
 
 Every company moves through your acquisition process, and each move is

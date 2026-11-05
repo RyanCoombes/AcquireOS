@@ -133,13 +133,23 @@ export default function Targets() {
             {saved.data && saved.data.length > 0 && (
               <div className="saved">
                 <span className="faint">Saved:</span>
-                {saved.data.map((s) => (
-                  <span key={s.id} className={`savedlink ${currentSaved?.id === s.id ? "on" : ""}`}>
-                    <button onClick={() => setParams(new URLSearchParams(s.params), { replace: true })}>{s.name}</button>
+                {saved.data.map((s) => {
+                  const other = s.buy_box_id && m && s.buy_box_id !== m.buy_box.id;
+                  return (
+                  <span key={s.id} className={`savedlink ${currentSaved?.id === s.id ? "on" : ""}`} title={s.buy_box_name ? `Buy box: ${s.buy_box_name}` : ""}>
+                    <button onClick={async () => {
+                      if (other) {
+                        await api.activateBuybox(s.buy_box_id!);
+                        window.location.href = "/targets?" + new URLSearchParams(s.params).toString();
+                        return;
+                      }
+                      setParams(new URLSearchParams(s.params), { replace: true });
+                    }}>{s.name}{other ? <span className="faint"> · {s.buy_box_name}</span> : null}</button>
                     <button className="x" title={`Delete “${s.name}”`} aria-label={`Delete saved search ${s.name}`}
                             onClick={async () => { if (confirm(`Delete saved search “${s.name}”?`)) { await api.deleteSearch(s.id); saved.reload(); } }}>×</button>
                   </span>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

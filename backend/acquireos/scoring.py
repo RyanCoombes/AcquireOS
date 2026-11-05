@@ -20,7 +20,19 @@ DEFAULT_CRITERIA = {
     "sic": {"weight": 5, "preferred": ["62012", "62020", "62030", "62090", "63110", "63120", "58290", "58210"]},
     "regions": [],
     "valuation": {"margin_low": 8.0, "margin_high": 15.0, "multiple_low": 3.0, "multiple_high": 5.0},
-    # Which companies the monthly Companies House file adds to the database.
+    # Your own criteria, scored 0-5 on each company. Keys are shared across
+    # buy boxes, so a company is never scored twice for the same thing.
+    "manual": [
+        {"key": "recurring_quality", "label": "Recurring revenue quality", "weight": 10,
+         "help": "5 = mostly contracted or subscription revenue with low churn"},
+        {"key": "customer_spread", "label": "Customer spread", "weight": 5,
+         "help": "5 = no customer over 10% of revenue; 0 = one customer dominates"},
+        {"key": "owner_openness", "label": "Owner open to selling", "weight": 10,
+         "help": "5 = owner has said they want to sell or retire soon"},
+        {"key": "management_depth", "label": "Team beyond the owner", "weight": 5,
+         "help": "5 = runs without the owner day to day"},
+    ],
+    # Which companies count as targets (the universe).
     # Companies already in the database are always kept up to date.
     "universe": {
         "sic_prefixes": ["5821", "5829", "6190", "620", "631"],
@@ -43,6 +55,74 @@ DEFAULT_CRITERIA = {
 }
 
 STATUS_GOOD, STATUS_PART, STATUS_MISS, STATUS_UNKNOWN = "good", "partial", "miss", "unknown"
+
+# Starting points for new buy boxes. Every value is editable afterwards; the
+# valuation multiples are rough market ranges, not advice.
+TEMPLATES: dict[str, dict] = {
+    "msp": {
+        "label": "Managed IT services (MSP)",
+        "description": "IT support and managed services businesses with contracted, recurring revenue.",
+        "criteria": {
+            "staff": {"weight": 25, "min": 8, "ideal_min": 15, "ideal_max": 80, "max": 200},
+            "revenue": {"weight": 15, "min": 750_000, "ideal_min": 1_500_000, "ideal_max": 10_000_000, "max": 25_000_000},
+            "sic": {"weight": 5, "preferred": ["62020", "62030", "62090"]},
+            "valuation": {"margin_low": 8.0, "margin_high": 15.0, "multiple_low": 3.0, "multiple_high": 5.0},
+            "universe": {"sic_prefixes": ["62020", "62030", "62090", "6190", "95110"],
+                         "keyword_sic_prefixes": ["70229", "74909", "82990", "33120"],
+                         "name_keywords": ["IT support", "IT services", "IT solutions", "managed services", "networks",
+                                           "cyber", "cloud", "computing", "technology", "technologies"],
+                         "postcode_areas": [], "min_years": 5},
+        },
+    },
+    "saas": {
+        "label": "Software and SaaS",
+        "description": "Businesses that own and sell their own software, ideally on subscription.",
+        "criteria": {
+            "staff": {"weight": 20, "min": 5, "ideal_min": 10, "ideal_max": 60, "max": 150},
+            "revenue": {"weight": 15, "min": 500_000, "ideal_min": 1_000_000, "ideal_max": 8_000_000, "max": 20_000_000},
+            "sic": {"weight": 5, "preferred": ["58290", "62012", "63110", "63120"]},
+            "valuation": {"margin_low": 10.0, "margin_high": 25.0, "multiple_low": 4.0, "multiple_high": 7.0},
+            "universe": {"sic_prefixes": ["5829", "62012", "63110", "63120"],
+                         "keyword_sic_prefixes": ["62020", "62090", "70229", "74909"],
+                         "name_keywords": ["software", "SaaS", "platform", "apps", "systems", "data", "analytics", "cloud"],
+                         "postcode_areas": [], "min_years": 3},
+        },
+    },
+    "data": {
+        "label": "Data and analytics",
+        "description": "Data processing, hosting, analytics and information services.",
+        "criteria": {
+            "sic": {"weight": 5, "preferred": ["63110", "63120", "63990", "73200"]},
+            "universe": {"sic_prefixes": ["631", "63990", "73200"],
+                         "keyword_sic_prefixes": ["62020", "62090", "70229", "74909"],
+                         "name_keywords": ["data", "analytics", "insight", "intelligence", "research"],
+                         "postcode_areas": [], "min_years": 3},
+        },
+    },
+    "fmcg": {
+        "label": "FMCG (food, drink and household goods)",
+        "description": "Makers and wholesalers of food, drink, toiletries and household products.",
+        "criteria": {
+            "staff": {"weight": 25, "min": 10, "ideal_min": 20, "ideal_max": 150, "max": 400},
+            "revenue": {"weight": 20, "min": 1_000_000, "ideal_min": 3_000_000, "ideal_max": 25_000_000, "max": 60_000_000},
+            "sic": {"weight": 5, "preferred": ["10", "11", "2041", "2042"]},
+            "valuation": {"margin_low": 5.0, "margin_high": 12.0, "multiple_low": 3.0, "multiple_high": 6.0},
+            "manual": [
+                {"key": "brand_strength", "label": "Brand strength", "weight": 10, "help": "5 = known brand with loyal buyers"},
+                {"key": "customer_spread", "label": "Customer spread", "weight": 10,
+                 "help": "5 = no retailer or wholesaler over 10% of revenue"},
+                {"key": "owner_openness", "label": "Owner open to selling", "weight": 10,
+                 "help": "5 = owner has said they want to sell or retire soon"},
+                {"key": "management_depth", "label": "Team beyond the owner", "weight": 5,
+                 "help": "5 = runs without the owner day to day"},
+            ],
+            "exclude": {"keywords": []},
+            "universe": {"sic_prefixes": ["10", "11", "2041", "2042", "4631", "4632", "4633", "4634", "4636",
+                                          "4637", "4638", "4639", "4644", "4645"],
+                         "keyword_sic_prefixes": [], "name_keywords": [], "postcode_areas": [], "min_years": 5},
+        },
+    },
+}
 
 
 def merged(criteria: dict | None) -> dict:
@@ -194,12 +274,32 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
         add("sic", "Industry code", sc["weight"], 1 if hit else 0, STATUS_GOOD if hit else STATUS_MISS,
             f"SIC {', '.join(codes)}" + (" includes a preferred code" if hit else "; none preferred"))
 
-    total = sum(x["max"] for x in reasons)
-    got = sum(x["points"] for x in reasons)
-    known = sum(x["max"] for x in reasons if x["status"] != STATUS_UNKNOWN)
+    # Your own criteria (scored 0-5 by you). Unscored ones are left out of the
+    # total, so a company you have not reviewed is neither helped nor hurt.
+    manual = c.get("manual") or {}
+    for m in cr.get("manual") or []:
+        w = float(m.get("weight") or 0)
+        if w <= 0:
+            continue
+        v = manual.get(m["key"])
+        label = m.get("label") or m["key"]
+        if v is None:
+            reasons.append({"key": f"manual:{m['key']}", "label": label, "points": 0.0, "max": w,
+                            "status": "unscored", "text": "Not scored by you yet", "manual": True})
+        else:
+            st = STATUS_GOOD if v >= 4 else STATUS_PART if v >= 2 else STATUS_MISS
+            reasons.append({"key": f"manual:{m['key']}", "label": label, "points": round(w * v / 5, 1), "max": w,
+                            "status": st, "text": f"You scored {v} out of 5", "manual": True})
+
+    counted = [x for x in reasons if x["status"] != "unscored"]
+    total = sum(x["max"] for x in counted)
+    got = sum(x["points"] for x in counted)
+    auto = [x for x in reasons if not x.get("manual")]
+    auto_total = sum(x["max"] for x in auto)
+    known = sum(x["max"] for x in auto if x["status"] != STATUS_UNKNOWN)
     return {
         "score": round(100 * got / total, 1) if total else 0.0,
-        "coverage": round(100 * known / total, 0) if total else 0.0,
+        "coverage": round(100 * known / auto_total, 0) if auto_total else 0.0,
         "excluded": exclusion is not None,
         "exclusion": exclusion,
         "reasons": reasons,
@@ -215,7 +315,9 @@ select c.company_number, c.name, c.status, c.review_tier, c.incorporation_date, 
        l.employees, l.net_assets, l.operating_profit, l.cash, l.net_assets_prev,
        e.revenue_low, e.revenue_high, e.basis as revenue_basis,
        o.ownership_type, o.flags as ownership_flags, o.oldest_birth_year,
-       concat_ws(' ', rt.txt, en.summary, en.business_type) as research_text, en.field_service
+       concat_ws(' ', rt.txt, en.summary, en.business_type) as research_text, en.field_service,
+       (select jsonb_object_agg(m.criterion_key, m.value) from manual_score m
+         where m.company_number = c.company_number and m.user_id = 1) as manual
 from company c
 left join company_latest l on l.company_number = c.company_number
 left join estimate e on e.company_number = c.company_number
@@ -268,6 +370,18 @@ def load_facts(conn, company_number: str | None = None) -> list[dict]:
     return [_fact(r) for r in conn.execute(FACTS_SQL.format(where=where, rwhere=rwhere), params).fetchall()]
 
 
+def template_criteria(key: str) -> dict:
+    """Default criteria with a template's settings layered on top."""
+    t = TEMPLATES[key]["criteria"]
+    out = json.loads(json.dumps(DEFAULT_CRITERIA))
+    for k, v in t.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k].update(v)
+        else:
+            out[k] = v
+    return out
+
+
 def active_buy_box(conn, user_id: int = 1) -> dict:
     row = conn.execute(
         "select * from buy_box where user_id = %s and is_active order by id limit 1", (user_id,)
@@ -292,9 +406,19 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
     scope = scope_test(criteria)
     today = date.today()
 
-    def rows_for(facts):
+    # Companies you are working on always get a score row, wherever they are.
+    keep = {r["company_number"] for r in conn.execute(
+        """select company_number from user_company where status <> 'new'
+           union select company_number from manual_score""")}
+
+    def rows_for(facts, store_all=False):
         for f in facts:
             sc = score_company(f, criteria, today, scope)
+            # Outside the universe and not one you are working on: no row
+            # (saves gigabytes across the whole register).
+            if not store_all and sc["exclusion"] and sc["exclusion"].startswith("Outside your universe") \
+                    and f["company_number"] not in keep:
+                continue
             v = valuation.value(f, va)
             yield (bb["id"], f["company_number"], sc["score"], sc["coverage"], sc["excluded"], sc["exclusion"],
                    json.dumps(sc["reasons"]), v["ebitda_low"], v["ebitda_high"], v["value_low"], v["value_high"],
@@ -324,7 +448,9 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
 
     if company_number:
         refresh_latest(conn, [company_number])
-        flush(list(rows_for(load_facts(conn, company_number))))
+        rows = list(rows_for(load_facts(conn, company_number)))
+        conn.execute("delete from score where buy_box_id = %s and company_number = %s", (bb["id"], company_number))
+        flush(rows)
         return 1
     if progress:
         progress("Updating latest figures", 0.02)
@@ -345,7 +471,14 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
                 if progress:
                     progress(f"Scored {n:,} of {total:,} companies", 0.05 + 0.95 * n / total)
     flush(buf)
+    conn.execute("update buy_box set scored_at = now() where id = %s", (bb["id"],))
     return n
+
+
+def rescore_company_all_boxes(conn, company_number: str):
+    """After a manual score: update this company in every buy box."""
+    for bb in conn.execute("select * from buy_box where user_id = 1").fetchall():
+        rescore(conn, dict(bb), company_number=company_number)
 
 
 def scope_test(criteria: dict):

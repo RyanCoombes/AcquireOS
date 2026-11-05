@@ -43,12 +43,15 @@ export default function BuyBox() {
 
   return (
     <>
-      <div className="pagehead">
+      <BoxManager current={data.id} onToast={setToast} />
+
+      <div className="pagehead" style={{ paddingTop: 4 }}>
         <div>
-          <h1>Buy box</h1>
+          <h1 style={{ fontSize: 22 }}>{data.name}</h1>
           <div className="lede">
-            What you are looking for. Each criterion earns points up to its weight; the score is the share of all points earned.
-            Companies with missing data are not penalised as misses, but score lower and show how much could be checked.
+            {data.description ? <>{data.description} </> : null}
+            Each criterion earns points up to its weight; the score is the share of all points earned.
+            Missing data is not counted as a miss, but lowers the coverage figure.
           </div>
         </div>
         <div className="right">
@@ -56,6 +59,32 @@ export default function BuyBox() {
           <button className="btn primary" onClick={save} disabled={saving}>{saving ? "Rescoring…" : "Save and rescore"}</button>
         </div>
       </div>
+
+      <section>
+        <h2>Your own criteria</h2>
+        <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}>
+          Things only you can judge. You score each company 0 to 5 on these (on its page or in Review); they then count towards
+          its score with the weight you set here. Unscored criteria are left out of the total, so companies you have not reviewed
+          are neither helped nor hurt. Scores belong to the company, so a criterion with the same name in another buy box reuses them.
+        </p>
+        <div className="manual-ed label"><span>Criterion</span><span>Weight</span><span>What a 5 looks like</span><span /></div>
+        {(c.manual ?? []).map((m: any, i: number) => (
+          <div key={m.key} className="manual-ed">
+            <input type="text" value={m.label} onChange={(e) => { const x = [...c.manual]; x[i] = { ...m, label: e.target.value }; upd(["manual"], x); }} />
+            <input type="number" min={0} value={m.weight} onChange={(e) => { const x = [...c.manual]; x[i] = { ...m, weight: Number(e.target.value) }; upd(["manual"], x); }} />
+            <input type="text" value={m.help ?? ""} placeholder="e.g. 5 = no customer over 10% of revenue"
+                   onChange={(e) => { const x = [...c.manual]; x[i] = { ...m, help: e.target.value }; upd(["manual"], x); }} />
+            <button className="btn quiet" title="Remove" aria-label={`Remove ${m.label}`}
+                    onClick={() => upd(["manual"], c.manual.filter((_: any, j: number) => j !== i))}>×</button>
+          </div>
+        ))}
+        <button className="btn" onClick={() => {
+          const label = prompt("Name of the criterion, e.g. “Customer spread”");
+          if (!label) return;
+          const key = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || `c${Date.now()}`;
+          upd(["manual"], [...(c.manual ?? []), { key, label, weight: 5, help: "" }]);
+        }}>Add a criterion</button>
+      </section>
 
       <table>
         <thead><tr><th>Criterion</th><th className="num">Weight</th><th className="num">Share</th><th>Settings</th></tr></thead>
@@ -207,6 +236,85 @@ function Crit({ label, w, c, n, total, children }: { label: string; w: string[];
       <td className="num muted">{total ? Math.round((100 * weight) / total) : 0}%</td>
       <td>{children}</td>
     </tr>
+  );
+}
+
+function BoxManager({ current, onToast }: { current: number; onToast: (m: string) => void }) {
+  const boxes = useAsync(() => api.buyboxes(), []);
+  const tpls = useAsync(() => api.buyboxTemplates(), []);
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [source, setSource] = useState("template:msp");
+  const go = () => window.location.reload();
+  const active = boxes.data?.find((b) => b.id === current);
+  return (
+    <>
+      <div className="pagehead" style={{ paddingBottom: 12 }}>
+        <div>
+          <h1>Buy boxes</h1>
+          <div className="lede">Each buy box is its own search: which companies count (universe), how they are scored, what they are worth.
+            Your pipeline, notes, stages and your own scores are shared across all of them.</div>
+        </div>
+        {active && (
+          <div className="right">
+            <button className="btn" onClick={async () => {
+              const nm = prompt("Rename this buy box", active.name);
+              if (nm && nm.trim()) { await api.renameBuybox(active.id, { name: nm.trim() }); go(); }
+            }}>Rename</button>
+            {(boxes.data?.length ?? 0) > 1 && (
+              <button className="btn" onClick={async () => {
+                if (!confirm(`Delete the buy box “${active.name}”? Its scores and saved searches go; your pipeline, notes and own scores are kept.`)) return;
+                await api.deleteBuybox(active.id); go();
+              }}>Delete</button>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="boxes">
+        {boxes.data?.map((b) => (
+          <div key={b.id} className={`boxcard ${b.id === current ? "on" : ""}`}
+               onClick={async () => { if (b.id !== current) { const r = await api.activateBuybox(b.id); if (r.scoring) onToast("Scoring this buy box in the background…"); go(); } }}>
+            <div className="nm">{b.name}</div>
+            <div className="st">{b.in_scope.toLocaleString("en-GB")} in scope · {b.strong.toLocaleString("en-GB")} score 70+</div>
+            <div className="st">{b.id === current ? "Selected" : b.scored_at ? "Click to switch" : "Not scored yet: click to score"}</div>
+          </div>
+        ))}
+        {!adding && <div className="boxcard new" onClick={() => setAdding(true)}>+ New buy box</div>}
+      </div>
+      {adding && (
+        <section>
+          <h2>New buy box</h2>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <label className="field"><span className="label">Name</span>
+              <input type="text" style={{ width: 240 }} value={name} placeholder="e.g. SaaS in the South West" onChange={(e) => setName(e.target.value)} /></label>
+            <label className="field"><span className="label">Start from</span>
+              <select value={source} onChange={(e) => setSource(e.target.value)} style={{ minWidth: 300 }}>
+                <optgroup label="Templates (edit afterwards)">
+                  {tpls.data?.map((t) => <option key={t.key} value={`template:${t.key}`}>{t.label}</option>)}
+                </optgroup>
+                <optgroup label="Copy an existing buy box">
+                  {boxes.data?.map((b) => <option key={b.id} value={`copy:${b.id}`}>Copy of {b.name}</option>)}
+                </optgroup>
+                <option value="blank">Blank (default settings)</option>
+              </select></label>
+            <button className="btn primary" disabled={!name.trim()} onClick={async () => {
+              const [kind, val] = source.split(":");
+              const body: Record<string, unknown> = { name: name.trim(), source: kind };
+              if (kind === "template") body.template = val;
+              if (kind === "copy") body.copy_id = Number(val);
+              const r = await api.createBuybox(body);
+              if (r.background) onToast("Created. Scoring every company in the background; progress shows at the top.");
+              go();
+            }}>Create and switch to it</button>
+            <button className="btn quiet" onClick={() => setAdding(false)}>Cancel</button>
+          </div>
+          {source.startsWith("template:") && (
+            <p className="muted small">{tpls.data?.find((t) => `template:${t.key}` === source)?.description} Templates are starting points:
+              check the SIC codes, ranges and valuation multiples before relying on them.</p>
+          )}
+        </section>
+      )}
+    </>
   );
 }
 

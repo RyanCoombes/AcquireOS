@@ -139,7 +139,7 @@ def audit_queue(conn, check: str = "all", limit: int = 20, min_score: float = 0,
         left join estimate est on est.company_number = c.company_number
         left join company_ownership o on o.company_number = c.company_number
         where coalesce(s.score, 0) >= %(min)s
-          and (%(incl)s or not coalesce(s.excluded, false))
+          and (%(incl)s or coalesce(not s.excluded, false))
           and (not %(pipe)s or coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed'))
           and coalesce(c.status, 'active') = 'active'
         order by (coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed')) desc, s.score desc nulls last

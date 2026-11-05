@@ -71,3 +71,50 @@ def test_deal_stages(c):
         # same status again is not logged twice
         cl.put("/api/companies/01000001/state", json={"status": "heads"})
         assert len(cl.get("/api/companies/01000001").json()["deal"]["history"]) == 3
+
+
+def test_buyboxes_manual_and_review(c):
+    from acquireos.api import app
+
+    with TestClient(app) as cl:
+        f = FIX / "ranked_sample.csv"
+        p = cl.post("/api/import/preview", data={"kind": "companies"}, files={"file": (f.name, f.read_bytes(), "text/csv")}).json()
+        cl.post("/api/import/commit", json={"kind": "companies", "token": p["token"], "suffix": p["suffix"],
+                                            "filename": f.name, "mapping": p["mapping"]})
+        boxes = cl.get("/api/buyboxes").json()
+        assert len(boxes) == 1 and boxes[0]["is_active"]
+        first = boxes[0]["id"]
+        tpls = {t["key"] for t in cl.get("/api/buybox-templates").json()}
+        assert {"msp", "saas", "fmcg"} <= tpls
+        new = cl.post("/api/buyboxes", json={"name": "SaaS", "source": "template", "template": "saas"}).json()
+        assert new["is_active"] and not new["background"]
+        boxes = {b["name"]: b for b in cl.get("/api/buyboxes").json()}
+        assert boxes["SaaS"]["is_active"] and not boxes["My buy box"]["is_active"] and boxes["SaaS"]["scored_at"]
+        copy = cl.post("/api/buyboxes", json={"name": "Copy", "source": "copy", "copy_id": first}).json()
+        assert cl.get("/api/meta").json()["buy_box"]["name"] == "Copy"
+        # saved search belongs to the active buy box
+        s = cl.post("/api/searches", json={"name": "Wales", "params": {"region": "Wales"}}).json()
+        assert s["buy_box_id"] == copy["id"]
+        # your own scores: affect the score, shared across boxes
+        before = cl.get("/api/companies/01000001").json()["score"]["score"]
+        r = cl.put("/api/companies/01000001/manual", json={"key": "owner_openness", "value": 5}).json()
+        assert r["values"]["owner_openness"]["value"] == 5 and float(r["score"]["score"]) >= float(before)
+        r = cl.put("/api/companies/01000001/manual", json={"key": "recurring_quality", "value": 0}).json()
+        d = cl.get("/api/companies/01000001").json()
+        assert {c["key"] for c in d["manual"]["criteria"]} >= {"owner_openness", "recurring_quality"}
+        assert d["manual"]["values"]["recurring_quality"]["value"] == 0
+        man = [x for x in d["score"]["reasons"] if x.get("manual")]
+        assert any(x["status"] == "miss" for x in man) and any(x["status"] == "good" for x in man)
+        cl.post(f"/api/buyboxes/{first}/activate")
+        d1 = cl.get("/api/companies/01000001").json()
+        assert d1["manual"]["values"]["owner_openness"]["value"] == 5  # same score in another buy box
+        # review queue and Home overview
+        q = cl.get("/api/review").json()
+        assert q["rows"] and all(r["score"] is not None for r in q["rows"])
+        allv = cl.get("/api/dashboard?bb=all").json()
+        assert allv["buy_box"] == "All buy boxes" and len(allv["boxes"]) == 3
+        assert allv["head"]["in_scope"] >= cl.get("/api/dashboard").json()["head"]["in_scope"]
+        # cannot delete the last box; can delete others
+        assert cl.delete(f"/api/buyboxes/{copy['id']}").status_code == 200
+        assert cl.delete(f"/api/buyboxes/{new['id']}").status_code == 200
+        assert cl.delete(f"/api/buyboxes/{first}").status_code == 400

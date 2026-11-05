@@ -188,6 +188,19 @@ def set_status(company_number: str, status: str, next_action: str | None = None,
     return _j(_api().set_state(num, _api().StateIn(**body)))
 
 
+@server.tool(description="List the user's buy boxes (each is a separate search with its own universe and scoring) "
+                         "and which one is active. search_companies and audit_queue use the active one.")
+def list_buy_boxes() -> str:
+    return _j(_api().buyboxes())
+
+
+@server.tool(description="Set the user's own 0-5 score for one of their criteria on a company (see get_company -> "
+                         "manual.criteria for the keys). Only when the user asks you to; value null clears it.")
+def set_my_score(company_number: str, criterion_key: str, value: int | None, note: str | None = None) -> str:
+    return _j(_api().set_manual(company_number.strip().upper(),
+                                _api().ManualIn(key=criterion_key, value=value, note=note)))
+
+
 @server.prompt(description="Work through the audit queue: verify each company and save sourced enrichment.")
 def audit_and_enrich(batch_size: int = 10, check: str = "all") -> str:
     return f"""Please audit and enrich AcquireOS data.

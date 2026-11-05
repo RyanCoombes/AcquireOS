@@ -95,8 +95,14 @@ def test_parallel_parse_matches(loaded, tmp_path):
 
 def test_universe_scope_excludes(loaded):
     s = {x["company_number"]: x for x in loaded.execute("select * from score")}
-    assert s["01000003"]["excluded"] and "universe" in s["01000003"]["exclusion"]  # SIC 70100 holding company
+    # SIC 70100 holding company: outside the universe, so no score row is stored
+    assert "01000003" not in s
     assert not s["01000001"]["excluded"]
+    # ...unless you are working on it: then it is stored, marked outside the universe
+    loaded.execute("insert into user_company (user_id, company_number, status) values (1, '01000003', 'watching')")
+    scoring.rescore(loaded)
+    row = loaded.execute("select * from score where company_number = '01000003'").fetchone()
+    assert row["excluded"] and "universe" in row["exclusion"]
 
 
 def test_fetch_accounts_oldest_first(loaded, monkeypatch, tmp_path):

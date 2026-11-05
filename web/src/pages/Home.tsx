@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { ErrorLine, Score, StatusMark, useAsync } from "../components/bits";
 import { Columns, HBars, TrendLine } from "../components/charts";
@@ -12,7 +12,9 @@ function greeting() {
 
 export default function Home() {
   const nav = useNavigate();
-  const { data, error, reload } = useAsync(() => api.dashboard(), []);
+  const [params, setParams] = useSearchParams();
+  const which = params.get("bb") ?? "active";
+  const { data, error, reload } = useAsync(() => api.dashboardFor(which), [which]);
   const [starting, setStarting] = useState(false);
   if (error) return <ErrorLine error={error} />;
   if (!data) return <div className="empty">Loading…</div>;
@@ -48,7 +50,12 @@ export default function Home() {
           <h1>{greeting()}</h1>
           <div className="muted">
             {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
-            {" · "}searching with <Link to="/buy-box">{data.buy_box}</Link>
+            {" · "}showing{" "}
+            <select className="inline-select" value={which} onChange={(e) => setParams(e.target.value === "active" ? {} : { bb: e.target.value }, { replace: true })}>
+              <option value="active">{(data.boxes ?? []).find((b: any) => b.is_active)?.name ?? "Current buy box"} (current)</option>
+              {(data.boxes ?? []).filter((b: any) => !b.is_active).map((b: any) => <option key={b.id} value={String(b.id)}>{b.name}</option>)}
+              <option value="all">All buy boxes</option>
+            </select>
           </div>
         </div>
         <div className="right">
@@ -61,9 +68,28 @@ export default function Home() {
         </div>
       </div>
 
+      {which === "all" && (data.boxes ?? []).length > 0 && (
+        <section>
+          <div className="sechead"><h2>Your buy boxes</h2><span className="right"><Link to="/buy-box">Manage</Link></span></div>
+          <table>
+            <thead><tr><th>Buy box</th><th className="num">In scope</th><th className="num">Score 70+</th><th className="num">In your pipeline</th><th className="num">Scored</th><th /></tr></thead>
+            <tbody>
+              {data.boxes.map((b: any) => (
+                <tr key={b.id}>
+                  <td><b>{b.name}</b>{b.is_active && <span className="tag" style={{ marginLeft: 8 }}>current</span>}</td>
+                  <td className="num">{int(b.in_scope)}</td><td className="num">{int(b.strong)}</td><td className="num">{int(b.pipeline)}</td>
+                  <td className="num faint small">{b.scored_at ? relDays(b.scored_at) : "not yet"}</td>
+                  <td className="num"><button className="btn quiet" onClick={() => setParams({ bb: String(b.id) }, { replace: true })}>View</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       <div className="kpis">
         <Link className="kpi" to="/targets">
-          <span className="k"><i />In your buy box</span>
+          <span className="k"><i />{which === "all" ? "In any buy box" : "In this buy box"}</span>
           <span className="v">{int(h.in_scope)}</span>
           <span className="s">{int(h.strong)} score 70 or more</span>
         </Link>
@@ -98,7 +124,7 @@ export default function Home() {
               {data.top.map((t: any) => (
                 <tr key={t.company_number} style={{ cursor: "pointer" }} onClick={() => nav(`/c/${t.company_number}`)}>
                   <td style={{ width: 110 }}><Score value={t.score} /></td>
-                  <td><div className="name">{t.name}</div><div className="sub">{t.region ?? "Region not set"} · {t.ownership_type ? OWNERSHIP[t.ownership_type] : "owners not traced"}</div></td>
+                  <td><div className="name">{t.name}</div><div className="sub">{which === "all" && t.box ? <><b>{t.box}</b> · </> : null}{t.region ?? "Region not set"} · {t.ownership_type ? OWNERSHIP[t.ownership_type] : "owners not traced"}</div></td>
                   <td className="num hide-sm">{int(t.employees)} staff</td>
                   <td className="num hide-sm">{ageFrom(t.oldest_birth_year) ? `Owner ${ageFrom(t.oldest_birth_year)}` : ""}</td>
                   <td className="num">{range(t.value_low, t.value_high)}</td>

@@ -90,7 +90,20 @@ def test_scoring_explains_and_excludes(loaded):
 def test_unknown_data_is_not_a_miss():
     r = scoring.score_company({"name": "X"}, {}, date(2026, 11, 4))
     assert r["coverage"] == 0
-    assert all(x["status"] == "unknown" for x in r["reasons"])
+    assert all(x["status"] == "unknown" for x in r["reasons"] if not x.get("manual"))
+    assert all(x["status"] == "unscored" for x in r["reasons"] if x.get("manual"))
+
+
+def test_manual_scores_count_only_when_given():
+    base = {"name": "X", "employees": 30, "incorporation_date": date(2000, 1, 1), "sic_codes": ["62020"],
+            "ownership_type": "owner_held", "oldest_birth_year": 1960, "revenue_low": 3e6, "revenue_high": 3e6}
+    a = scoring.score_company(base, {}, date(2026, 11, 4))
+    high = scoring.score_company({**base, "manual": {"recurring_quality": 5, "owner_openness": 5}}, {}, date(2026, 11, 4))
+    low = scoring.score_company({**base, "manual": {"recurring_quality": 0, "owner_openness": 1}}, {}, date(2026, 11, 4))
+    assert low["score"] < a["score"] < high["score"] or a["score"] == high["score"]
+    assert low["score"] < a["score"]
+    # unscored personal criteria do not change the coverage figure
+    assert a["coverage"] == high["coverage"]
 
 
 def test_notes_import_and_protection(loaded):

@@ -21,6 +21,7 @@ export interface Meta {
   counts: { companies: number; in_scope: number; tracked: number; owner_records: number; last_import: string | null; changed_30d: number };
   company_statuses: string[];
   map: { tiles: string; attribution: string };
+  buy_boxes: { id: number; name: string; is_active: boolean; scored_at: string | null }[];
   buy_box: { id: number; name: string };
 }
 
@@ -74,9 +75,15 @@ export interface Valuation {
 }
 export interface Assumptions { margin_low: number; margin_high: number; multiple_low: number; multiple_high: number }
 
-export interface SavedSearch { id: number; name: string; params: Record<string, string> }
+export interface SavedSearch { id: number; name: string; params: Record<string, string>; buy_box_id?: number | null; buy_box_name?: string | null }
+export interface ManualCriterion { key: string; label: string; weight: number; help?: string }
+export interface ManualValue { criterion_key: string; value: number; note: string | null; updated_at: string }
+export interface BuyBoxRow {
+  id: number; name: string; description: string | null; template: string | null; is_active: boolean;
+  scored_at: string | null; in_scope: number; strong: number; searches: number;
+}
 
-export interface Reason { key: string; label: string; points: number; max: number; status: "good" | "partial" | "miss" | "unknown"; text: string }
+export interface Reason { key: string; label: string; points: number; max: number; status: "good" | "partial" | "miss" | "unknown" | "unscored"; text: string; manual?: boolean }
 
 export interface Link {
   lat?: number | null; lon?: number | null;
@@ -121,6 +128,8 @@ export interface CompanyDetail {
   changes: Change[];
   valuation: Valuation;
   deal: Deal;
+  manual: { criteria: ManualCriterion[]; values: Record<string, ManualValue> };
+  buy_box: { id: number; name: string };
   geo: { lat: number; lon: number; precision: string } | null;
   sics: { code: string; description: string }[];
   enrichment: {
@@ -170,7 +179,7 @@ export const api = {
   addOutreach: (body: Record<string, unknown>) => req<Outreach>("/api/outreach", { method: "POST", body: JSON.stringify(body) }),
   reports: () => req<Record<string, any>>("/api/reports"),
   graph: (n: string, depth = 2) => req<{ nodes: GNode[]; edges: GEdge[] }>(`/api/links/${encodeURIComponent(n)}?depth=${depth}`),
-  buybox: () => req<{ id: number; name: string; criteria: any; defaults: any }>("/api/buybox"),
+  buybox: () => req<{ id: number; name: string; description: string | null; criteria: any; defaults: any }>("/api/buybox"),
   saveBuybox: (criteria: any) => req<{ rescored: number }>("/api/buybox", { method: "PUT", body: JSON.stringify({ criteria }) }),
   preview: (kind: string, file: File, sheet?: string) => {
     const fd = new FormData();
@@ -198,6 +207,18 @@ export const api = {
   startRefresh: (months = 1) => req<Record<string, any>>(`/api/refresh?months=${months}`, { method: "POST" }),
   refreshStatus: () => req<Record<string, any>>("/api/refresh"),
   jobCurrent: () => req<Job>("/api/jobs/current"),
+  buyboxes: () => req<BuyBoxRow[]>("/api/buyboxes"),
+  buyboxTemplates: () => req<{ key: string; label: string; description: string }[]>("/api/buybox-templates"),
+  createBuybox: (body: Record<string, unknown>) => req<BuyBoxRow & { background: boolean }>("/api/buyboxes", { method: "POST", body: JSON.stringify(body) }),
+  activateBuybox: (id: number) => req<{ ok: boolean; scoring: boolean }>(`/api/buyboxes/${id}/activate`, { method: "POST" }),
+  renameBuybox: (id: number, body: Record<string, unknown>) => req(`/api/buyboxes/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteBuybox: (id: number) => req(`/api/buyboxes/${id}`, { method: "DELETE" }),
+  setManual: (n: string, key: string, value: number | null, note?: string) =>
+    req<{ score: any; values: Record<string, ManualValue> }>(`/api/companies/${encodeURIComponent(n)}/manual`,
+      { method: "PUT", body: JSON.stringify({ key, value, note }) }),
+  review: (params: Record<string, string>) =>
+    req<{ total: number; rows: { company_number: string; name: string; score: string | null }[] }>("/api/review?" + new URLSearchParams(params)),
+  dashboardFor: (bb: string) => req<Record<string, any>>(`/api/dashboard?bb=${encodeURIComponent(bb)}`),
   cancelJob: (id: number) => req<{ ok: boolean; message: string }>(`/api/jobs/${id}/cancel`, { method: "POST" }),
   changes: (params: Record<string, string>) =>
     req<{ rows: Change[]; summary: { kind: string; n: number }[] }>("/api/changes?" + new URLSearchParams(params)),
