@@ -50,6 +50,12 @@ services:
       # Token for Claude (MCP at /mcp) and scripts. Generate one with:
       #   docker exec acquireos acquireos new-token
       API_TOKEN: ${API_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 180s
+      retries: 5
     ports:
       - "${APP_PORT:-8090}:8000"
     volumes:
@@ -67,6 +73,10 @@ services:
       db:
         condition: service_healthy
     command: ["acquireos", "scheduler"]
+    # The scheduler has no web server, so the image's web health check
+    # does not apply to it.
+    healthcheck:
+      disable: true
     environment:
       DATABASE_URL: postgresql://acquireos:${DB_PASSWORD:-acquireos-change-me}@db:5432/acquireos
       REFRESH_DAY: ${REFRESH_DAY:-6}
