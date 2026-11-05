@@ -152,26 +152,37 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
         "insert into import_run (kind, filename) values ('companies', %s) returning id", (source,),
     ).fetchone()["id"]
 
-    before = {
-        r["company_number"]: r
-        for r in conn.execute(
-            "select company_number, name, status, registered_address, address_key, sic_codes from company"
-        )
-    }
-    latest_period = {
-        r["company_number"]: r
-        for r in conn.execute(
-            """select c.company_number,
-                      greatest(c.last_accounts_date, fp.period_end) as period_end, fp.employees
-               from company c
-               left join lateral (
-                   select period_end, employees from financial_period f
-                   where f.company_number = c.company_number and not f.period_inferred
-                   order by period_end desc limit 1) fp on true
-               where c.last_accounts_date is not null or fp.period_end is not null"""
-        )
-    }
-    first_import = not before
+    # Existing rows are fetched per chunk of the file, so a small file does not
+    # load millions of companies into memory.
+    before: dict = {}
+    latest_period: dict = {}
+    first_import = conn.execute("select 1 from company limit 1").fetchone() is None
+
+    def prefetch(items):
+        import itertools
+
+        it = iter(items)
+        while True:
+            chunk = list(itertools.islice(it, 2000))
+            if not chunk:
+                return
+            nums = list({n.company_number(get(r, "company_number")) for _, r in chunk} - {None})
+            before.clear()
+            latest_period.clear()
+            for r in conn.execute(
+                """select company_number, name, status, registered_address, address_key, sic_codes
+                   from company where company_number = any(%s)""", (nums,)):
+                before[r["company_number"]] = r
+            for r in conn.execute(
+                """select c.company_number, greatest(c.last_accounts_date, fp.period_end) as period_end, fp.employees
+                   from company c left join lateral (
+                       select period_end, employees from financial_period f
+                       where f.company_number = c.company_number and not f.period_inferred
+                       order by period_end desc limit 1) fp on true
+                   where c.company_number = any(%s)
+                     and (c.last_accounts_date is not null or fp.period_end is not null)""", (nums,)):
+                latest_period[r["company_number"]] = r
+            yield from chunk
     in_universe = None
     if universe:
         from ..scoring import active_buy_box, merged
@@ -189,7 +200,7 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
     ok, skipped, not_in_list, messages, changes = 0, 0, 0, [], 0
     rows_in = 0
     sic_texts: set[str] = set()
-    for i, row in enumerate(rows, start=2):
+    for i, row in prefetch(enumerate(rows, start=2)):
         rows_in += 1
         num = n.company_number(get(row, "company_number"))
         name = n.text(get(row, "name"))
@@ -307,7 +318,15 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
         ok += 1
 
     if full_register:
-        missing = [num for num in before if num not in seen_numbers]
+        conn.execute("drop table if exists seen_numbers; create temp table seen_numbers (num text primary key)")
+        with conn.cursor().copy("copy seen_numbers (num) from stdin") as cp:
+            for x in seen_numbers:
+                cp.write_row((x,))
+        prior = {r["company_number"]: r for r in conn.execute(
+            """select company_number, status from company c
+               where not exists (select 1 from seen_numbers s where s.num = c.company_number)""")}
+        before = prior
+        missing = list(prior)
         if rows_in < FULL_REGISTER_MIN_ROWS:
             messages.append("Not treated as the full register (too few rows), so missing companies were not flagged.")
         else:
@@ -368,7 +387,7 @@ def _financials(conn, num, row, get, source, latest=None, run_id=None) -> int:
             _change(conn, num, run_id, "staff", "employees", latest["employees"], values["employees"])
             noted += 1
     if period and any(v is not None for v in values.values()):
-        _upsert_period(conn, num, period, False, values, source)
+        _upsert_period(conn, num, period, False, values, source, period)
     prev = {
         "employees": n.integer(get(row, "employees_prev")),
         "net_assets": n.number(get(row, "net_assets_prev")),
@@ -380,7 +399,7 @@ def _financials(conn, num, row, get, source, latest=None, run_id=None) -> int:
             prev_end = period.replace(year=period.year - 1)
         except ValueError:  # 29 February
             prev_end = date(period.year - 1, 2, 28)
-        _upsert_period(conn, num, prev_end, True, prev, source)
+        _upsert_period(conn, num, prev_end, True, prev, source, period)
 
     low, high = n.number(get(row, "est_revenue_low")), n.number(get(row, "est_revenue_high"))
     if low and high and low > 0:
@@ -394,21 +413,25 @@ def _financials(conn, num, row, get, source, latest=None, run_id=None) -> int:
     return noted
 
 
-def _upsert_period(conn, num, period, inferred, values, source):
+def _upsert_period(conn, num, period, inferred, values, source, balance_date=None):
     cols = [k for k, v in values.items() if v is not None]
     if not cols:
         return
     col_sql = ", ".join(cols)
     val_sql = ", ".join(f"%({c})s" for c in cols)
     upd = ", ".join(f"{c} = excluded.{c}" for c in cols)
-    params = {**{c: values[c] for c in cols}, "num": num, "period": period, "inferred": inferred, "source": source}
-    # Never let an inferred period overwrite a real one.
-    where = "where financial_period.period_inferred" if inferred else ""
+    params = {**{c: values[c] for c in cols}, "num": num, "period": period, "inferred": inferred, "source": source,
+              "bd": balance_date or period}
+    # Never let an inferred period overwrite a real one, or an older filing a newer one.
+    where = ("where financial_period.period_inferred" if inferred else
+             "where financial_period.period_inferred or financial_period.source_balance_date is null "
+             "or excluded.source_balance_date >= financial_period.source_balance_date")
     conn.execute(
-        f"""insert into financial_period (company_number, period_end, period_inferred, source, {col_sql})
-            values (%(num)s, %(period)s, %(inferred)s, %(source)s, {val_sql})
+        f"""insert into financial_period (company_number, period_end, period_inferred, source, source_balance_date, {col_sql})
+            values (%(num)s, %(period)s, %(inferred)s, %(source)s, %(bd)s, {val_sql})
             on conflict (company_number, period_end) do update set
-              period_inferred = excluded.period_inferred, source = excluded.source, {upd} {where}""",
+              period_inferred = excluded.period_inferred, source = excluded.source,
+              source_balance_date = excluded.source_balance_date, {upd} {where}""",
         params,
     )
 

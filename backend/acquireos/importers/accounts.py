@@ -141,63 +141,121 @@ def parse(content: str) -> dict[date, dict[str, float]]:
     return out
 
 
-def run(conn, paths: list[Path], only_numbers: set[str] | None = None) -> dict:
-    """Import accounts for companies in the database from one or more
-    accounts bulk zips (or single .html/.xml files)."""
-    from .companies import _change, refresh_estimates
+def _parse_member(item):
+    """Worker: (fname, raw bytes) -> (fname, number, balance date, {period: values}) or None."""
+    fname, raw = item
+    meta = parse_name(fname)
+    if not meta:
+        return None
+    try:
+        data = parse(raw.decode("utf-8", errors="replace"))
+    except Exception:
+        return None
+    return (fname.rsplit("/", 1)[-1], meta[0], meta[1], data)
 
-    wanted = only_numbers or {r["company_number"] for r in conn.execute("select company_number from company")}
-    latest = {
-        r["company_number"]: r
-        for r in conn.execute(
-            """select c.company_number, greatest(c.last_accounts_date, fp.period_end) as period_end, fp.employees
-               from company c left join lateral (
-                   select period_end, employees from financial_period f
-                   where f.company_number = c.company_number and not f.period_inferred
-                   order by period_end desc limit 1) fp on true"""
-        )
-    }
+
+FIELDS = list(CONCEPTS.keys())
+
+
+def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_changes: bool = True,
+        workers: int | None = None, batch: int = 5000, progress=None) -> dict:
+    """Import filed accounts for every company in the database.
+
+    - Files are parsed in parallel (all CPU cores by default).
+    - Figures are written in batches through a staging table.
+    - A figure is only replaced by one from a filing with the same or a later
+      balance sheet date (source_balance_date), so loading older months after
+      newer ones can never overwrite newer figures.
+    - record_changes=False (used when back-filling history) records no
+      "new accounts" or staff changes.
+    """
+    import os
+    from multiprocessing import get_context
+
+    from .companies import refresh_estimates
+
+    if only_numbers is not None:
+        wanted = set(only_numbers)
+    else:
+        wanted = set()
+        with conn.cursor(name="acc_nums") as cur:
+            cur.itersize = 200_000
+            cur.execute("select company_number from company")
+            for r in cur:
+                wanted.add(r["company_number"])
     name = ", ".join(p.name for p in paths)
     run_id = conn.execute("insert into import_run (kind, filename) values ('accounts', %s) returning id",
                           (name[:500],)).fetchone()["id"]
-    seen = matched = periods = changes = 0
-    messages: list[str] = []
+    conn.execute("drop table if exists acc_stage")
+    conn.execute(f"""create temp table acc_stage (company_number text, period_end date, balance_date date,
+                    source text, {", ".join(f"{f} numeric" for f in FIELDS)})""")
 
-    for path in paths:
-        for fname, read in _members(path):
-            seen += 1
-            meta = parse_name(fname)
-            if not meta or meta[0] not in wanted:
-                continue
-            num, balance_date = meta
-            matched += 1
-            try:
-                content = read().decode("utf-8", errors="replace")
-                data = parse(content)
-            except Exception as e:  # one bad filing must not stop the run
-                if len(messages) < 30:
-                    messages.append(f"{fname}: could not read ({e})")
-                continue
-            if not data:
-                continue
-            prev = latest.get(num) or {}
-            prev_end, prev_staff = prev.get("period_end"), prev.get("employees")
-            current = data.get(balance_date) or data[max(data)]
-            if prev_end is None or balance_date > prev_end:
-                if prev_end is not None:
-                    _change(conn, num, run_id, "accounts", "period_end", prev_end, balance_date)
-                    changes += 1
-                    if current.get("employees") is not None and prev_staff is not None and current["employees"] != prev_staff:
-                        _change(conn, num, run_id, "staff", "employees", prev_staff, current["employees"])
-                        changes += 1
-                latest[num] = {"period_end": balance_date, "employees": current.get("employees", prev_staff)}
-            for period_end, vals in data.items():
-                _upsert(conn, num, period_end, vals, f"accounts:{fname.rsplit('/', 1)[-1]}")
-                periods += 1
-            conn.execute(
-                "update company set last_accounts_date = greatest(last_accounts_date, %s) where company_number = %s",
-                (balance_date, num),
-            )
+    seen = matched = periods = changes = 0
+    buf: list[tuple] = []
+
+    def flush():
+        nonlocal periods, changes, buf
+        if not buf:
+            return
+        with conn.cursor().copy(
+            f"copy acc_stage (company_number, period_end, balance_date, source, {', '.join(FIELDS)}) from stdin"
+        ) as cp:
+            for r in buf:
+                cp.write_row(r)
+        if record_changes:
+            changes += _batch_changes(conn, run_id)
+        periods += conn.execute(f"""
+            insert into financial_period as fp (company_number, period_end, period_inferred, source,
+                source_balance_date, {', '.join(FIELDS)})
+            select distinct on (company_number, period_end) company_number, period_end, false, source, balance_date,
+                   {', '.join(FIELDS)}
+            from acc_stage order by company_number, period_end, balance_date desc
+            on conflict (company_number, period_end) do update set
+                period_inferred = false, source = excluded.source, source_balance_date = excluded.source_balance_date,
+                {', '.join(f"{f} = coalesce(excluded.{f}, fp.{f})" for f in FIELDS)}
+            where fp.period_inferred or fp.source_balance_date is null
+               or excluded.source_balance_date >= fp.source_balance_date""").rowcount
+        conn.execute("""
+            update company c set last_accounts_date = greatest(c.last_accounts_date, x.d)
+            from (select company_number, max(balance_date) as d from acc_stage group by 1) x
+            where x.company_number = c.company_number""")
+        conn.execute("truncate acc_stage")
+        buf = []
+
+    def items():
+        nonlocal seen
+        for path in paths:
+            for fname, read in _members(path):
+                seen += 1
+                meta = parse_name(fname)
+                if meta and meta[0] in wanted:
+                    yield fname, read()
+
+    def handle(res):
+        nonlocal matched
+        if not res:
+            return
+        fname, num, bdate, data = res
+        if not data:
+            return
+        matched += 1
+        for pe, vals in data.items():
+            buf.append((num, pe, bdate, f"accounts:{fname}", *[vals.get(f) for f in FIELDS]))
+        if len(buf) >= batch:
+            flush()
+            if progress:
+                progress(f"{matched:,} filings loaded")
+
+    workers = workers if workers is not None else (os.cpu_count() or 1)
+    if workers > 1:
+        # "spawn" so worker processes start clean even inside the threaded web server.
+        with get_context("spawn").Pool(workers) as pool:
+            for res in pool.imap_unordered(_parse_member, items(), chunksize=32):
+                handle(res)
+    else:
+        for it in items():
+            handle(_parse_member(it))
+    flush()
 
     # Real periods replace the "inferred" prior-year rows from the ranked file.
     conn.execute(
@@ -208,23 +266,57 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None) -> dict:
     refresh_estimates(conn)
     conn.execute(
         "update import_run set rows_in=%s, rows_ok=%s, messages=%s, finished_at=now() where id=%s",
-        (seen, matched, json.dumps(messages), run_id),
+        (seen, matched, json.dumps([]), run_id),
     )
     return {"run_id": run_id, "files_seen": seen, "companies_matched": matched, "periods": periods,
-            "changes": changes, "messages": messages}
+            "changes": changes, "messages": []}
 
 
-def _upsert(conn, num, period_end, vals, source):
+def _batch_changes(conn, run_id) -> int:
+    """New accounts (and staff changes) for filings newer than anything held."""
+    n = conn.execute("""
+        with newest as (
+            select distinct on (company_number) company_number, balance_date, employees
+            from acc_stage where period_end = balance_date
+            order by company_number, balance_date desc
+        ), prior as (
+            select c.company_number, greatest(c.last_accounts_date, x.pe) as prev_end, x.emp as prev_emp
+            from company c join newest nw on nw.company_number = c.company_number
+            left join lateral (select period_end as pe, employees as emp from financial_period f
+                               where f.company_number = c.company_number and not f.period_inferred
+                               order by period_end desc limit 1) x on true
+        ), acc as (
+            insert into company_change (company_number, import_run_id, kind, field, old_value, new_value)
+            select nw.company_number, %(run)s, 'accounts', 'period_end', pr.prev_end::text, nw.balance_date::text
+            from newest nw join prior pr on pr.company_number = nw.company_number
+            where pr.prev_end is not null and nw.balance_date > pr.prev_end
+            returning 1
+        ), staff as (
+            insert into company_change (company_number, import_run_id, kind, field, old_value, new_value)
+            select nw.company_number, %(run)s, 'staff', 'employees', pr.prev_emp::text, nw.employees::int::text
+            from newest nw join prior pr on pr.company_number = nw.company_number
+            where pr.prev_end is not null and nw.balance_date > pr.prev_end
+              and nw.employees is not null and pr.prev_emp is not null and nw.employees <> pr.prev_emp
+            returning 1
+        )
+        select (select count(*) from acc) + (select count(*) from staff) as n""", {"run": run_id}).fetchone()["n"]
+    return n
+
+
+def _upsert(conn, num, period_end, vals, source, balance_date=None):
     cols = [k for k in CONCEPTS if vals.get(k) is not None]
     if not cols:
         return
-    params = {"num": num, "pe": period_end, "src": source, **{c: vals[c] for c in cols}}
+    params = {"num": num, "pe": period_end, "src": source, "bd": balance_date or period_end, **{c: vals[c] for c in cols}}
     conn.execute(
-        f"""insert into financial_period (company_number, period_end, period_inferred, source, {', '.join(cols)})
-            values (%(num)s, %(pe)s, false, %(src)s, {', '.join(f'%({c})s' for c in cols)})
+        f"""insert into financial_period as fp (company_number, period_end, period_inferred, source, source_balance_date,
+                {', '.join(cols)})
+            values (%(num)s, %(pe)s, false, %(src)s, %(bd)s, {', '.join(f'%({c})s' for c in cols)})
             on conflict (company_number, period_end) do update set
-              period_inferred = false, source = excluded.source,
-              {', '.join(f'{c} = excluded.{c}' for c in cols)}""",
+              period_inferred = false, source = excluded.source, source_balance_date = excluded.source_balance_date,
+              {', '.join(f'{c} = excluded.{c}' for c in cols)}
+            where fp.period_inferred or fp.source_balance_date is null
+               or excluded.source_balance_date >= fp.source_balance_date""",
         params,
     )
 

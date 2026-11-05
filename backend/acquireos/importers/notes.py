@@ -80,7 +80,9 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
     if not mapping.get("company_number"):
         raise ValueError("No company number column found. Map one before importing.")
     source = source or path.name
-    known = {r["company_number"] for r in conn.execute("select company_number from company")}
+    file_nums = list({n.company_number(r.get(mapping["company_number"])) for r in rows} - {None})
+    known = {r["company_number"] for r in conn.execute(
+        "select company_number from company where company_number = any(%s)", (file_nums,))}
     run_id = conn.execute(
         "insert into import_run (kind, filename, rows_in) values ('notes', %s, %s) returning id",
         (source, len(rows)),

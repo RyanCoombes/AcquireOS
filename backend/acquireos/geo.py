@@ -36,10 +36,16 @@ def _get(path: str) -> dict | None:
 
 
 def missing_postcodes(conn, limit: int | None = None) -> list[str]:
+    # Only companies that matter: in the buy box, in the pipeline, or linked
+    # to one. The whole register has around 1.7 million postcodes.
+    scored = conn.execute("select 1 from score limit 1").fetchone() is not None
+    scope = """and (exists (select 1 from score s where s.company_number = c.company_number and not s.excluded)
+                    or exists (select 1 from user_company u where u.company_number = c.company_number and u.status <> 'new')
+                    or exists (select 1 from company_link l where l.b = c.company_number))""" if scored else ""
     rows = conn.execute(
-        """select distinct pc from (
-               select postcode as pc from company where postcode is not null
-               union select postcode from person where postcode is not null) x
+        f"""select distinct pc from (
+               select postcode as pc from company c where postcode is not null {scope}
+               union select postcode from person where postcode is not null and kind <> 'individual') x
            left join postcode_geo g on g.postcode = x.pc
            where g.postcode is null or (g.precision = 'none' and g.looked_up_at < now() - interval '90 days')
            order by 1""" + (f" limit {int(limit)}" if limit else "")

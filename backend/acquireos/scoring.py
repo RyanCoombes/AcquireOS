@@ -23,7 +23,7 @@ DEFAULT_CRITERIA = {
     # Which companies the monthly Companies House file adds to the database.
     # Companies already in the database are always kept up to date.
     "universe": {
-        "sic_prefixes": ["5821", "5829", "620", "631"],
+        "sic_prefixes": ["5821", "5829", "6190", "620", "631"],
         "keyword_sic_prefixes": ["70229", "74909", "82990"],
         "name_keywords": ["software", "digital", "data", "computing", "systems", "technology", "technologies",
                           "cloud", "networks", "IT services", "IT solutions", "analytics", "cyber"],
@@ -76,10 +76,11 @@ def _money(v):
     return f"£{v:.0f}"
 
 
-def score_company(c: dict, criteria: dict, today: date | None = None) -> dict:
-    """c holds the company's facts (see load_facts). Returns score dict."""
+def score_company(c: dict, criteria: dict, today: date | None = None, scope=None) -> dict:
+    """c holds the company's facts (see load_facts). Returns score dict.
+    scope: optional universe test; companies outside it are excluded."""
     today = today or date.today()
-    cr = merged(criteria)
+    cr = merged(criteria) if "exclude" not in criteria or "staff" not in criteria else criteria
     reasons = []
 
     def add(key, label, weight, frac, status, text):
@@ -107,6 +108,10 @@ def score_company(c: dict, criteria: dict, today: date | None = None) -> dict:
             if kw and re.search(r"\b" + re.escape(kw.lower()) + r"\b", hay):
                 exclusion = f"Matches excluded keyword “{kw}”"
                 break
+    if not exclusion and scope is not None and not scope({
+            "status": (c.get("status") or "active").lower(), "postcode": c.get("postcode"),
+            "inc": c.get("incorporation_date"), "sic": c.get("sic_codes") or [], "name": c.get("name")}):
+        exclusion = "Outside your universe (SIC codes, name keywords, area or age)"
     regions = cr.get("regions") or []
     if not exclusion and regions and (c.get("region") or "") not in regions:
         exclusion = f"Outside chosen regions ({', '.join(regions)})"
@@ -202,27 +207,17 @@ def score_company(c: dict, criteria: dict, today: date | None = None) -> dict:
 
 
 FACTS_SQL = """
-with latest as (
-    select distinct on (company_number) company_number, employees, net_assets, period_end, operating_profit, cash
-    from financial_period where not period_inferred
-    order by company_number, period_end desc
-), prev as (
-    select distinct on (fp.company_number) fp.company_number, fp.net_assets
-    from financial_period fp join latest l on l.company_number = fp.company_number
-    where fp.period_end < l.period_end and fp.net_assets is not null
-    order by fp.company_number, fp.period_end desc
-), research_text as (
-    select company_number, string_agg(content, ' ') as txt from research group by company_number
+with research_text as (
+    select company_number, string_agg(content, ' ') as txt from research {rwhere} group by company_number
 )
 select c.company_number, c.name, c.status, c.review_tier, c.incorporation_date, c.sic_codes,
-       c.nature_of_business, c.region, c.address_flag,
-       l.employees, l.net_assets, l.operating_profit, l.cash, p.net_assets as net_assets_prev,
+       c.nature_of_business, c.region, c.address_flag, c.postcode,
+       l.employees, l.net_assets, l.operating_profit, l.cash, l.net_assets_prev,
        e.revenue_low, e.revenue_high, e.basis as revenue_basis,
        o.ownership_type, o.flags as ownership_flags, o.oldest_birth_year,
        concat_ws(' ', rt.txt, en.summary, en.business_type) as research_text, en.field_service
 from company c
-left join latest l on l.company_number = c.company_number
-left join prev p on p.company_number = c.company_number
+left join company_latest l on l.company_number = c.company_number
 left join estimate e on e.company_number = c.company_number
 left join company_ownership o on o.company_number = c.company_number
 left join research_text rt on rt.company_number = c.company_number
@@ -231,18 +226,46 @@ left join enrichment en on en.company_number = c.company_number
 """
 
 
+def refresh_latest(conn, company_numbers: list[str] | None = None):
+    """Rebuild company_latest: newest filed figures, prior net assets and
+    up to six years of staff numbers per company."""
+    where = "where company_number = any(%(nums)s)" if company_numbers else ""
+    params = {"nums": company_numbers} if company_numbers else {}
+    conn.execute(f"delete from company_latest {where}", params)
+    fw = "and company_number = any(%(nums)s)" if company_numbers else ""
+    conn.execute(
+        f"""insert into company_latest (company_number, period_end, employees, turnover, operating_profit,
+                net_assets, cash, net_assets_prev, staff_trend)
+            select company_number, (array_agg(period_end order by period_end desc))[1],
+                   (array_agg(employees order by period_end desc))[1],
+                   (array_agg(turnover order by period_end desc))[1],
+                   (array_agg(operating_profit order by period_end desc))[1],
+                   (array_agg(net_assets order by period_end desc))[1],
+                   (array_agg(cash order by period_end desc))[1],
+                   (array_agg(net_assets order by period_end desc) filter (where net_assets is not null))[2],
+                   (array_agg(employees order by period_end) filter (where employees is not null))[greatest(1, count(employees) - 5):]
+            from financial_period where not period_inferred {fw}
+            group by company_number""",
+        params,
+    )
+
+
+_FLOATS = ("net_assets", "net_assets_prev", "revenue_low", "revenue_high", "operating_profit", "cash")
+
+
+def _fact(r) -> dict:
+    r = dict(r)
+    for k in _FLOATS:
+        if r.get(k) is not None:
+            r[k] = float(r[k])
+    return r
+
+
 def load_facts(conn, company_number: str | None = None) -> list[dict]:
     where = "where c.company_number = %s" if company_number else ""
-    params = (company_number,) if company_number else ()
-    rows = conn.execute(FACTS_SQL.format(where=where), params).fetchall()
-    out = []
-    for r in rows:
-        r = dict(r)
-        for k in ("net_assets", "net_assets_prev", "revenue_low", "revenue_high", "operating_profit", "cash"):
-            if r.get(k) is not None:
-                r[k] = float(r[k])
-        out.append(r)
-    return out
+    rwhere = "where company_number = %s" if company_number else ""
+    params = (company_number, company_number) if company_number else ()
+    return [_fact(r) for r in conn.execute(FACTS_SQL.format(where=where, rwhere=rwhere), params).fetchall()]
 
 
 def active_buy_box(conn, user_id: int = 1) -> dict:
@@ -258,32 +281,69 @@ def active_buy_box(conn, user_id: int = 1) -> dict:
     return dict(row)
 
 
-def rescore(conn, buy_box: dict | None = None, company_number: str | None = None) -> int:
-    bb = buy_box or active_buy_box(conn)
-    facts = load_facts(conn, company_number)
-    today = date.today()
-    if company_number is None:
-        conn.execute("delete from score where buy_box_id = %s", (bb["id"],))
+def rescore(conn, buy_box: dict | None = None, company_number: str | None = None, batch: int = 20_000) -> int:
+    """Score every company (streamed in batches) or one company."""
     from . import valuation
 
+    bb = buy_box or active_buy_box(conn)
+    criteria = merged(bb["criteria"])
     va = valuation.assumptions(bb["criteria"])
-    with conn.cursor() as cur:
-        rows = []
+    scope = scope_test(criteria)
+    today = date.today()
+
+    def rows_for(facts):
         for f in facts:
-            s = score_company(f, bb["criteria"], today)
+            sc = score_company(f, criteria, today, scope)
             v = valuation.value(f, va)
-            rows.append((bb["id"], f["company_number"], s["score"], s["coverage"], s["excluded"],
-                         s["exclusion"], json.dumps(s["reasons"]), v["ebitda_low"], v["ebitda_high"],
-                         v["value_low"], v["value_high"], v["basis"]))
-        cur.executemany(
-            """insert into score (buy_box_id, company_number, score, coverage, excluded, exclusion, reasons,
+            yield (bb["id"], f["company_number"], sc["score"], sc["coverage"], sc["excluded"], sc["exclusion"],
+                   json.dumps(sc["reasons"]), v["ebitda_low"], v["ebitda_high"], v["value_low"], v["value_high"],
+                   v["basis"])
+
+    upsert = """insert into score (buy_box_id, company_number, score, coverage, excluded, exclusion, reasons,
                    ebitda_low, ebitda_high, value_low, value_high, value_basis)
-               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               select * from score_stage
                on conflict (buy_box_id, company_number) do update set score = excluded.score,
                  coverage = excluded.coverage, excluded = excluded.excluded, exclusion = excluded.exclusion,
                  reasons = excluded.reasons, ebitda_low = excluded.ebitda_low, ebitda_high = excluded.ebitda_high,
                  value_low = excluded.value_low, value_high = excluded.value_high, value_basis = excluded.value_basis,
-                 computed_at = now()""",
-            rows,
-        )
-    return len(facts)
+                 computed_at = now()"""
+    conn.execute("drop table if exists score_stage")
+    conn.execute("""create temp table score_stage (buy_box_id int, company_number text, score numeric, coverage numeric,
+                    excluded boolean, exclusion text, reasons jsonb, ebitda_low numeric, ebitda_high numeric,
+                    value_low numeric, value_high numeric, value_basis text)""")
+
+    def flush(buf):
+        if not buf:
+            return
+        with conn.cursor().copy("copy score_stage from stdin") as cp:
+            for r in buf:
+                cp.write_row(r)
+        conn.execute(upsert)
+        conn.execute("truncate score_stage")
+
+    if company_number:
+        refresh_latest(conn, [company_number])
+        flush(list(rows_for(load_facts(conn, company_number))))
+        return 1
+    refresh_latest(conn)
+    conn.execute("delete from score where buy_box_id = %s", (bb["id"],))
+    n = 0
+    buf: list = []
+    with conn.cursor(name="score_facts") as cur:
+        cur.itersize = batch
+        cur.execute(FACTS_SQL.format(where="", rwhere=""))
+        for r in cur:
+            buf.extend(rows_for([_fact(r)]))
+            n += 1
+            if len(buf) >= batch:
+                flush(buf)
+                buf = []
+    flush(buf)
+    return n
+
+
+def scope_test(criteria: dict):
+    """Universe test, built once per rescore (see companies.universe_filter)."""
+    from .importers.companies import universe_filter
+
+    return universe_filter(criteria)

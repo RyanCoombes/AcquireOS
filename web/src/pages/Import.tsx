@@ -218,18 +218,20 @@ function ChFeed({ onDone }: { onDone: () => void }) {
         </span>
       </div>
       <p className="muted" style={{ maxWidth: "80ch", marginTop: 0 }}>
-        AcquireOS downloads these free files itself, keeps only the companies that matter to you, and deletes each file once read.
-        It runs automatically each month (the <code>scheduler</code> service in the stack). Use more months of accounts the first time to build up history for the charts.
+        AcquireOS downloads these free files itself, keeps <b>every</b> UK company, its filed accounts and its owners, and deletes
+        each file once read. It runs automatically each month (the <code>scheduler</code> service in the stack). The first time,
+        choose 12 or 24 months of accounts to build up history: months load oldest first, and an older filing can never
+        overwrite figures from a newer one. Expect the first full load to take several hours on a Raspberry Pi.
       </p>
       <table>
         <thead><tr><th>File</th><th>What it adds</th><th>Size</th></tr></thead>
         <tbody>
           <tr><td><a href="https://download.companieshouse.gov.uk/en_output.html" target="_blank" rel="noreferrer">Basic company data ↗</a></td>
-            <td>Every live company: name, status, address, SIC codes, accounts dates. New companies matching your <Link to="/buy-box">universe</Link> are added; yours are updated and changes recorded. Companies that leave the register are flagged.</td><td className="nowrap">~0.5 GB zip</td></tr>
+            <td>Every live company: name, status, address, SIC codes, accounts dates. All are kept; your <Link to="/buy-box">universe</Link> decides which count as targets. Changes are recorded and companies that leave the register are flagged.</td><td className="nowrap">~0.5 GB zip</td></tr>
           <tr><td><a href="https://download.companieshouse.gov.uk/en_monthlyaccountsdata.html" target="_blank" rel="noreferrer">Monthly accounts ↗</a></td>
-            <td>Filed accounts (staff, turnover, profit, net assets, cash, debtors) for your companies, current and prior year. Builds the financial history charts.</td><td className="nowrap">several GB a month</td></tr>
+            <td>Filed accounts (staff, turnover, profit, net assets, cash, debtors) for every company, current and prior year. Builds the financial history charts.</td><td className="nowrap">several GB a month</td></tr>
           <tr><td><a href="https://download.companieshouse.gov.uk/en_pscdata.html" target="_blank" rel="noreferrer">Owners (PSC) ↗</a></td>
-            <td>Who owns each company, traced through holding companies; ages, trusts, EOTs, foreign parents.</td><td className="nowrap">~2 GB zip</td></tr>
+            <td>Who owns every company, traced through holding companies; ages, trusts, EOTs, foreign parents.</td><td className="nowrap">~2 GB zip</td></tr>
         </tbody>
       </table>
       {st?.error && <div className="callout red" style={{ marginTop: 14 }}>Last run failed: {st.error}</div>}

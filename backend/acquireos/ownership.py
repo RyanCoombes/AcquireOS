@@ -36,135 +36,183 @@ TYPE_LABELS = {
 
 
 def rebuild(conn, today: date | None = None) -> dict:
+    """Recompute company_ownership and ownership links with set-based SQL, so
+    it scales to every company on the register."""
     today = today or date.today()
-    companies = {r["company_number"]: r["name"] for r in conn.execute("select company_number, name from company")}
+    _build_walk(conn)
+    _ownership_from_walk(conn, today)
+    counts = {r["ownership_type"]: r["n"] for r in conn.execute(
+        "select ownership_type, count(*) as n from company_ownership group by 1")}
+    rebuild_links(conn, walk_ready=True)
+    return {"ownership": counts}
 
-    pscs = defaultdict(list)  # company -> list of psc dicts (active only)
-    recent = defaultdict(bool)
-    for r in conn.execute(
-        """select cp.company_number, cp.natures, cp.notified_on, cp.ceased_on,
-                  p.id, p.kind, p.name, p.birth_year, p.birth_month, p.registration_number, p.country_registered
-           from company_person cp join person p on p.id = cp.person_id where cp.role = 'psc'"""
-    ):
-        if _is_recent(r["notified_on"], r["ceased_on"], today):
-            recent[r["company_number"]] = True
-        if r["ceased_on"] is None:
-            pscs[r["company_number"]].append(dict(r))
 
-    parents = defaultdict(list)
-    for r in conn.execute(
-        """select pp.parent_number, pp.natures, p.id, p.kind, p.name, p.birth_year, p.birth_month,
-                  p.registration_number, p.country_registered
-           from parent_psc pp join person p on p.id = pp.person_id where pp.ceased_on is null"""
-    ):
-        parents[r["parent_number"]].append(dict(r))
-
-    def owners_of(number: str):
-        return pscs.get(number) or parents.get(number) or []
-
-    conn.execute("delete from company_ownership")
-    conn.execute("delete from company_link where kind in ('owned_by', 'shared_owner')")
-
-    ultimate_by_company: dict[str, list[dict]] = {}
-    counts = defaultdict(int)
-    for num, name in companies.items():
-        direct = pscs.get(num, [])
-        flags: set[str] = set()
-        notes: list[str] = []
-        ultimate: list[dict] = []
-        unresolved_corporate = False
-
-        def walk(owner: dict, depth: int, chain: list[str]):
-            nonlocal unresolved_corporate
-            label = owner["name"]
-            if owner["kind"] == "individual":
-                ultimate.append(
-                    {"name": label, "birth_year": owner["birth_year"], "birth_month": owner["birth_month"],
-                     "person_id": owner["id"], "via": chain[:]}
-                )
-                return
-            if EOT_RE.search(label):
-                flags.add("eot")
-            elif owner["kind"] == "legal" or TRUST_RE.search(label):
-                flags.add("trust")
-            if INVESTOR_RE.search(label):
-                flags.add("investor")
-            country = (owner.get("country_registered") or "").strip().lower()
-            if owner["kind"] == "corporate" and country and country not in UK_PLACES and not any(
-                w in country for w in ("england", "wales", "scotland", "united kingdom")
-            ):
-                flags.add("foreign_parent")
-            reg = owner.get("registration_number")
-            above = owners_of(reg) if reg and reg not in chain and depth < 5 else []
-            if not above:
-                if owner["kind"] == "corporate":
-                    unresolved_corporate = True
-                ultimate.append({"name": label, "kind": owner["kind"], "via": chain[:], "unresolved": True})
-                return
-            for parent_owner in above:
-                walk(parent_owner, depth + 1, chain + [reg])
-
-        for owner in direct:
-            for nat in owner.get("natures") or []:
-                if "as-trust" in nat:
-                    flags.add("trust")
-            if owner["kind"] != "individual":
-                if owner.get("registration_number"):
-                    flags.add("via_holdco")
-                    _link(conn, num, owner["registration_number"], owner["name"], "owned_by", "",
-                          "confirmed", "Registration number on the PSC record")
-                else:
-                    match = _match_by_name(owner["name"], companies)
-                    if match:
-                        _link(conn, num, match, owner["name"], "owned_by", "", "likely",
-                              "Parent name matches a company in your list; no registration number filed")
-            walk(owner, 0, [])
-
-        individuals = [u for u in ultimate if not u.get("unresolved")]
-        if recent[num]:
-            flags.add("recent_change")
-        if not direct:
-            flags.add("no_psc_data")
-
-        if "eot" in flags:
-            otype = "eot"
-        elif "investor" in flags:
-            otype = "investor_backed"
-        elif "foreign_parent" in flags:
-            otype = "foreign_owned"
-        elif "trust" in flags and not individuals:
-            otype = "trust"
-        elif unresolved_corporate and not individuals:
-            otype = "group_owned"
-        elif individuals and _looks_like_group(individuals, ultimate):
-            otype = "group_owned"
-        elif individuals:
-            otype = "owner_held"
-        else:
-            otype = "unknown"
-
-        if otype == "owner_held":
-            via = " through a holding company" if "via_holdco" in flags else " directly"
-            notes.append(f"{len({u['person_id'] for u in individuals})} individual owner(s), held{via}.")
-        elif otype == "unknown":
-            notes.append("No active owner records found in the PSC data imported so far.")
-        else:
-            notes.append(f"Classed as {TYPE_LABELS[otype].lower()} from the owner records.")
-
-        years = [u["birth_year"] for u in individuals if u.get("birth_year")]
-        conn.execute(
-            """insert into company_ownership (company_number, ownership_type, flags, owner_count,
-                   oldest_birth_year, ultimate_owners, explanation)
-               values (%s, %s, %s, %s, %s, %s, %s)""",
-            (num, otype, sorted(flags), len({u["person_id"] for u in individuals}),
-             min(years) if years else None, _json(ultimate), " ".join(notes)),
+def _build_walk(conn):
+    conn.execute("drop table if exists own_edges; drop table if exists own_walk")
+    # Who owns what: a company's own PSC records, or for parents outside the
+    # company table, the PSCs stored in parent_psc.
+    conn.execute("""
+        create temp table own_edges as
+        select company_number as owned, person_id, natures from company_person
+        where role = 'psc' and ceased_on is null
+        union all
+        select pp.parent_number, pp.person_id, pp.natures from parent_psc pp
+        where pp.ceased_on is null and not exists (
+            select 1 from company_person cp where cp.company_number = pp.parent_number
+              and cp.role = 'psc' and cp.ceased_on is null)""")
+    conn.execute("create index on own_edges (owned)")
+    conn.execute("analyze own_edges")
+    conn.execute("""
+        create temp table own_walk as
+        with recursive walk (root, person_id, depth, path) as (
+            select e.owned, e.person_id, 0, array[e.owned]
+            from own_edges e join company c on c.company_number = e.owned
+            union all
+            select w.root, e2.person_id, w.depth + 1, w.path || p.registration_number
+            from walk w
+            join person p on p.id = w.person_id and p.kind <> 'individual' and p.registration_number is not null
+            join own_edges e2 on e2.owned = p.registration_number
+            where w.depth < 5 and not (p.registration_number = any (w.path))
         )
-        ultimate_by_company[num] = individuals
-        counts[otype] += 1
+        select w.root, w.person_id, w.depth, w.path, p.kind, p.name, p.birth_year, p.birth_month,
+               p.registration_number, p.country_registered,
+               (p.kind <> 'individual' and (p.registration_number is null or not exists (
+                    select 1 from own_edges e where e.owned = p.registration_number)
+                or p.registration_number = any (w.path) or w.depth >= 5)) as dead_end
+        from walk w join person p on p.id = w.person_id""")
+    conn.execute("create index on own_walk (root)")
+    conn.execute("analyze own_walk")
 
-    _shared_owner_links(conn, ultimate_by_company)
-    rebuild_address_links(conn)
-    return {"ownership": dict(counts)}
+
+def _ownership_from_walk(conn, today):
+
+    uk = "('" + "','".join(sorted(UK_PLACES - {""})) + "')"
+    conn.execute("delete from company_ownership")
+    conn.execute(rf"""
+        with agg as (
+            select root,
+              bool_or(kind <> 'individual' and name ~* '(EMPLOYEE\s+OWNERSHIP|\mEOT\M|EMPLOYEE\s+BENEFIT\s+TRUST|\mEBT\M)') as eot,
+              bool_or(kind <> 'individual' and not name ~* '(EMPLOYEE\s+OWNERSHIP|\mEOT\M|EMPLOYEE\s+BENEFIT\s+TRUST|\mEBT\M)'
+                      and (kind = 'legal' or name ~* '(\mTRUST(EES?)?\M|\mSETTLEMENT\M)')) as trust_node,
+              bool_or(kind <> 'individual' and name ~* '\m(CAPITAL|VENTURES?|EQUITY|INVESTMENTS?|INVESTORS?|FUND|NOMINEES?|PARTNERS LLP|GP LIMITED|PRIVATE EQUITY)\M') as investor,
+              bool_or(kind = 'corporate' and coalesce(country_registered, '') <> ''
+                      and lower(trim(country_registered)) not in {uk}
+                      and lower(country_registered) !~ '(england|wales|scotland|united kingdom)') as foreign_parent,
+              bool_or(depth = 0 and kind <> 'individual' and registration_number is not null) as via_holdco,
+              bool_or(kind = 'corporate' and dead_end) as unresolved_corporate,
+              count(distinct person_id) filter (where kind = 'individual') as individuals,
+              bool_or(kind = 'individual' and depth > 0) as indirect,
+              min(birth_year) filter (where kind = 'individual') as oldest,
+              (jsonb_agg(jsonb_build_object('name', name, 'birth_year', birth_year, 'birth_month', birth_month,
+                    'person_id', person_id, 'via', to_jsonb(path[2:]))) filter (where kind = 'individual')) as people,
+              (jsonb_agg(jsonb_build_object('name', name, 'kind', kind, 'via', to_jsonb(path[2:]), 'unresolved', true))
+                    filter (where kind <> 'individual' and dead_end)) as dead
+            from own_walk group by root
+        ), direct as (
+            select company_number as root,
+                   bool_or(ceased_on is null) as has_active,
+                   bool_or(ceased_on is null and exists (select 1 from unnest(natures) nn where nn like '%%as-trust%%')) as trust_nature,
+                   bool_or((ceased_on is not null and ceased_on >= %(recent)s)
+                        or (notified_on is not null and notified_on <> '2016-04-06' and notified_on >= %(recent)s)) as recent
+            from company_person where role = 'psc' group by company_number
+        ), base as (
+            select c.company_number,
+                   coalesce(a.eot, false) as eot,
+                   coalesce(a.trust_node, false) or coalesce(d.trust_nature, false) as trust,
+                   coalesce(a.investor, false) as investor,
+                   coalesce(a.foreign_parent, false) as foreign_parent,
+                   coalesce(a.via_holdco, false) as via_holdco,
+                   coalesce(a.unresolved_corporate, false) as unresolved_corporate,
+                   coalesce(a.individuals, 0) as individuals,
+                   coalesce(a.indirect, false) as indirect,
+                   a.oldest, coalesce(d.recent, false) as recent, coalesce(d.has_active, false) as has_active,
+                   coalesce(a.people, '[]'::jsonb) || coalesce(a.dead, '[]'::jsonb) as owners
+            from company c
+            left join agg a on a.root = c.company_number
+            left join direct d on d.root = c.company_number
+        ), typed as (
+            select *, case
+                when eot then 'eot'
+                when investor then 'investor_backed'
+                when foreign_parent then 'foreign_owned'
+                when trust and individuals = 0 then 'trust'
+                when unresolved_corporate and individuals = 0 then 'group_owned'
+                when individuals > 4 and indirect then 'group_owned'
+                when individuals > 0 then 'owner_held'
+                else 'unknown' end as otype
+            from base
+        )
+        insert into company_ownership (company_number, ownership_type, flags, owner_count, oldest_birth_year,
+                                       ultimate_owners, explanation)
+        select company_number, otype,
+               array_remove(array[
+                   case when eot then 'eot' end, case when foreign_parent then 'foreign_parent' end,
+                   case when investor then 'investor' end, case when recent then 'recent_change' end,
+                   case when not has_active then 'no_psc_data' end, case when trust then 'trust' end,
+                   case when via_holdco then 'via_holdco' end], null)::text[],
+               individuals, oldest, owners,
+               case otype
+                   when 'owner_held' then individuals || ' individual owner(s), held '
+                        || case when via_holdco then 'through a holding company' else 'directly' end || '.'
+                   when 'unknown' then 'No active owner records found in the PSC data imported so far.'
+                   else 'Classed as ' || lower(case otype when 'group_owned' then 'Group-owned'
+                        when 'investor_backed' then 'Investor-backed' when 'eot' then 'Employee-owned (EOT)'
+                        when 'trust' then 'Held in trust' when 'foreign_owned' then 'Foreign parent' end)
+                        || ' from the owner records.' end
+        from typed""", {"recent": today - RECENT})
+
+
+# Above this many companies, links wait until scores exist (so they can be
+# limited to companies in the buy box) instead of pairing the whole register.
+UNSCOPED_LINK_LIMIT = 100_000
+
+
+def rebuild_links(conn, walk_ready: bool = False):
+    """Ownership, shared-owner and shared-address links. Shared-owner and
+    shared-address links are only built where at least one company is in the
+    buy box (or for everything before any scoring has run), to keep the
+    number of pairs sensible across the whole register."""
+    if not walk_ready:
+        _build_walk(conn)
+    scored = conn.execute("select 1 from score limit 1").fetchone() is not None
+    if not scored and conn.execute("select count(*) as n from company").fetchone()["n"] > UNSCOPED_LINK_LIMIT:
+        return  # built after scoring, limited to the buy box
+    conn.execute("delete from company_link where kind in ('owned_by', 'shared_owner')")
+    conn.execute("""
+        insert into company_link (a, b, b_name, kind, via, confidence, evidence)
+        select distinct on (w.root, w.registration_number) w.root, w.registration_number, w.name, 'owned_by', '',
+               'confirmed', 'Registration number on the PSC record'
+        from own_walk w where w.depth = 0 and w.kind <> 'individual' and w.registration_number is not null
+        on conflict do nothing""")
+    conn.execute("""
+        insert into company_link (a, b, b_name, kind, via, confidence, evidence)
+        select distinct on (w.root, c.company_number) w.root, c.company_number, w.name, 'owned_by', '', 'likely',
+               'Parent name matches a company in your list; no registration number filed'
+        from own_walk w join company c on ao_company_name_key(c.name) = ao_company_name_key(w.name)
+        where w.depth = 0 and w.kind = 'corporate' and w.registration_number is null and c.company_number <> w.root
+        on conflict do nothing""")
+    scope = """exists (select 1 from score sc where sc.company_number = x.root and not sc.excluded)
+               or exists (select 1 from user_company uc where uc.company_number = x.root and uc.status <> 'new')""" if scored else "true"
+    conn.execute(f"""
+        with owners as (
+            select distinct w.root, w.person_id, w.name, w.birth_year, w.birth_month
+            from own_walk w where w.kind = 'individual'
+        ), sized as (
+            select o.*, count(*) over (partition by person_id) as n from owners o
+        ), pairs as (
+            select x.root as a, y.root as b, x.name, x.birth_year, x.birth_month
+            from sized x join sized y on x.person_id = y.person_id and x.root < y.root
+            where x.n between 2 and 25 and ({scope.replace('x.root', 'x.root')} or {scope.replace('x.root', 'y.root')})
+        )
+        insert into company_link (a, b, b_name, kind, via, confidence, evidence)
+        select distinct on (p.a, p.b, p.name) p.a, p.b, c.name, 'shared_owner', p.name,
+               case when p.birth_year is not null and p.birth_month is not null then 'likely' else 'possible' end,
+               case when p.birth_year is not null and p.birth_month is not null
+                    then 'Same owner name and birth month/year (' || p.birth_month || '/' || p.birth_year || ')'
+                    else 'Same owner name; no birth date to confirm' end
+        from pairs p join company c on c.company_number = p.b
+        on conflict do nothing""")
+    rebuild_address_links(conn, scope_sql=scope if scored else None)
 
 
 def _looks_like_group(individuals, ultimate) -> bool:
@@ -225,23 +273,31 @@ def _shared_owner_links(conn, ultimate_by_company):
                 _link(conn, a, b, names.get(b), "shared_owner", u["name"], confidence, evidence)
 
 
-def rebuild_address_links(conn):
+def rebuild_address_links(conn, scope_sql: str | None = None):
+    """Pairs of companies at the same (ordinary) registered address.
+    Addresses shared by more than MASS_ADDRESS_THRESHOLD companies are
+    accountants' or agents' offices and are skipped."""
     conn.execute("delete from company_link where kind = 'shared_address'")
-    conn.execute(
-        """
+    conn.execute("drop table if exists addr_members")
+    in_scope = ("(" + scope_sql.replace("x.root", "c.company_number") + ")") if scope_sql else "true"
+    conn.execute(f"""
+        create temp table addr_members as
+        select c.company_number, c.address_key, c.name, c.registered_address, {in_scope} as in_scope
+        from company c
+        join (select address_key from company
+              where address_key is not null and address_flag is null
+              group by address_key having count(*) between 2 and %s) g on g.address_key = c.address_key
+        where c.address_flag is null""", (n.MASS_ADDRESS_THRESHOLD,))
+    conn.execute("create index on addr_members (address_key)")
+    conn.execute("analyze addr_members")
+    conn.execute("""
         insert into company_link (a, b, b_name, kind, via, confidence, evidence)
         select x.company_number, y.company_number, y.name, 'shared_address', '', 'possible',
                'Same registered address: ' || x.registered_address
-        from company x join company y
+        from addr_members x join addr_members y
           on x.address_key = y.address_key and x.company_number < y.company_number
-        where x.address_key is not null and x.address_flag is null and y.address_flag is null
-          and x.address_key in (
-              select address_key from company where address_key is not null
-              group by address_key having count(*) between 2 and %s)
-        on conflict do nothing
-        """,
-        (n.MASS_ADDRESS_THRESHOLD,),
-    )
+        where x.in_scope or y.in_scope
+        on conflict do nothing""")
 
 
 def _json(v):

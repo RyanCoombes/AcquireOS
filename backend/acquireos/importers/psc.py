@@ -59,52 +59,94 @@ def _records(paths: list[Path]):
                 yield num, data
 
 
-def run(conn, paths: list[Path], max_depth: int = 4) -> dict:
+def run(conn, paths: list[Path], max_depth: int = 4, record_changes: bool = True, progress=None) -> dict:
+    """Load every PSC record in the snapshot (all UK companies).
+
+    One streaming pass into a staging table, then set-based merges, so tens of
+    millions of records load without holding them in memory. Records for
+    companies in the company table go to company_person; the rest (parents
+    that are dissolved, foreign or otherwise not on the live register) go to
+    parent_psc so ownership chains can still be followed.
+    """
     paths = [Path(p) for p in paths]
     run_id = conn.execute(
         "insert into import_run (kind, filename) values ('psc', %s) returning id",
         (", ".join(p.name for p in paths),),
     ).fetchone()["id"]
-
-    wanted = {r["company_number"] for r in conn.execute("select company_number from company")}
-    # On the first owner import everything is "new", so only later imports
-    # record owner changes.
     first = conn.execute("select 1 from company_person limit 1").fetchone() is None
-    known_companies = set(wanted)
-    done: set[str] = set()
+
+    conn.execute("drop table if exists psc_stage")
+    conn.execute("""create temp table psc_stage (
+        company_number text, person_key text, kind text, name text, birth_year int, birth_month int,
+        registration_number text, country_registered text, legal_form text, address text, postcode text,
+        natures text[], notified_on date, ceased_on date, row_key text, seq bigserial)""")
     total = 0
-    depth = 0
-    # Parent companies outside our list are stored as people of kind
-    # "corporate"; we pull their own PSCs in later passes but do not add
-    # them to the company table.
-    parent_rows: dict[str, list[tuple[str, dict]]] = {}
-    while wanted and depth <= max_depth:
-        next_wanted: set[str] = set()
+    with conn.cursor().copy(
+        """copy psc_stage (company_number, person_key, kind, name, birth_year, birth_month, registration_number,
+               country_registered, legal_form, address, postcode, natures, notified_on, ceased_on, row_key)
+           from stdin""") as cp:
         for num, data in _records(paths):
-            if num not in wanted:
-                continue
-            if num in known_companies:
-                _store(conn, num, data, run_id, first)
-                total += 1
-            else:
-                parent_rows.setdefault(num, []).append(("psc", data))
-            if KIND_MAP[data["kind"]] == "corporate":
-                reg = _reg_number(data)
-                if reg and reg not in done and reg not in wanted:
-                    next_wanted.add(reg)
-        done |= wanted
-        wanted = next_wanted
-        depth += 1
+            p = person_from(data)
+            notified = n.parse_date(data.get("notified_on"))
+            cp.write_row((num, p["person_key"], p["kind"], p["name"], p["birth_year"], p["birth_month"],
+                          p["registration_number"], p["country_registered"], p["legal_form"], p["address"],
+                          p["postcode"], data.get("natures_of_control") or [], notified,
+                          n.parse_date(data.get("ceased_on")), f"psc:{num}:{p['person_key']}:{notified or ''}"))
+            total += 1
+            if progress and total % 500_000 == 0:
+                progress(f"{total:,} owner records read")
+    conn.execute("create index on psc_stage (row_key, seq)")
+    conn.execute("analyze psc_stage")
+    conn.execute("""delete from psc_stage a using psc_stage b where a.row_key = b.row_key and a.seq < b.seq""")
+
+    conn.execute("""
+        insert into person (person_key, kind, name, birth_year, birth_month, registration_number,
+                            country_registered, legal_form, address, postcode)
+        select distinct on (person_key) person_key, kind, name, birth_year, birth_month, registration_number,
+               country_registered, legal_form, address, postcode
+        from psc_stage order by person_key, seq desc
+        on conflict (person_key) do update set name = excluded.name,
+            address = coalesce(excluded.address, person.address),
+            postcode = coalesce(excluded.postcode, person.postcode)""")
+
+    changes = 0
+    if record_changes and not first:
+        changes += conn.execute("""
+            insert into company_change (company_number, import_run_id, kind, field, old_value, new_value)
+            select s.company_number, %s, 'owner', 'New owner', null, s.name
+            from psc_stage s join company c on c.company_number = s.company_number
+            where s.ceased_on is null and not exists (select 1 from company_person cp where cp.row_key = s.row_key)""",
+            (run_id,)).rowcount
+        changes += conn.execute("""
+            insert into company_change (company_number, import_run_id, kind, field, old_value, new_value)
+            select s.company_number, %s, 'owner', 'Owner ceased', null, s.name
+            from psc_stage s join company_person cp on cp.row_key = s.row_key
+            where cp.ceased_on is null and s.ceased_on is not null""", (run_id,)).rowcount
+
+    in_list = conn.execute("""
+        insert into company_person (row_key, company_number, person_id, role, natures, notified_on, ceased_on, source)
+        select s.row_key, s.company_number, p.id, 'psc', s.natures, s.notified_on, s.ceased_on, 'psc_snapshot'
+        from psc_stage s join person p on p.person_key = s.person_key
+        join company c on c.company_number = s.company_number
+        on conflict (row_key) do update set natures = excluded.natures, ceased_on = excluded.ceased_on""").rowcount
+    parents = conn.execute("""
+        insert into parent_psc (parent_number, person_id, natures, ceased_on)
+        select distinct on (s.company_number, p.id) s.company_number, p.id, s.natures, s.ceased_on
+        from psc_stage s join person p on p.person_key = s.person_key
+        where not exists (select 1 from company c where c.company_number = s.company_number)
+        order by s.company_number, p.id, s.seq desc
+        on conflict (parent_number, person_id) do update set natures = excluded.natures,
+            ceased_on = excluded.ceased_on""").rowcount
 
     conn.execute(
         "update import_run set rows_in=%s, rows_ok=%s, finished_at=now(), messages=%s where id=%s",
-        (total, total, json.dumps([f"Parent companies traced outside your list: {len(parent_rows)}"]), run_id),
+        (total, in_list, json.dumps([f"Owner records for companies outside your database: {parents:,}"]), run_id),
     )
-    _store_parents(conn, parent_rows)
+    conn.execute("drop table if exists psc_stage")
     from ..ownership import rebuild
 
     stats = rebuild(conn)
-    return {"run_id": run_id, "rows_ok": total, "parents_traced": len(parent_rows), **stats}
+    return {"run_id": run_id, "rows_ok": in_list, "parents_traced": parents, "changes": changes, **stats}
 
 
 def _reg_number(data: dict) -> str | None:
@@ -161,44 +203,3 @@ def _upsert_person(conn, p: dict) -> int:
     ).fetchone()["id"]
 
 
-def _store(conn, num: str, data: dict, run_id=None, first=True):
-    p = person_from(data)
-    pid = _upsert_person(conn, p)
-    notified = n.parse_date(data.get("notified_on"))
-    ceased = n.parse_date(data.get("ceased_on"))
-    row_key = f"psc:{num}:{p['person_key']}:{notified or ''}"
-    if not first:
-        old = conn.execute("select ceased_on from company_person where row_key = %s", (row_key,)).fetchone()
-        change = None
-        if old is None and not ceased:
-            change = ("New owner", p["name"])
-        elif old is not None and old["ceased_on"] is None and ceased:
-            change = ("Owner ceased", p["name"])
-        if change:
-            conn.execute(
-                """insert into company_change (company_number, import_run_id, kind, field, old_value, new_value)
-                   values (%s, %s, 'owner', %s, null, %s)""",
-                (num, run_id, change[0], change[1]),
-            )
-    conn.execute(
-        """insert into company_person (row_key, company_number, person_id, role, natures,
-               notified_on, ceased_on, source)
-           values (%s, %s, %s, 'psc', %s, %s, %s, 'psc_snapshot')
-           on conflict (row_key) do update set natures = excluded.natures,
-               ceased_on = excluded.ceased_on""",
-        (row_key, num, pid, data.get("natures_of_control") or [], notified, ceased),
-    )
-
-
-def _store_parents(conn, parent_rows: dict):
-    """Keep owners of parent companies as JSON on the parent's person row,
-    so ownership can be traced without adding parents to the company list."""
-    for num, items in parent_rows.items():
-        for _, data in items:
-            p = person_from(data)
-            pid = _upsert_person(conn, p)
-            conn.execute(
-                """insert into parent_psc (parent_number, person_id, natures, ceased_on)
-                   values (%s, %s, %s, %s) on conflict do nothing""",
-                (num, pid, data.get("natures_of_control") or [], n.parse_date(data.get("ceased_on"))),
-            )

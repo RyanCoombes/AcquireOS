@@ -70,6 +70,33 @@ async def basic_auth(request: Request, call_next):
     return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="AcquireOS"'})
 
 
+_CACHE: dict = {}
+
+
+def cached(key: str, ttl: float, fn):
+    """Tiny in-process cache for summary queries that scan millions of rows."""
+    import time
+
+    hit = _CACHE.get(key)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    val = fn()
+    _CACHE[key] = (time.time(), val)
+    return val
+
+
+def clear_cache():
+    _CACHE.clear()
+
+
+@app.middleware("http")
+async def _clear_cache_on_write(request: Request, call_next):
+    resp = await call_next(request)
+    if request.method in ("POST", "PUT", "DELETE") and request.url.path.startswith("/api/"):
+        clear_cache()
+    return resp
+
+
 def _rows(sql, params=()):
     with db.conn() as c:
         return c.execute(sql, params).fetchall()
@@ -83,6 +110,10 @@ def health():
 
 @app.get("/api/meta")
 def meta():
+    return cached("meta", 60, _meta)
+
+
+def _meta():
     with db.conn() as c:
         bb = scoring.active_buy_box(c)
         counts = c.execute(
@@ -91,9 +122,10 @@ def meta():
                       (select count(*) from user_company where user_id = %s and status not in ('new', 'rejected', 'passed')) as tracked,
                       (select count(*) from company_person) as owner_records,
                       (select max(finished_at) from import_run) as last_import,
-                      (select count(distinct company_number) from company_change
-                         where detected_at > now() - interval '30 days') as changed_30d""",
-            (bb["id"], UID),
+                      (select count(distinct ch.company_number) from company_change ch
+                         join score s on s.company_number = ch.company_number and s.buy_box_id = %s and not s.excluded
+                         where ch.detected_at > now() - interval '30 days') as changed_30d""",
+            (bb["id"], UID, bb["id"]),
         ).fetchone()
         regions = [r["region"] for r in c.execute("select distinct region from company where region is not null order by 1")]
         tiers = [r["review_tier"] for r in c.execute("select distinct review_tier from company where review_tier is not null order by 1")]
@@ -166,7 +198,8 @@ def companies(
             where.append("exists (select 1 from unnest(c.sic_codes) x where x like %(sic)s)")
             params["sic"] = sic.strip().rstrip("*") + "%"
         if changed_days:
-            where.append("ch.last_change > now() - make_interval(days => %(cdays)s)"); params["cdays"] = changed_days
+            where.append("exists (select 1 from company_change x where x.company_number = c.company_number "
+                         "and x.detected_at > now() - make_interval(days => %(cdays)s))"); params["cdays"] = changed_days
         if change_kind:
             where.append(
                 "exists (select 1 from company_change x where x.company_number = c.company_number and x.kind = %(ckind)s"
@@ -189,46 +222,50 @@ def companies(
             return _map_points(c, where, params)
         order = SORTS.get(sort, "s.score")
         direction = "asc" if dir == "asc" else "desc"
-        sql = f"""
-            with latest as (
-                select distinct on (company_number) company_number, employees, net_assets, turnover, period_end
-                from financial_period where not period_inferred order by company_number, period_end desc
-            )
-            select c.company_number, c.name, c.region, c.postcode, c.review_tier, c.incorporation_date,
-                   c.sic_codes, c.address_flag, c.status as company_status,
-                   l.employees, l.net_assets, l.period_end,
-                   e.revenue_low, e.revenue_high, e.basis as revenue_basis,
-                   o.ownership_type, o.oldest_birth_year, o.flags,
-                   s.score, s.coverage, s.excluded, s.exclusion, s.value_low, s.value_high, s.value_basis,
-                   coalesce(uc.status, 'new') as status, uc.rating, uc.next_action, uc.next_action_on,
-                   ch.last_change, ch.last_kinds,
-                   (select website from enrichment en where en.company_number = c.company_number) as website,
-                   (select business_type from enrichment en where en.company_number = c.company_number) as business_type,
-                   (select array_agg(employees order by period_end) from (
-                        select period_end, employees from financial_period t
-                        where t.company_number = c.company_number and not t.period_inferred and t.employees is not null
-                        order by period_end desc limit 6) z) as staff_trend,
-                   count(*) over () as total
-            from company c
-            left join latest l on l.company_number = c.company_number
+        lateral = ""
+        if sort == "changed":
+            lateral = """left join lateral (select max(detected_at) as last_change from company_change x
+                                            where x.company_number = c.company_number) ch on true"""
+        filt = f"""from company c
+            left join company_latest l on l.company_number = c.company_number
             left join estimate e on e.company_number = c.company_number
             left join company_ownership o on o.company_number = c.company_number
             left join score s on s.company_number = c.company_number and s.buy_box_id = %(bb)s
             left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
-            left join (
-                select company_number, max(detected_at) as last_change,
-                       array_agg(distinct kind) filter (where detected_at > now() - interval '90 days') as last_kinds
-                from company_change group by company_number
-            ) ch on ch.company_number = c.company_number
-            where {' and '.join(where)}
-            order by {order} {direction} nulls last, c.name
-            limit %(limit)s offset %(offset)s
-        """
+            {lateral}
+            where {' and '.join(where)}"""
         params.update(limit=min(limit, 1000), offset=offset)
+        # Page first (cheap), then fetch the extras for just those rows.
+        sql = f"""
+            with page as (
+                select c.company_number, row_number() over () as rn from (
+                    select c.company_number {filt}
+                    order by {order} {direction} nulls last, c.name
+                    limit %(limit)s offset %(offset)s) c
+            )
+            select c.company_number, c.name, c.region, c.postcode, c.review_tier, c.incorporation_date,
+                   c.sic_codes, c.address_flag, c.status as company_status,
+                   l.employees, l.net_assets, l.period_end, l.staff_trend,
+                   e.revenue_low, e.revenue_high, e.basis as revenue_basis,
+                   o.ownership_type, o.oldest_birth_year, o.flags,
+                   s.score, s.coverage, s.excluded, s.exclusion, s.value_low, s.value_high, s.value_basis,
+                   coalesce(uc.status, 'new') as status, uc.rating, uc.next_action, uc.next_action_on,
+                   ch.last_change, ch.last_kinds, en.website, en.business_type
+            from page p join company c on c.company_number = p.company_number
+            left join company_latest l on l.company_number = c.company_number
+            left join estimate e on e.company_number = c.company_number
+            left join company_ownership o on o.company_number = c.company_number
+            left join score s on s.company_number = c.company_number and s.buy_box_id = %(bb)s
+            left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
+            left join enrichment en on en.company_number = c.company_number
+            left join lateral (
+                select max(detected_at) as last_change,
+                       array_agg(distinct kind) filter (where detected_at > now() - interval '90 days') as last_kinds
+                from company_change x where x.company_number = c.company_number) ch on true
+            order by p.rn
+        """
         rows = c.execute(sql, params).fetchall()
-    total = rows[0]["total"] if rows else 0
-    for r in rows:
-        r.pop("total", None)
+        total = c.execute(f"select count(*) as n {filt}", params).fetchone()["n"] if (rows or offset) else 0
     return {"total": total, "rows": rows}
 
 
@@ -368,12 +405,8 @@ def _map_points(c, where, params):
             left join company_ownership o on o.company_number = c.company_number
             left join score s on s.company_number = c.company_number and s.buy_box_id = %(bb)s
             left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
-            left join (select company_number, max(detected_at) as last_change from company_change group by 1) ch
-                   on ch.company_number = c.company_number
             left join estimate e on e.company_number = c.company_number
-            left join (select distinct on (company_number) company_number, employees, net_assets
-                       from financial_period where not period_inferred order by company_number, period_end desc) l
-                   on l.company_number = c.company_number
+            left join company_latest l on l.company_number = c.company_number
             join postcode_geo g on g.postcode = c.postcode and g.lat is not null
             where {' and '.join(where)}
             order by s.score desc nulls last limit 25000""",
@@ -384,12 +417,8 @@ def _map_points(c, where, params):
             left join company_ownership o on o.company_number = c.company_number
             left join score s on s.company_number = c.company_number and s.buy_box_id = %(bb)s
             left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
-            left join (select company_number, max(detected_at) as last_change from company_change group by 1) ch
-                   on ch.company_number = c.company_number
             left join estimate e on e.company_number = c.company_number
-            left join (select distinct on (company_number) company_number, employees, net_assets
-                       from financial_period where not period_inferred order by company_number, period_end desc) l
-                   on l.company_number = c.company_number
+            left join company_latest l on l.company_number = c.company_number
             where {' and '.join(where)}""",
         params,
     ).fetchone()["n"]
@@ -570,6 +599,11 @@ def outreach_add(o: OutreachIn):
 
 @app.get("/api/dashboard")
 def dashboard():
+    d = cached("dashboard", 120, _dashboard)
+    return {**d, "refresh": _refresh_state}
+
+
+def _dashboard():
     with db.conn() as c:
         bb = scoring.active_buy_box(c)
         p = {"bb": bb["id"], "uid": UID}
@@ -580,16 +614,19 @@ def dashboard():
                  (select count(*) from score where buy_box_id = %(bb)s and not excluded and score >= 70) as strong,
                  (select count(*) from user_company where user_id = %(uid)s and status not in ('new','rejected','passed')) as pipeline,
                  (select count(*) from user_company where user_id = %(uid)s and status in ('contacted','in_talks','nda','offer','heads','diligence','spa','completion')) as talking,
-                 (select count(distinct company_number) from company_change where detected_at > now() - interval '7 days') as changed_7d,
-                 (select count(distinct company_number) from company_change where detected_at > now() - interval '30 days') as changed_30d,
-                 (select count(*) from company_change where kind = 'status' and detected_at > now() - interval '30 days') as status_30d,
+                 (select count(distinct ch.company_number) from company_change ch join score s on s.company_number = ch.company_number
+                    and s.buy_box_id = %(bb)s and not s.excluded where ch.detected_at > now() - interval '7 days') as changed_7d,
+                 (select count(distinct ch.company_number) from company_change ch join score s on s.company_number = ch.company_number
+                    and s.buy_box_id = %(bb)s and not s.excluded where ch.detected_at > now() - interval '30 days') as changed_30d,
+                 (select count(*) from company_change ch join score s on s.company_number = ch.company_number
+                    and s.buy_box_id = %(bb)s and not s.excluded where ch.kind = 'status' and ch.detected_at > now() - interval '30 days') as status_30d,
                  (select percentile_cont(0.5) within group (order by extract(year from current_date) - o.oldest_birth_year)
                     from company_ownership o join score s on s.company_number = o.company_number and s.buy_box_id = %(bb)s
                     where not s.excluded and o.oldest_birth_year is not null) as median_owner_age,
                  (select count(*) from company_ownership o join score s on s.company_number = o.company_number
                     and s.buy_box_id = %(bb)s where not s.excluded and o.oldest_birth_year <= extract(year from current_date) - 60) as owners_60,
-                 (select count(*) from (select company_number from financial_period where not period_inferred
-                    group by company_number having count(*) >= 3) h) as with_history,
+                 (select count(*) from company_latest l join score s on s.company_number = l.company_number
+                    and s.buy_box_id = %(bb)s and not s.excluded where cardinality(l.staff_trend) >= 3) as with_history,
                  (select sum((value_low + value_high) / 2) from score s join user_company uc on uc.company_number = s.company_number
                     and uc.user_id = %(uid)s where s.buy_box_id = %(bb)s and uc.status not in ('new','rejected','passed')) as pipeline_value""",
             p,
@@ -598,12 +635,10 @@ def dashboard():
             """select width_bucket(score, 0, 100.0001, 10) as b, count(*) as n from score
                where buy_box_id = %(bb)s and not excluded group by 1 order by 1""", p).fetchall()
         top = c.execute(
-            """with latest as (select distinct on (company_number) company_number, employees from financial_period
-                               where not period_inferred order by company_number, period_end desc)
-               select c.company_number, c.name, c.region, s.score, s.value_low, s.value_high, l.employees,
+            """select c.company_number, c.name, c.region, s.score, s.value_low, s.value_high, l.employees,
                       o.oldest_birth_year, o.ownership_type
                from score s join company c on c.company_number = s.company_number
-               left join latest l on l.company_number = c.company_number
+               left join company_latest l on l.company_number = c.company_number
                left join company_ownership o on o.company_number = c.company_number
                left join user_company uc on uc.company_number = c.company_number and uc.user_id = %(uid)s
                where s.buy_box_id = %(bb)s and not s.excluded and coalesce(uc.status, 'new') = 'new'
@@ -646,7 +681,7 @@ def dashboard():
         "head": head, "score_hist": [{"b": i, "n": next((h["n"] for h in hist if h["b"] == i), 0)} for i in range(1, 11)],
         "top": top, "recent": recent, "due": due, "ownership": ownership,
         "funnel": [{"status": st, "label": STATUS_LABELS[st], "n": fmap.get(st, 0)} for st in STATUSES if st != "new"],
-        "freshness": {r["kind"]: r["last"] for r in freshness}, "trend": trend, "refresh": _refresh_state,
+        "freshness": {r["kind"]: r["last"] for r in freshness}, "trend": trend,
         "buy_box": bb["name"],
     }
 
@@ -693,6 +728,10 @@ def geocode_status():
 
 @app.get("/api/sic")
 def sic_list():
+    return cached("sic", 300, _sic_list)
+
+
+def _sic_list():
     from . import sic as sic_mod
 
     with db.conn() as c:
@@ -783,7 +822,7 @@ def connect_info(request: Request):
 
 
 @app.get("/api/changes")
-def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limit: int = 500):
+def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limit: int = 500, scope: str = "buy_box"):
     with db.conn() as c:
         bb = scoring.active_buy_box(c)
         where, params = ["ch.detected_at > now() - make_interval(days => %(days)s)"], {"days": days, "uid": UID, "bb": bb["id"], "limit": min(limit, 2000)}
@@ -791,6 +830,8 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
             where.append("ch.kind = %(kind)s"); params["kind"] = kind
         if tracked:
             where.append("coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed')")
+        elif scope == "buy_box":
+            where.append("(not coalesce(s.excluded, true) or coalesce(uc.status, 'new') <> 'new')")
         rows = c.execute(
             f"""select ch.id, ch.company_number, ch.kind, ch.field, ch.old_value, ch.new_value, ch.detected_at,
                        c.name, c.status as company_status, coalesce(uc.status, 'new') as status, s.score, s.excluded,
@@ -807,8 +848,10 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
         summary = c.execute(
             f"""select ch.kind, count(*) as n from company_change ch
                 left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
+                left join score s on s.company_number = ch.company_number and s.buy_box_id = %(bb)s
                 where ch.detected_at > now() - make_interval(days => %(days)s)
-                {"and coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed')" if tracked else ""}
+                {"and coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed')" if tracked else
+                 "and (not coalesce(s.excluded, true) or coalesce(uc.status, 'new') <> 'new')" if scope == "buy_box" else ""}
                 group by 1 order by 2 desc""",
             params,
         ).fetchall()
@@ -871,17 +914,21 @@ def pipeline():
 
 @app.get("/api/reports")
 def reports():
+    return cached("reports", 300, _reports)
+
+
+def _reports():
     with db.conn() as c:
         bb = scoring.active_buy_box(c)
         p = {"bb": bb["id"], "uid": UID}
-        latest = """with latest as (select distinct on (company_number) company_number, employees
-                    from financial_period where not period_inferred order by company_number, period_end desc)"""
         staff = c.execute(
-            latest + """
+            """
             select b.band, b.ord, count(l.company_number) as n from (values
               ('0–4',0,0,4),('5–9',1,5,9),('10–19',2,10,19),('20–49',3,20,49),('50–99',4,50,99),('100+',5,100,1000000)) b(band,ord,lo,hi)
-            left join latest l on l.employees between b.lo and b.hi
-            group by b.band, b.ord order by b.ord""").fetchall()
+            left join (select l.company_number, l.employees from company_latest l
+                       join score sc on sc.company_number = l.company_number and sc.buy_box_id = %(bb)s
+                       where not sc.excluded) l on l.employees between b.lo and b.hi
+            group by b.band, b.ord order by b.ord""", p).fetchall()
         score_hist = c.execute(
             """select width_bucket(score, 0, 100, 10) as bucket, count(*) as n from score
                where buy_box_id = %(bb)s and not excluded group by 1 order by 1""", p).fetchall()
@@ -965,8 +1012,23 @@ def put_buybox(body: BuyBoxIn):
             (json.dumps(criteria), body.name, bb["id"]),
         )
         bb = scoring.active_buy_box(c)
-        n = scoring.rescore(c, bb)
-    return {"rescored": n, "criteria": criteria}
+        total = c.execute("select count(*) as n from company").fetchone()["n"]
+        if total <= 100_000:
+            n = scoring.rescore(c, bb)
+            return {"rescored": n, "criteria": criteria, "background": False}
+
+    # Large databases: rescore in the background so the browser does not time out.
+    import threading
+
+    def work():
+        try:
+            with db.conn() as c2:
+                scoring.rescore(c2)
+        finally:
+            clear_cache()
+
+    threading.Thread(target=work, daemon=True).start()
+    return {"rescored": total, "criteria": criteria, "background": True}
 
 
 # ------------------------------------------------------------------ imports
@@ -1016,8 +1078,15 @@ def import_commit(body: CommitIn):
         raise HTTPException(410, "Upload expired. Choose the file again.")
     with db.conn() as c:
         try:
-            kwargs = {"only_existing": body.only_existing} if body.kind == "companies" else {}
-            result = IMPORTERS[body.kind].run(c, path, mapping=body.mapping, sheet=body.sheet, source=body.filename, **kwargs)
+            from .importers import register
+            from .importers.tables import open_table
+
+            if body.kind == "companies" and not body.only_existing and (
+                    path.suffix == ".zip" or path.stat().st_size > 50_000_000) and register.is_register(open_table(path)[0]):
+                result = register.load(c, path, full=False)
+            else:
+                kwargs = {"only_existing": body.only_existing} if body.kind == "companies" else {}
+                result = IMPORTERS[body.kind].run(c, path, mapping=body.mapping, sheet=body.sheet, source=body.filename, **kwargs)
         except ValueError as e:
             raise HTTPException(400, str(e))
         if body.kind == "companies":
@@ -1050,6 +1119,7 @@ def start_refresh(months: int = 1):
         finally:
             _refresh_state["running"] = False
             _refresh_state["finished"] = datetime.now().isoformat()
+            clear_cache()
 
     _refresh_state.update(running=True, started=datetime.now().isoformat(), finished=None, result=None, error=None)
     threading.Thread(target=work, daemon=True).start()

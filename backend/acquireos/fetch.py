@@ -128,36 +128,46 @@ def download(url: str, dest_dir: Path = DATA_DIR) -> Path:
 
 
 def fetch_company_data(conn, keep: bool = False) -> dict:
-    from .importers import companies
-
     found = links("company")
     if not found:
         raise RuntimeError("No company data file found on the Companies House download page")
+    from .importers import register
+
     path = download(found[0][1])
     try:
-        return companies.run(conn, path, universe=True, full_register=True, source=path.name)
+        return register.load(conn, path, full=True, progress=log)
     finally:
         if not keep:
             path.unlink(missing_ok=True)
 
 
 def fetch_accounts(conn, months: int = 1, keep: bool = False, skip_loaded: bool = True) -> list[dict]:
+    """Load the newest `months` monthly accounts files, OLDEST FIRST.
+
+    Oldest first means each company's figures build up in date order, and
+    every figure also records which filing it came from, so an older filing
+    can never overwrite a newer one. Changes (new accounts, staff) are only
+    recorded for the newest month, so back-filling history does not flood
+    the Changes page."""
     from .importers import accounts
 
     loaded = {r["filename"] for r in conn.execute("select filename from import_run where kind = 'accounts'")}
+    chosen = links("accounts")[:months]            # newest first
+    chosen = list(reversed(chosen))                # process oldest first
     results = []
-    for _, url in links("accounts")[:months]:
+    for i, (_, url) in enumerate(chosen):
         name = url.rsplit("/", 1)[-1]
         if skip_loaded and name in loaded:
             log(f"Skipping {name}: already loaded")
             continue
+        newest = i == len(chosen) - 1
         path = download(url)
         try:
-            log(f"Reading accounts in {name}")
-            r = accounts.run(conn, [path])
+            log(f"Reading accounts in {name} ({i + 1} of {len(chosen)})")
+            r = accounts.run(conn, [path], record_changes=newest, progress=log)
             conn.commit()
             results.append({"file": name, **{k: v for k, v in r.items() if k != "messages"}})
-            log(f"{name}: {r['companies_matched']} filings for your companies, {r['changes']} changes")
+            log(f"{name}: {r['companies_matched']:,} filings, {r['changes']:,} changes")
         finally:
             if not keep:
                 path.unlink(missing_ok=True)
@@ -174,7 +184,7 @@ def fetch_psc(conn, keep: bool = False) -> dict:
     parts = [url for key, url in found if key.startswith(newest)]
     paths = [download(u) for u in sorted(parts)]
     try:
-        return psc.run(conn, paths)
+        return psc.run(conn, paths, progress=log)
     finally:
         if not keep:
             for p in paths:
@@ -184,7 +194,7 @@ def fetch_psc(conn, keep: bool = False) -> dict:
 def refresh(conn, accounts_months: int = 1, psc: bool = True) -> dict:
     """The monthly job: company data, then accounts, then owners, then rescore."""
     from . import scoring
-    from .ownership import rebuild
+    from .ownership import rebuild_links
 
     out: dict = {}
     for label, fn in [
@@ -201,8 +211,11 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True) -> dict:
             conn.rollback()
             log(f"{label} failed: {e}")
             out[label] = {"error": str(e)}
-    rebuild(conn)
+    log("Scoring companies")
     scoring.rescore(conn)
+    conn.commit()
+    log("Rebuilding ownership links for companies in your buy box")
+    rebuild_links(conn)
     conn.commit()
     try:
         from . import geo

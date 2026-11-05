@@ -196,6 +196,38 @@ Open **Import**, in this order:
 To try the app without your data: `acquireos demo` in the container console
 loads 320 invented companies.
 
+## The whole UK register
+
+AcquireOS keeps **every** company on the Companies House register (about
+5.5 million), every filed set of accounts it loads, and every owner (PSC)
+record. Your buy box **universe** (Buy box page) decides which companies count
+as targets; the rest stay searchable under Targets → All companies, marked
+"outside your universe".
+
+Sizing on a Raspberry Pi 5 (16 GB RAM) with an SSD, based on a 500,000-company
+test run scaled up:
+
+| | Estimate |
+|---|---|
+| Database size with two years of accounts | roughly 20–25 GB |
+| Free space needed while a file is processed | a few GB more |
+| First company register load | about 30–45 minutes |
+| Each month of accounts | tens of minutes (parsed on all CPU cores) |
+| Owner snapshot and ownership tracing | under an hour |
+| Rescoring everything after a buy box change | a few minutes, in the background |
+
+An SD card is not recommended: it is slow and wears out under a database.
+
+**Date order is protected.** History loads oldest month first; every figure
+records which filing it came from and is only replaced by a filing with the
+same or a later balance sheet date; a register snapshot can never overwrite a
+company with data from an older snapshot. When back-filling history no
+changes are recorded, so the Changes page only shows what is genuinely new.
+
+Links between companies (same owner, same address) and map locations are
+built for companies in your universe or pipeline, to keep them useful and
+the database a sensible size.
+
 ## Companies House data, loaded automatically
 
 AcquireOS downloads the free Companies House bulk files itself, keeps only

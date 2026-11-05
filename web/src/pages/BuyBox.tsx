@@ -29,7 +29,9 @@ export default function BuyBox() {
     setSaving(true);
     try {
       const r = await api.saveBuybox(c);
-      setToast(`Saved. Rescored ${r.rescored.toLocaleString("en-GB")} companies.`);
+      setToast((r as any).background
+        ? `Saved. Rescoring ${r.rescored.toLocaleString("en-GB")} companies in the background; this takes a few minutes.`
+        : `Saved. Rescored ${r.rescored.toLocaleString("en-GB")} companies.`);
     } catch (e: any) { setToast(e.message); }
     setSaving(false);
   };
@@ -99,9 +101,10 @@ export default function BuyBox() {
       <section>
         <h2>Universe</h2>
         <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}>
-          Which companies the monthly Companies House file adds to AcquireOS. Companies already here are always kept up to date.
-          A company is added if it is active, old enough, in your postcode areas (if any), and either has a SIC code below
-          or has a keyword in its name and one of the secondary SIC codes (to catch tech firms filed as consultancies).
+          AcquireOS keeps every company on the Companies House register. The universe decides which of them count as
+          targets: a company is in scope if it is active, old enough, in your postcode areas (if any), and either has a SIC
+          code below or has a keyword in its name plus one of the secondary SIC codes (to catch tech firms filed as
+          consultancies). Everything else is still searchable under All companies, marked “outside your universe”.
         </p>
         <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
           <dt>SIC codes starting with</dt><dd><input type="text" style={{ width: 460 }} placeholder="e.g. 620, 631, 5829" value={(c.universe?.sic_prefixes ?? []).join(", ")}
@@ -114,7 +117,7 @@ export default function BuyBox() {
                    onChange={(e) => upd(["universe", "postcode_areas"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
           <dt>Trading at least</dt><dd className="range">{n(["universe", "min_years"])}<span className="faint">years</span></dd>
         </dl>
-        <p className="faint small">Saving does not remove companies already loaded; it changes what the next monthly refresh adds.</p>
+        <p className="faint small">Saving rescores every company straight away. On the full register this takes a few minutes.</p>
       </section>
 
       <section>
