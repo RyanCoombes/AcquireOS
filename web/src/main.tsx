@@ -19,6 +19,7 @@ import Review from "./pages/Review";
 
 const ICONS: Record<string, string> = {
   home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z",
+  companies: "M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16M15 9h4a1 1 0 0 1 1 1v11M3 21h18M8 8h3M8 12h3M8 16h3",
   targets: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01",
   pipeline: "M4 5h16M4 12h10M4 19h6",
   changes: "M3 12h4l3-8 4 16 3-8h4",
@@ -56,6 +57,7 @@ function Side({ meta }: { meta: Meta | null }) {
     <nav className="side" aria-label="Main">
       <Link to="/" className="mark"><Logo /><span>AcquireOS</span></Link>
       {item("/", "home", "Home", null, true)}
+      {item("/companies", "companies", "Companies", c?.companies)}
       {item("/targets", "targets", "Targets", c?.in_scope)}
       {item("/review", "review", "Review")}
       {item("/pipeline", "pipeline", "Pipeline", c?.tracked)}
@@ -99,7 +101,7 @@ function TopBar() {
       <form className="search" role="search" onSubmit={(e) => {
         e.preventDefault();
         const q = ref.current?.value.trim() ?? "";
-        nav(q ? `/targets?q=${encodeURIComponent(q)}` : "/targets");
+        nav(q ? `/companies?q=${encodeURIComponent(q)}` : "/companies");
         ref.current?.blur();
       }}>
         <svg viewBox="0 0 24 24" aria-hidden><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
@@ -124,7 +126,8 @@ function App() {
         <main>
           <Routes>
             <Route path="/" element={<Home />} />
-            <Route path="/targets" element={<Targets />} />
+            <Route path="/companies" element={<Targets key="directory" mode="directory" />} />
+            <Route path="/targets" element={<Targets key="targets" mode="targets" />} />
             <Route path="/review" element={<Review />} />
             <Route path="/c/:num" element={<Company />} />
             <Route path="/pipeline" element={<Pipeline />} />

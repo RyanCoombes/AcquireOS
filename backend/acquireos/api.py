@@ -142,11 +142,24 @@ def _meta():
         "regions": regions,
         "tiers": tiers,
         "company_statuses": company_statuses,
+        "status_groups": [{"value": k, "label": v[0]} for k, v in STATUS_GROUPS.items()],
         "map": {"tiles": config.MAP_TILE_URL, "attribution": config.MAP_ATTRIBUTION},
         "counts": counts,
         "buy_box": {"id": bb["id"], "name": bb["name"]},
         "buy_boxes": boxes,
     }
+
+
+# Company status groups for filtering. Companies House statuses are lower-cased
+# on load; "removed from register" is ours, for companies that left the file.
+STATUS_GROUPS = {
+    "active": ("Active", "c.status = 'active'"),
+    "strike_off": ("Being struck off", "c.status like 'active - proposal to strike off%%'"),
+    "insolvency": ("Insolvency", "(c.status ~ '(liquidation|administration|receiver|voluntary arrangement|insolvency)')"),
+    "dissolved": ("Dissolved or removed", "c.status in ('dissolved', 'removed from register', 'converted-closed', 'closed')"),
+}
+_STATUS_KNOWN = "c.status in ('active', 'dissolved', 'removed from register', 'converted-closed', 'closed') or c.status like 'active - proposal to strike off%%' or c.status ~ '(liquidation|administration|receiver|voluntary arrangement|insolvency)'"
+STATUS_GROUPS["other"] = ("Other", f"(c.status is null or not ({_STATUS_KNOWN}))")
 
 
 SORTS = {
@@ -201,7 +214,12 @@ def companies(
         if flag:
             where.append("(%(flag)s = any(o.flags) or c.address_flag = %(flag)s)"); params["flag"] = flag
         if company_status:
-            where.append("c.status = %(cstatus)s"); params["cstatus"] = company_status
+            # Either a group (see STATUS_GROUPS) or an exact Companies House status.
+            conds = [STATUS_GROUPS[g][1] for g in company_status.split(",") if g in STATUS_GROUPS]
+            if conds:
+                where.append("(" + " or ".join(conds) + ")")
+            else:
+                where.append("c.status = %(cstatus)s"); params["cstatus"] = company_status
         if sic:
             # One or more codes or prefixes, comma separated: "62, 63110".
             prefixes = [x.strip().rstrip("*") + "%" for x in sic.split(",") if x.strip()]
@@ -231,8 +249,12 @@ def companies(
             where.append(sx)
         if format == "map":
             return _map_points(c, where, params, sj)
-        order = SORTS.get(sort, "s.score")
         direction = "asc" if dir == "asc" else "desc"
+        if sort == "name":
+            # Matches company_name_sort_idx, so A-Z paging over millions is instant.
+            order_sql = f"c.name {direction}, c.company_number {direction}"
+        else:
+            order_sql = f"{SORTS.get(sort, 's.score')} {direction} nulls last, c.name, c.company_number"
         lateral = ""
         if sort == "changed":
             lateral = """left join lateral (select max(detected_at) as last_change from company_change x
@@ -251,7 +273,7 @@ def companies(
             with page as (
                 select c.company_number, row_number() over () as rn from (
                     select c.company_number {filt}
-                    order by {order} {direction} nulls last, c.name
+                    order by {order_sql}
                     limit %(limit)s offset %(offset)s) c
             )
             select c.company_number, c.name, c.region, c.postcode, c.review_tier, c.incorporation_date,
@@ -277,8 +299,26 @@ def companies(
             order by p.rn
         """
         rows = c.execute(sql, params).fetchall()
-        total = c.execute(f"select count(*) as n {filt}", params).fetchone()["n"] if (rows or offset) else 0
-    return {"total": total, "rows": rows}
+        # Counting millions of matches is slow, so counts stop at COUNT_CAP
+        # ("100,000+"). With no filters at all the total is the register size.
+        capped = False
+        if not (rows or offset):
+            total = 0
+        elif where == ["true"]:
+            total = cached("company_count", 300, lambda: _count_all())
+        else:
+            total = c.execute(f"select count(*) as n from (select 1 {filt} limit {COUNT_CAP + 1}) x", params).fetchone()["n"]
+            if total > COUNT_CAP:
+                total, capped = COUNT_CAP, True
+    return {"total": total, "capped": capped, "rows": rows}
+
+
+COUNT_CAP = 100_000
+
+
+def _count_all() -> int:
+    with db.conn() as c:
+        return c.execute("select count(*) as n from company").fetchone()["n"]
 
 
 def _score_join(c, bb: str):
@@ -1461,6 +1501,38 @@ def start_refresh(months: int = 1):
 @app.get("/api/refresh")
 def refresh_status():
     return job_current()
+
+
+@app.get("/api/coverage")
+def coverage():
+    """How much of the register has owners and accounts loaded, and which
+    files they came from, so gaps can be explained rather than guessed at."""
+    return cached("coverage", 300, _coverage)
+
+
+def _coverage():
+    with db.conn() as c:
+        n = c.execute(
+            """select count(*) as active,
+                      count(o.company_number) filter (where o.ownership_type <> 'unknown') as owners_traced,
+                      count(ps.company_number) as with_psc,
+                      count(l.company_number) as with_accounts,
+                      count(l.employees) as with_staff,
+                      count(l.turnover) as with_turnover,
+                      count(*) filter (where c.incorporation_date > current_date - interval '21 months') as too_new
+               from company c
+               left join company_ownership o on o.company_number = c.company_number
+               left join company_latest l on l.company_number = c.company_number
+               left join (select distinct company_number from company_person where ceased_on is null) ps
+                      on ps.company_number = c.company_number
+               where coalesce(c.status, 'active') ilike 'active%%'""").fetchone()
+        files = c.execute(
+            """select kind, filename, finished_at, rows_ok from import_run
+               where kind in ('register', 'psc', 'accounts') and finished_at is not null
+               order by finished_at desc""").fetchall()
+    return {**n, "accounts_files": [f for f in files if f["kind"] == "accounts"],
+            "psc_file": next((f for f in files if f["kind"] == "psc"), None),
+            "register_file": next((f for f in files if f["kind"] == "register"), None)}
 
 
 @app.get("/api/imports")

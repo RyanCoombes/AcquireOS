@@ -294,7 +294,7 @@ function BoxManager({ current, onToast, select }: { current: number; onToast: (m
             <div className="st">{b.scored_at ? <>{b.in_scope.toLocaleString("en-GB")} in scope · {b.strong.toLocaleString("en-GB")} score 70+</> : "Scoring…"}</div>
             <div className="st">
               {b.id === current ? "Editing below" : "Edit"}
-              {" · "}<a href={`/targets?bb=${b.id}&in_box=1`} onClick={(e) => e.stopPropagation()}>View targets</a>
+              {" · "}<a href={`/targets?bb=${b.id}`} onClick={(e) => e.stopPropagation()}>View targets</a>
             </div>
           </div>
         ))}

@@ -153,3 +153,32 @@ def test_buy_boxes_are_filters_over_all_companies(c):
         assert d2["buy_box"]["name"] == "SaaS"
         # Home overview by default
         assert cl.get("/api/dashboard").json()["scope"] == "all"
+
+
+def test_directory_sort_status_groups_and_coverage(c):
+    from acquireos.api import app
+
+    with TestClient(app) as cl:
+        f = FIX / "ranked_sample.csv"
+        p = cl.post("/api/import/preview", data={"kind": "companies"}, files={"file": (f.name, f.read_bytes(), "text/csv")}).json()
+        cl.post("/api/import/commit", json={"kind": "companies", "token": p["token"], "suffix": p["suffix"],
+                                            "filename": f.name, "mapping": p["mapping"]})
+        c.execute("update company set status = 'liquidation' where company_number = '01000004'")
+        c.execute("update company set status = 'removed from register' where company_number = '01000005'")
+        c.execute("update company set status = 'active - proposal to strike off' where company_number = '01000006'")
+        c.commit()
+        az = cl.get("/api/companies?sort=name&dir=asc&limit=50").json()
+        names = [r["name"] for r in az["rows"]]
+        assert names == sorted(names) and az["total"] == 7 and az["capped"] is False
+        groups = {g["value"] for g in cl.get("/api/meta").json()["status_groups"]}
+        assert {"active", "strike_off", "insolvency", "dissolved"} <= groups
+
+        def nums(g):
+            return {r["company_number"] for r in cl.get(f"/api/companies?company_status={g}&limit=50").json()["rows"]}
+        assert nums("insolvency") == {"01000004"}
+        assert nums("dissolved") == {"01000005"}
+        assert nums("strike_off") == {"01000006"}
+        assert not nums("active") & {"01000004", "01000005", "01000006"}
+        assert nums("active") | nums("insolvency") | nums("dissolved") | nums("strike_off") | nums("other") == {r["company_number"] for r in az["rows"]}
+        cov = cl.get("/api/coverage").json()
+        assert cov["active"] >= 1 and "with_accounts" in cov and "accounts_files" in cov

@@ -15,8 +15,13 @@ export default function Home() {
   const [params, setParams] = useSearchParams();
   const which = params.get("bb") ?? "all";
   // Links into Targets carry the buy box being viewed, as a filter.
-  const tq = (extra: Record<string, string> = {}) =>
-    "/targets?" + new URLSearchParams({ ...(which === "all" ? {} : { bb: which }), ...extra }).toString();
+  // in_box links go to Targets; the rest to the full company directory.
+  const tq = (extra: Record<string, string> = {}) => {
+    const { in_box, ...rest } = extra;
+    const p = new URLSearchParams({ ...(which === "all" ? {} : { bb: which }), ...rest });
+    if (!in_box && which !== "all") p.set("in_box", "1");
+    return (in_box ? "/targets?" : "/companies?") + p.toString();
+  };
   const { data, error, reload } = useAsync(() => api.dashboardFor(which), [which]);
   const [starting, setStarting] = useState(false);
   if (error) return <ErrorLine error={error} />;
@@ -66,7 +71,8 @@ export default function Home() {
           <button className="btn" onClick={refreshNow} disabled={running || starting}>
             <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>Refresh data
           </button>
-          <Link className="btn primary" to={tq()}>Open targets</Link>
+          <Link className="btn" to="/companies">All companies</Link>
+          <Link className="btn primary" to={tq({ in_box: "1" })}>Open targets</Link>
         </div>
       </div>
 

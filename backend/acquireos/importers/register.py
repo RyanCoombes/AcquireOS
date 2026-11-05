@@ -345,6 +345,7 @@ _SECONDARY_INDEXES = [
     ("company_region_idx", "create index if not exists company_region_idx on company (region)"),
     ("company_postcode_idx", "create index if not exists company_postcode_idx on company (postcode)"),
     ("company_status_idx", "create index if not exists company_status_idx on company (status)"),
+    ("company_name_sort_idx", "create index if not exists company_name_sort_idx on company (name, company_number)"),
 ]
 
 

@@ -20,6 +20,7 @@ export interface Meta {
   tiers: string[];
   counts: { companies: number; in_scope: number; tracked: number; owner_records: number; last_import: string | null; changed_30d: number };
   company_statuses: string[];
+  status_groups: { value: string; label: string }[];
   map: { tiles: string; attribution: string };
   buy_boxes: { id: number; name: string; is_active: boolean; scored_at: string | null }[];
   buy_box: { id: number; name: string };
@@ -167,7 +168,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   meta: () => req<Meta>("/api/meta"),
   companies: (params: Record<string, string>) =>
-    req<{ total: number; rows: Row[] }>("/api/companies?" + new URLSearchParams(params)),
+    req<{ total: number; capped?: boolean; rows: Row[] }>("/api/companies?" + new URLSearchParams(params)),
   company: (n: string, bb?: number | null) =>
     req<CompanyDetail>(`/api/companies/${encodeURIComponent(n)}${bb ? `?bb=${bb}` : ""}`),
   setState: (n: string, body: Record<string, unknown>) =>
@@ -199,6 +200,7 @@ export const api = {
     req<{ rows_in: number; rows_ok: number; rows_skipped: number; notes_added?: number; changes?: number; messages: string[] }>(
       "/api/import/commit", { method: "POST", body: JSON.stringify(body) }),
   imports: () => req<any[]>("/api/imports"),
+  coverage: () => req<Record<string, any>>("/api/coverage"),
   dashboard: () => req<Record<string, any>>("/api/dashboard"),
   mapData: (params: Record<string, string>) => req<Record<string, any>>("/api/companies?" + new URLSearchParams(params)),
   geocodeStatus: () => req<Record<string, any>>("/api/geocode"),

@@ -1,3 +1,4 @@
+import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { duration, elapsed, useJob } from "../components/JobBar";
 import { Link } from "react-router-dom";
@@ -67,6 +68,8 @@ export default function Import() {
           <div className="lede">Load your own files, and keep everything current from the free Companies House bulk data.</div>
         </div>
       </div>
+
+      <Coverage />
 
       <section style={{ paddingTop: 0 }}>
         <div className="seg" style={{ display: "inline-flex" }}>
@@ -297,6 +300,41 @@ function ChFeed({ onDone }: { onDone: () => void }) {
         <pre className="cmd">{`docker exec -it acquireos acquireos fetch all --months 24
 docker exec -it acquireos acquireos fetch accounts --months 24`}</pre>
       </details>
+    </section>
+  );
+}
+
+/** What share of active companies has owners and accounts, and why the rest do not. */
+function Coverage() {
+  const { data, error } = useAsync(() => api.coverage(), []);
+  if (error) return <ErrorLine error={error} />;
+  if (!data) return <section><h2>What's loaded</h2><div className="faint">Counting… on the full register this takes up to a minute.</div></section>;
+  const pct = (n: number) => (data.active ? `${Math.round((100 * n) / data.active)}%` : "—");
+  const months = data.accounts_files.map((f: any) => f.filename.replace(/^Accounts_(Monthly_)?Data-?/, "").replace(/\.zip$/, "").replace(/([a-z])(\d{4})/i, "$1 $2"));
+  const row = (label: string, n: number, why: React.ReactNode) => (
+    <tr><td><b>{label}</b></td><td className="num">{n.toLocaleString("en-GB")}</td><td className="num"><b>{pct(n)}</b></td><td className="muted small">{why}</td></tr>
+  );
+  return (
+    <section>
+      <div className="sechead"><h2>What's loaded</h2><span className="faint small">Out of {data.active.toLocaleString("en-GB")} active companies</span></div>
+      <table>
+        <thead><tr><th>Data</th><th className="num">Companies</th><th className="num">Share</th><th>Why some are missing</th></tr></thead>
+        <tbody>
+          {row("Owners (PSC) on file", data.with_psc, <>
+            {data.psc_file ? <>From {data.psc_file.filename}. </> : <b>The owners snapshot has not been loaded yet. </b>}
+            Companies without one have filed a statement instead (no one with over 25%, or not yet identified), are exempt (e.g. listed on a market), or have not filed.
+          </>)}
+          {row("Ownership traced", data.owners_traced, "Owners found and classified (owner-held, group-owned and so on).")}
+          {row("Accounts", data.with_accounts, <>
+            {months.length ? <>{months.length} month{months.length === 1 ? "" : "s"} loaded ({months.slice(-1)[0]} to {months[0]}). </> : <b>No accounts files loaded yet. </b>}
+            Each company files once a year, so it takes 12 months of files to reach most of them; paper filings are never in the bulk data,
+            and {data.too_new.toLocaleString("en-GB")} companies are too new to have filed.
+          </>)}
+          {row("Staff numbers", data.with_staff, "Only where the accounts state the average number of employees.")}
+          {row("Turnover filed", data.with_turnover, "Small companies may leave out the profit and loss account, so most never file turnover; AcquireOS estimates it from staff instead.")}
+        </tbody>
+      </table>
+      <p className="faint small">Directors are not in the free bulk files; Companies House only provides them company by company through its API.</p>
     </section>
   );
 }
