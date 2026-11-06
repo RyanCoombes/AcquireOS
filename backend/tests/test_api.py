@@ -412,9 +412,14 @@ def test_ch_sync_check_records_changes_and_queue(loaded, monkeypatch):
         assert ("director", "Appointed") in api_rows and ("charge", "New charge") in api_rows
         # alerts: pipeline changes since last seen
         cl.put("/api/companies/01000003/state", json={"status": "researching"})
-        assert cl.get("/api/meta").json()["counts"]["pipeline_new"] == 1
-        cl.post("/api/changes/seen")
+        assert cl.get("/api/meta").json()["counts"]["pipeline_new"] == 4  # unread changes, not companies
+        rows = cl.get("/api/changes", params={"days": 7, "tracked": "true", "unread": "true"}).json()
+        assert rows["unread"] == 4 and all(r["unread"] for r in rows["rows"])
+        cl.post("/api/changes/read", json={"ids": [rows["rows"][0]["id"]]})
+        assert cl.get("/api/meta").json()["counts"]["pipeline_new"] == 3
+        cl.post("/api/changes/seen")  # mark all as read
         assert cl.get("/api/meta").json()["counts"]["pipeline_new"] == 0
+        assert cl.get("/api/changes", params={"days": 7, "tracked": "true", "unread": "true"}).json()["rows"] == []
         # sync queue: the pipeline company is current, so the next work is targets never fetched
         with db.conn() as c:
             batch = chsync.next_batch(c, 5)

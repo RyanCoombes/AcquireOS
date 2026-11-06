@@ -52,7 +52,7 @@ function Side({ meta }: { meta: Meta | null }) {
   const item = (to: string, icon: string, label: string, count?: number | null, end = false, alert = false) => (
     <NavLink to={to} end={end} className="nav">
       <Icon name={icon} />{label}
-      {count ? <span className={alert ? "count alert" : "count"} title={alert ? "New for your pipeline" : undefined}>
+      {count ? <span className={alert ? "count alert" : "count"} title={alert ? "Unread changes to your pipeline" : undefined}>
         {count.toLocaleString("en-GB")}</span> : null}
     </NavLink>
   );
@@ -64,8 +64,7 @@ function Side({ meta }: { meta: Meta | null }) {
       {item("/targets", "targets", "Targets", c?.in_scope)}
       {item("/review", "review", "Review")}
       {item("/pipeline", "pipeline", "Pipeline", c?.tracked)}
-      {c?.pipeline_new ? item("/changes?tracked=1", "changes", "Changes", c.pipeline_new, false, true)
-        : item("/changes", "changes", "Changes", c?.changed_30d)}
+      {item(c?.pipeline_new ? "/changes?tracked=1&unread=1" : "/changes", "changes", "Changes", c?.pipeline_new, false, true)}
       <div className="group">Analyse</div>
       {item("/map", "map", "Map")}
       {item("/owners", "owners", "Owners")}
@@ -122,6 +121,11 @@ function App() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const loc = useLocation();
   useEffect(() => { api.meta().then(setMeta).catch(() => {}); }, [loc.pathname]);
+  useEffect(() => {  // pages ask for fresh counts after changing something (e.g. marking changes read)
+    const f = () => api.meta().then(setMeta).catch(() => {});
+    window.addEventListener("ao:meta", f);
+    return () => window.removeEventListener("ao:meta", f);
+  }, []);
   useEffect(() => {
     window.scrollTo(0, 0);
     // On phones the menu scrolls sideways: bring the current page into view.

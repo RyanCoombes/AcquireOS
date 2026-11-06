@@ -82,7 +82,7 @@ export interface ChSync {
 
 export interface Change {
   id: number; company_number: string; kind: string; field: string | null; old_value: string | null;
-  new_value: string | null; detected_at: string; filename?: string | null; source?: string | null;
+  new_value: string | null; detected_at: string; filename?: string | null; source?: string | null; unread?: boolean;
   name?: string; company_status?: string | null; status?: Status; score?: string | null; excluded?: boolean | null;
 }
 
@@ -305,8 +305,9 @@ export const api = {
   dashboardFor: (bb: string) => req<Record<string, any>>(`/api/dashboard?bb=${encodeURIComponent(bb)}`),
   cancelJob: (id: number) => req<{ ok: boolean; message: string }>(`/api/jobs/${id}/cancel`, { method: "POST" }),
   changes: (params: Record<string, string>) =>
-    req<{ rows: Change[]; summary: { kind: string; n: number }[]; seen_at: string | null }>("/api/changes?" + new URLSearchParams(params)),
+    req<{ rows: Change[]; summary: { kind: string; n: number }[]; unread: number }>("/api/changes?" + new URLSearchParams(params)),
   changesSeen: () => req<{ ok: boolean }>("/api/changes/seen", { method: "POST" }),
+  changesRead: (ids: number[]) => req<{ ok: boolean }>("/api/changes/read", { method: "POST", body: JSON.stringify({ ids }) }),
   searches: () => req<SavedSearch[]>("/api/searches"),
   saveSearch: (name: string, params: Record<string, string>) =>
     req<SavedSearch>("/api/searches", { method: "POST", body: JSON.stringify({ name, params }) }),

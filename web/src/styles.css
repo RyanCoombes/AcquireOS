@@ -849,3 +849,7 @@ table.list td .name { font-size: 14.5px; font-weight: 600; }
 .who .mini { display: block; height: 6px; border-radius: 3px; background: var(--grey-soft); margin-top: 4px; overflow: hidden; }
 .who .mini i { display: block; height: 100%; }
 @media (max-width: 760px) { .who { grid-template-columns: 12px 1fr 90px; } }
+tr.unread td { background: var(--orange-soft); }
+tr.unread .name a { font-weight: 700; }
+.readbtn { border: 1px solid var(--line); background: var(--panel, #fff); border-radius: 8px; width: 30px; height: 28px; cursor: pointer; color: var(--ink-3); }
+.readbtn:hover { color: var(--teal); border-color: var(--teal); }

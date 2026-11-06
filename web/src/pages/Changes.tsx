@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Change } from "../api";
 import { ErrorLine, Score, StatusMark, useAsync } from "../components/bits";
@@ -12,6 +12,7 @@ export default function Changes() {
   const days = params.get("days") ?? "90";
   const kind = params.get("kind") ?? "";
   const tracked = params.get("tracked") === "1";
+  const unreadOnly = params.get("unread") === "1";
   const set = (k: string, v: string | null) => {
     const p = new URLSearchParams(params);
     if (!v) p.delete(k); else p.set(k, v);
@@ -20,16 +21,22 @@ export default function Changes() {
   const q: Record<string, string> = { days };
   if (kind) q.kind = kind;
   if (tracked) q.tracked = "true";
-  const { data, error } = useAsync(() => api.changes(q), [days, kind, tracked]);
+  if (unreadOnly) q.unread = "true";
+  const { data, error } = useAsync(() => api.changes(q), [days, kind, tracked, unreadOnly]);
   // Opening the page counts as seeing the changes (clears the alert badge).
-  const seenAt = useRef<string | null | undefined>(undefined);
-  useEffect(() => {
-    if (!data || seenAt.current !== undefined) return;
-    seenAt.current = data.seen_at;  // keep the earlier time, so rows stay marked new while you filter
-    api.changesSeen().catch(() => {});
-  }, [data]);
-  const since = new Date((seenAt.current ?? data?.seen_at) || Date.now() - 7 * 864e5);
-  const isNew = (r: Change) => new Date(r.detected_at) > since;
+  const [read, setRead] = useState<Set<number>>(new Set());
+  const [allRead, setAllRead] = useState(false);
+  useEffect(() => { setRead(new Set()); setAllRead(false); }, [data]);
+  const isNew = (r: Change) => !!r.unread && !allRead && !read.has(r.id);
+  const unreadCount = Math.max(0, (data?.unread ?? 0) - (allRead ? Infinity : read.size));
+  const markRead = (ids: number[]) => {
+    setRead((s) => new Set([...s, ...ids]));
+    api.changesRead(ids).then(() => window.dispatchEvent(new Event("ao:meta"))).catch(() => {});
+  };
+  const markAll = () => {
+    setAllRead(true);
+    api.changesSeen().then(() => window.dispatchEvent(new Event("ao:meta"))).catch(() => {});
+  };
 
   // group by day
   const groups = new Map<string, Change[]>();
@@ -67,6 +74,13 @@ export default function Changes() {
           <input type="checkbox" checked={tracked} onChange={(e) => set("tracked", e.target.checked ? "1" : null)} />
           Only companies in my pipeline
         </label>
+        <label className="check">
+          <input type="checkbox" checked={unreadOnly} onChange={(e) => set("unread", e.target.checked ? "1" : null)} />
+          Unread only
+        </label>
+        <button className="btn" style={{ marginLeft: "auto" }} disabled={!unreadCount} onClick={markAll}>
+          {unreadCount ? `Mark all as read (${unreadCount.toLocaleString("en-GB")})` : "All read"}
+        </button>
       </div>
 
       <ErrorLine error={error} />
@@ -87,16 +101,22 @@ export default function Changes() {
       )}
       {[...groups.entries()].map(([day, rows]) => (
         <div className="stage" key={day}>
-          <h2>{date(day)}<span className="count">{rows.length}</span></h2>
+          <h2>{date(day)}<span className="count">{rows.length}</span>
+            {rows.some(isNew) && <button className="linkish small" style={{ marginLeft: 12 }}
+              onClick={() => markRead(rows.filter(isNew).map((r) => r.id))}>Mark day as read</button>}</h2>
           <table className="list">
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} onClick={() => nav(`/c/${r.company_number}`)} className={r.excluded ? "excluded" : ""}>
+                <tr key={r.id} onClick={() => { if (isNew(r)) markRead([r.id]); nav(`/c/${r.company_number}`); }}
+                    className={[r.excluded ? "excluded" : "", isNew(r) ? "unread" : ""].join(" ")}>
                   <td style={{ width: 120 }}><Score value={r.score ?? null} /></td>
                   <td style={{ width: "34%" }}><div className="name"><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div><div className="sub">{r.company_number}</div></td>
                   <td style={{ width: 130 }}><b>{CHANGE_KIND[r.kind] ?? r.kind}</b>{isNew(r) && <span className="tag new">New</span>}</td>
                   <td className={(r.kind === "status" && isBadStatus(r.new_value)) ? "neg" : ""}>{describeChange(r)}</td>
                   <td style={{ width: 140 }}>{r.status && r.status !== "new" ? <StatusMark s={r.status} /> : ""}</td>
+                  <td style={{ width: 44 }}>{isNew(r) && (
+                    <button className="readbtn" title="Mark as read" aria-label="Mark as read"
+                            onClick={(e) => { e.stopPropagation(); markRead([r.id]); }}>✓</button>)}</td>
                 </tr>
               ))}
             </tbody>

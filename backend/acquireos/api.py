@@ -161,13 +161,11 @@ def _meta():
     with db.conn() as c:
         bb = scoring.active_buy_box(c)
         counts = {**d["counts"], **c.execute(
-            """select (select count(*) from user_company where user_id = %(uid)s
+            f"""select (select count(*) from user_company where user_id = %(uid)s
                          and status not in ('new', 'rejected', 'passed')) as tracked,
-                      (select count(distinct ch.company_number) from company_change ch
+                      (select count(*) from company_change ch
                          join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
-                         where uc.status not in ('new', 'rejected', 'passed')
-                           and ch.detected_at > coalesce((select (value #>> '{}')::timestamptz from app_setting
-                                                          where key = 'changes_seen_at'), now() - interval '7 days')
+                         where uc.status not in ('new', 'rejected', 'passed') and {UNREAD_SQL}
                       ) as pipeline_new""",
             {"uid": UID}).fetchone()}
         boxes = [dict(r) for r in c.execute(
@@ -1252,11 +1250,21 @@ def connect_info(request: Request):
             "password_set": bool(config.APP_PASSWORD), **e}
 
 
+# A change is unread if it came after "mark all as read" (or in the last 7
+# days, before that was first used) and was not marked read on its own.
+UNREAD_SQL = """(ch.detected_at > coalesce((select (value #>> '{}')::timestamptz from app_setting
+                                            where key = 'changes_seen_at'), now() - interval '7 days')
+               and not exists (select 1 from change_read cr where cr.change_id = ch.id))"""
+
+
 @app.get("/api/changes")
-def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limit: int = 500, scope: str = "buy_box"):
+def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limit: int = 500, scope: str = "buy_box",
+            unread: bool = False):
     with db.conn() as c:
         bb = scoring.active_buy_box(c)
         where, params = ["ch.detected_at > now() - make_interval(days => %(days)s)"], {"days": days, "uid": UID, "bb": bb["id"], "limit": min(limit, 2000)}
+        if unread:
+            where.append(UNREAD_SQL)
         if kind:
             where.append("ch.kind = %(kind)s"); params["kind"] = kind
         if tracked:
@@ -1266,6 +1274,7 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
                          "or coalesce(uc.status, 'new') <> 'new')")
         rows = c.execute(
             f"""select ch.id, ch.company_number, ch.kind, ch.field, ch.old_value, ch.new_value, ch.detected_at, ch.source,
+                       {UNREAD_SQL} as unread,
                        c.name, c.status as company_status, coalesce(uc.status, 'new') as status, s.score, s.excluded,
                        r.filename
                 from company_change ch join company c on c.company_number = ch.company_number
@@ -1280,22 +1289,39 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
         summary = c.execute(
             f"""select ch.kind, count(*) as n from company_change ch
                 left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
-                where ch.detected_at > now() - make_interval(days => %(days)s)
+                where ch.detected_at > now() - make_interval(days => %(days)s) {"and " + UNREAD_SQL if unread else ""}
                 {"and coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed')" if tracked else
                  "and (exists (select 1 from company_best cb where cb.company_number = ch.company_number) or coalesce(uc.status, 'new') <> 'new')" if scope == "buy_box" else ""}
                 group by 1 order by 2 desc""",
             params,
         ).fetchall()
-        seen = c.execute("select value #>> '{}' as at from app_setting where key = 'changes_seen_at'").fetchone()
-    return {"rows": rows, "summary": summary, "seen_at": seen["at"] if seen else None}
+        unread_n = c.execute(
+            f"""select count(*) as n from company_change ch
+                left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
+                where {' and '.join(w for w in where if w != UNREAD_SQL)} and {UNREAD_SQL}""", params).fetchone()["n"]
+    return {"rows": rows, "summary": summary, "unread": unread_n}
 
 
 @app.post("/api/changes/seen")
 def changes_seen():
-    """Mark changes as looked at (clears the alert count on Changes)."""
+    """Mark all changes as read."""
     with db.conn() as c:
         c.execute("""insert into app_setting (key, value) values ('changes_seen_at', to_jsonb(now()))
                      on conflict (key) do update set value = excluded.value, updated_at = now()""")
+        c.execute("delete from change_read")  # covered by the new time
+    return {"ok": True}
+
+
+class ReadIn(BaseModel):
+    ids: list[int]
+
+
+@app.post("/api/changes/read")
+def changes_read(body: ReadIn):
+    """Mark some changes read."""
+    with db.conn() as c:
+        c.execute("""insert into change_read (change_id) select id from company_change where id = any(%s)
+                     on conflict do nothing""", (body.ids[:2000],))
     return {"ok": True}
 
 
