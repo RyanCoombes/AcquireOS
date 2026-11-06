@@ -857,3 +857,9 @@ tr.unread .name a { font-weight: 700; }
 .who .wnote.warn { color: var(--amber); font-weight: 600; }
 .callout.amber { background: var(--amber-soft); color: #7a5a06; border-color: #f0e2b3; }
 .flags { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.prev { margin-top: 14px; padding-top: 4px; border-top: 1px solid var(--line); }
+.prev .subh { margin: 12px 0 4px; }
+.prow { display: grid; grid-template-columns: 1fr 110px 200px; gap: 10px; font-size: 13px; padding: 5px 0; color: var(--ink-2, #444); }
+.prow .pb { text-transform: capitalize; color: var(--ink-3); }
+.prow .pd { text-align: right; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) { .prow { grid-template-columns: 1fr auto; } .prow .pb { display: none; } }

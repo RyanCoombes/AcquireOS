@@ -327,9 +327,11 @@ type Who = {
 export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: React.ReactNode }) {
   const ch = data.ch;
   const own = data.ownership;
+  const isCo = (n: string) => /\b(LIMITED|LTD|PLC|LLP|TRUST|NOMINEES?)\b/i.test(n);
+  const keyOf = (name: string, company: boolean) => (company ? "C:" : "P:") + personKey(name, company);
   const map = new Map<string, Who>();
   const get = (name: string, company: boolean): Who => {
-    const k = (company ? "C:" : "P:") + personKey(name, company);
+    const k = keyOf(name, company);
     let w = map.get(k);
     if (!w) {
       w = { key: k, name: niceName(name, company), company, roles: new Set(), pct: null, band: null, birthYear: null, since: null, boards: 0, ultimately: [] };
@@ -337,8 +339,32 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
     }
     return w;
   };
-  const currentPsc = data.people.filter((p) => !p.ceased_on);
-  for (const p of currentPsc) {
+
+  // The two sources: the owners register (PSC, bands, updated within 14 days
+  // of a change) and the latest confirmation statement (exact, but can be months old).
+  const shareholders = ch?.shareholders ?? [];
+  const asAt = shareholders[0]?.as_at ?? null;
+  const stmt = new Map<string, { name: string; pct: number }>();
+  for (const s of shareholders) {
+    const k = keyOf(s.name, isCo(s.name));
+    stmt.set(k, { name: s.name, pct: Math.round(((stmt.get(k)?.pct ?? 0) + (s.pct ?? 0)) * 10) / 10 });
+  }
+  const pk = (p: { name: string; kind: string }) => keyOf(p.name, p.kind !== "individual");
+  const current = data.people.filter((p) => !p.ceased_on);
+  const ceased = data.people.filter((p) => p.ceased_on);
+  const dates = data.people.flatMap((p) => [p.notified_on, p.ceased_on]).filter(Boolean).sort() as string[];
+  const lastChange = dates[dates.length - 1] ?? null;
+  const joined = current.filter((p) => p.notified_on === lastChange);
+  const leftOn = ceased.filter((p) => p.ceased_on === lastChange);
+  const disagree = shareholders.length > 0 && (
+    current.some((p) => { const b = band(p.natures); const s = stmt.get(pk(p)); return !!b && (!s || s.pct < b[0] - 0.5 || s.pct > b[1] + 0.5); })
+    || ceased.some((p) => (stmt.get(pk(p))?.pct ?? 0) > 25.5));
+  const registerNewer = !!(lastChange && asAt && lastChange > asAt);
+  // Exact figures only when the statement is at least as new as the register and agrees with it.
+  const useStatement = shareholders.length > 0 && !disagree && !registerNewer;
+  const stmtLabel = asAt ? `the statement of ${date(asAt)}` : "the last statement";
+
+  for (const p of current) {
     const w = get(p.name, p.kind !== "individual");
     w.roles.add("Owner");
     w.band = band(p.natures) ?? w.band;
@@ -346,33 +372,27 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
     w.birthYear = w.birthYear ?? p.birth_year;
     w.regNo = p.registration_number;
     w.since = w.since ?? p.notified_on;
+    const s = stmt.get(pk(p));
+    if (useStatement && s) w.pct = s.pct;
+    else if (s) w.note = { warn: false, text: `${stmtLabel.charAt(0).toUpperCase() + stmtLabel.slice(1)} showed ${s.pct}%` };
   }
-  const shareholders = ch?.shareholders ?? [];
-  for (const s of shareholders) {
-    const company = /\b(LIMITED|LTD|PLC|LLP|TRUST|NOMINEES?)\b/i.test(s.name);
-    const w = get(s.name, company);
+  const ceasedKeys = new Set(ceased.map(pk));
+  const stillHolding = new Set<string>();
+  for (const [k, s] of stmt) {
+    if (map.has(k)) continue;
+    if (ceasedKeys.has(k) && !useStatement) continue;  // left the register after the statement: a previous owner
+    const w = get(s.name, k.startsWith("C:"));
     w.roles.add("Shareholder");
-    w.pct = Math.round(((w.pct ?? 0) + (s.pct ?? 0)) * 10) / 10;
-  }
-  // People who left the owners register but still appear on the statement.
-  for (const p of data.people.filter((x) => x.ceased_on)) {
-    const w = map.get((p.kind !== "individual" ? "C:" : "P:") + personKey(p.name, p.kind !== "individual"));
-    if (w && w.pct != null && !w.roles.has("Owner")) {
-      w.left = p.ceased_on; w.personId = w.personId ?? p.person_id; w.regNo = w.regNo ?? p.registration_number;
-      w.birthYear = w.birthYear ?? p.birth_year;
-    }
-  }
-  // Where the statement and the owners register disagree, say so on the row.
-  const asAt = shareholders[0]?.as_at ?? null;
-  for (const w of map.values()) {
-    if (w.pct != null && w.band && (w.pct < w.band[0] - 0.5 || w.pct > w.band[1] + 0.5)) {
-      w.note = { warn: true, text: `Owners register says ${w.band[0]}–${w.band[1]}%${w.since ? ` since ${date(w.since)}` : ""}` };
-    } else if (w.pct != null && w.left) {
-      w.note = w.pct <= 25
-        ? { warn: false, text: `Left the owners register ${date(w.left)}: 25% or less isn't listed there` }
-        : { warn: true, text: `Left the owners register ${date(w.left)}, but the statement shows ${w.pct}%` };
-    } else if (shareholders.length && w.band && w.pct == null) {
-      w.note = { warn: true, text: `On the owners register, not on the ${asAt ? `statement of ${date(asAt)}` : "statement"}` };
+    w.pct = s.pct;
+    stillHolding.add(k);
+    const gone = ceased.find((p) => pk(p) === k);
+    if (gone) {
+      w.left = gone.ceased_on; w.personId = gone.person_id; w.birthYear = w.birthYear ?? gone.birth_year;
+      w.note = { warn: false, text: `Off the owners register since ${date(gone.ceased_on)}: holdings of 25% or less aren't listed there` };
+    } else if (!useStatement) {
+      w.note = s.pct > 25.5
+        ? { warn: true, text: `${stmtLabel.charAt(0).toUpperCase() + stmtLabel.slice(1)} shows ${s.pct}%, but they're not on the owners register` }
+        : { warn: false, text: `From ${stmtLabel}; 25% or less isn't on the owners register` };
     }
   }
   for (const o of (ch?.officers ?? []).filter((x) => !x.resigned_on)) {
@@ -389,48 +409,52 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
     const parent = [...map.values()].find((w) => w.company && ((w.regNo ?? "").toUpperCase() === via || w.key === "C:" + personKey(via, true)));
     if (parent) parent.ultimately.push(niceName(u.name, false) + (u.birth_year ? ` (${new Date().getFullYear() - u.birth_year})` : ""));
   }
-  const exact = shareholders.length > 0;
+
   const people = [...map.values()].sort((a, b) =>
     (b.pct ?? b.band?.[0] ?? -1) - (a.pct ?? a.band?.[0] ?? -1) || Number(b.roles.has("Director")) - Number(a.roles.has("Director")));
-  const owners = people.filter((w) => (exact ? w.pct : w.band?.[0]));
+  const owners = people.filter((w) => (useStatement ? w.pct : w.band?.[0]));
   owners.forEach((w, i) => { w.colour = SEG_COLOURS[i % SEG_COLOURS.length]; });
   people.filter((w) => !w.colour && (w.pct || w.band)).forEach((w, i) => { w.colour = SEG_COLOURS[(owners.length + i) % SEG_COLOURS.length]; });
-  const shown = owners.reduce((s, w) => s + (exact ? w.pct ?? 0 : w.band![0]), 0);
+  const share = (w: Who) => (useStatement ? w.pct ?? 0 : w.band![0]);
+  const shown = owners.reduce((t, w) => t + share(w), 0);
   const others = ch?.other_appointments ?? [];
-  const conflict = [...map.values()].some((w) => w.note?.warn);
-  const stillHeld = new Set([...map.values()].filter((w) => w.pct != null).map((w) => w.key));
-  const former = [
-    ...data.people.filter((p) => p.ceased_on)
-      .filter((p) => !stillHeld.has((p.kind !== "individual" ? "C:" : "P:") + personKey(p.name, p.kind !== "individual")))
-      .map((p) => niceName(p.name, p.kind !== "individual")),
-    ...(ch?.officers ?? []).filter((o) => o.resigned_on).map((o) => niceName(o.name, false)),
-  ].filter((v, i, a) => a.indexOf(v) === i);
+  const prevOwners = ceased.filter((p) => !stillHolding.has(pk(p)) && !map.get(pk(p))?.roles.has("Owner"))
+    .sort((x, y) => String(y.ceased_on).localeCompare(String(x.ceased_on)));
+  const prevDirectors = (ch?.officers ?? []).filter((o) => o.resigned_on)
+    .sort((x, y) => String(y.resigned_on).localeCompare(String(x.resigned_on)));
+  const names = (ps: { name: string; kind: string }[]) => {
+    const n = ps.map((p) => niceName(p.name, p.kind !== "individual"));
+    return n.length > 1 ? `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}` : n[0];
+  };
+  const filingsUrl = `https://find-and-update.company-information.service.gov.uk/company/${data.company.company_number}/filing-history`;
 
   return (
     <section id="ownership">
       <Head icon="owners" tone="orange" title="Owners & directors" aside={flags} />
-      {own && own.ownership_type !== "unknown" && <p style={{ margin: "0 0 10px" }}><b>{ownSentence(own.explanation)}</b></p>}
+      {own && own.ownership_type !== "unknown" && <p style={{ margin: "0 0 4px" }}><b>{ownSentence(own.explanation)}</b></p>}
+      {lastChange && (joined.length > 0 || leftOn.length > 0) && (
+        <p className="small" style={{ margin: "0 0 10px" }}>
+          <span className="chip">Ownership changed {date(lastChange)}</span>{" "}
+          {joined.length > 0 && <>{names(joined)} {joined.length === 1 ? "became an owner" : "became owners"}</>}
+          {joined.length > 0 && leftOn.length > 0 && "; "}
+          {leftOn.length > 0 && <>{names(leftOn)} left</>}.
+        </p>
+      )}
 
       {owners.length > 0 && (
         <>
           <div className="ownbar" role="img" aria-label="Ownership split">
-            {owners.map((w) => {
-              const v = exact ? w.pct ?? 0 : w.band![0];
-              return <i key={w.key} style={{ width: `${v}%`, background: w.colour }} title={`${w.name}: ${exact ? `${w.pct}%` : `${w.band![0]}–${w.band![1]}%`}`} />;
-            })}
-            {shown < 99.5 && <i className="rest" style={{ width: `${100 - shown}%` }} title={exact ? "Others" : "Not stated"} />}
+            {owners.map((w) => (
+              <i key={w.key} style={{ width: `${share(w)}%`, background: w.colour }}
+                 title={`${w.name}: ${useStatement ? `${w.pct}%` : `${w.band![0]}–${w.band![1]}%`}`} />
+            ))}
+            {shown < 99.5 && <i className="rest" style={{ width: `${100 - shown}%` }} title={useStatement ? "Others" : "Not stated"} />}
           </div>
           <div className="faint small" style={{ margin: "4px 0 12px" }}>
-            {exact ? `Shareholdings from the confirmation statement${asAt ? ` of ${date(asAt)}` : ""}`
-              : "Approximate: owners register bands. Owners with 25% or less aren't named."}
+            {useStatement ? `Exact, from the confirmation statement of ${date(asAt)}.`
+              : <>Owners register bands (approximate).{shareholders.length > 0 && <> {stmtLabel.charAt(0).toUpperCase() + stmtLabel.slice(1)}
+                  {registerNewer ? " is older than the last change" : " disagrees"}, so it's shown as notes. <a href={filingsUrl} target="_blank" rel="noreferrer">Filings ↗</a></>}</>}
           </div>
-          {conflict && (
-            <div className="callout amber" style={{ marginBottom: 10 }}>
-              The confirmation statement and the owners register disagree (notes below). Share classes with different
-              votes, or a change after the statement, can explain it.{" "}
-              <a href={`https://find-and-update.company-information.service.gov.uk/company/${data.company.company_number}/filing-history`} target="_blank" rel="noreferrer">Check the filings ↗</a>
-            </div>
-          )}
         </>
       )}
 
@@ -440,7 +464,8 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
             const theirs = w.officerKey ? others.filter((a) => a.officer_key === w.officerKey && !a.resigned_on) : [];
             const age = w.birthYear ? new Date().getFullYear() - w.birthYear : null;
             const yrs = yearsSince(w.since);
-            const pctText = w.pct != null ? `${w.pct}%` : w.band ? `${w.band[0]}–${w.band[1]}%` : null;
+            const pctText = (useStatement || !w.band) && w.pct != null ? `${w.pct}%` : w.band ? `${w.band[0]}–${w.band[1]}%` : null;
+            const barW = (useStatement || !w.band) && w.pct != null ? w.pct : w.band?.[0] ?? 0;
             return (
               <div key={w.key} className="who">
                 <span className="dot" style={{ background: w.colour ?? "var(--grey-soft)" }} />
@@ -452,11 +477,11 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                   </div>
                   <div className="wmeta">
                     {w.company ? <>Company{w.regNo ? <> · <Link to={`/c/${w.regNo}`}>{w.regNo}</Link></> : null}
-                      {w.ultimately.length ? <> · owned by {w.ultimately.join(", ")}</> : null}</>
-                      : <>{age ? `Age ${age}` : "Age not known"}{yrs !== null ? ` · ${yrs} yrs` : ""}
+                      {w.since ? ` · since ${date(w.since)}` : ""}{w.ultimately.length ? <> · owned by {w.ultimately.join(", ")}</> : null}</>
+                      : <>{age ? `Age ${age}` : "Age not known"}{yrs !== null ? ` · ${yrs} ${yrs === 1 ? "yr" : "yrs"}` : ""}
                           {w.roles.has("Director") ? ` · ${w.boards} other ${w.boards === 1 ? "board" : "boards"}` : ""}</>}
                   </div>
-                  {w.note && <div className={`wnote ${w.note.warn ? "warn" : ""}`}>{w.note.warn ? "⚠ " : ""}{w.note.text}</div>}
+                  {w.note && <div className={`wnote ${w.note.warn ? "warn" : ""}`}>{w.note.text}</div>}
                   {theirs.length > 0 && (
                     <div className="wother">
                       {theirs.slice(0, 3).map((a) => <Link key={a.company_number} to={`/c/${a.company_number}`}>{a.company_name ?? a.company_number}</Link>)}
@@ -465,7 +490,7 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                   )}
                 </div>
                 <div className="wpct">
-                  {pctText ? <><b>{pctText}</b><span className="mini"><i style={{ width: `${w.pct ?? w.band?.[0] ?? 0}%`, background: w.colour }} /></span></> : <span className="faint small">—</span>}
+                  {pctText ? <><b>{pctText}</b><span className="mini"><i style={{ width: `${barW}%`, background: w.colour }} /></span></> : <span className="faint small">—</span>}
                 </div>
               </div>
             );
@@ -477,7 +502,41 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
       {(ch?.fetched?.psc_statements ?? []).filter((x) => !x.ceased_on).map((x, i) => (
         <div key={i} className="faint small" style={{ marginTop: 6 }}>Statement: {x.statement?.replace(/-/g, " ")}</div>
       ))}
-      {former.length > 0 && <div className="faint small" style={{ marginTop: 10 }}>Former: {former.slice(0, 10).join(", ")}{former.length > 10 ? ` +${former.length - 10}` : ""}</div>}
+
+      {(prevOwners.length > 0 || prevDirectors.length > 0) && (
+        <div className="prev">
+          {prevOwners.length > 0 && (
+            <>
+              <h3 className="subh">Previous owners</h3>
+              {prevOwners.map((p) => {
+                const b = band(p.natures);
+                const s = stmt.get(pk(p));
+                return (
+                  <div key={p.person_id + String(p.ceased_on)} className="prow">
+                    <span className="pn"><Link to={`/owners/${p.person_id}`}>{niceName(p.name, p.kind !== "individual")}</Link>
+                      {s && <span className="faint"> · {stmtLabel} showed {s.pct}%</span>}</span>
+                    <span className="pb">{b ? `${b[0]}–${b[1]}%` : ""}</span>
+                    <span className="pd">{p.notified_on ? date(p.notified_on) : "?"} – {date(p.ceased_on)}</span>
+                  </div>
+                );
+              })}
+            </>
+          )}
+          {prevDirectors.length > 0 && (
+            <>
+              <h3 className="subh">Previous directors</h3>
+              {prevDirectors.slice(0, 12).map((o) => (
+                <div key={o.officer_key + o.role} className="prow">
+                  <span className="pn">{niceName(o.name, false)}</span>
+                  <span className="pb">{(o.role ?? "").replace(/-/g, " ")}</span>
+                  <span className="pd">{o.appointed_on ? date(o.appointed_on) : "?"} – {date(o.resigned_on)}</span>
+                </div>
+              ))}
+              {prevDirectors.length > 12 && <div className="faint small">+{prevDirectors.length - 12} more</div>}
+            </>
+          )}
+        </div>
+      )}
     </section>
   );
 }
