@@ -45,7 +45,9 @@ def missing_postcodes(conn, limit: int | None = None) -> list[str]:
     rows = conn.execute(
         f"""select distinct pc from (
                select postcode as pc from company c where postcode is not null {scope}
-               union select postcode from person where postcode is not null and kind <> 'individual') x
+               union select postcode from person where postcode is not null and kind <> 'individual'
+               union select l->>'postcode' from enrichment e, jsonb_array_elements(e.locations) l
+                     where l->>'postcode' is not null) x
            left join postcode_geo g on g.postcode = x.pc
            where g.postcode is null or (g.precision = 'none' and g.looked_up_at < now() - interval '90 days')
            order by 1""" + (f" limit {int(limit)}" if limit else "")

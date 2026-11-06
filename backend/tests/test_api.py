@@ -515,3 +515,27 @@ def test_ch_stream_reads_lines(monkeypatch):
         s.read("filings")
     assert s.q.get_nowait()[1]["event"]["timepoint"] == 3 and s.q.empty()
     assert s.state["filings"]["error"] == "stream closed"
+
+
+def test_enrichment_locations_facts_and_sources(loaded):
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        r = cl.post("/api/companies/01000001/enrichment", json={
+            "source_url": "https://example.com/about", "summary": "Sells IT support.\n\n- Microsoft partner\n- 40 staff",
+            "locations": [{"name": "Head office", "address": "1 High St, London EC2A 4NJ", "kind": "head office"},
+                          {"address": "Churchill House, Cardiff CF10 2HH", "kind": "office"}],
+            "facts": [{"label": "Delisted from AIM", "value": "11 Apr 2024", "source_url": "https://example.com/rns"},
+                      {"label": "Founded", "value": "2003"}],
+            "linkedin": "linkedin.com/company/example", "sources": [{"url": "https://example.com/news", "label": "News"}]})
+        assert r.status_code == 200, r.text
+        e = cl.get("/api/companies/01000001").json()
+        en, research = e["enrichment"], e["research"]
+        assert [l["postcode"] for l in en["locations"]] == ["EC2A 4NJ", "CF10 2HH"]
+        assert en["facts"][1]["source_url"] == "https://example.com/about"  # falls back to the main source
+        assert en["linkedin"] == "https://linkedin.com/company/example"
+        kinds = {x["kind"] for x in research}
+        assert {"location", "fact", "source", "summary", "contact"} <= kinds
+        bad = cl.post("/api/companies/01000001/enrichment", json={"source_url": "manual", "locations": [{"kind": "castle", "address": "x"}]})
+        assert bad.status_code == 400

@@ -36,10 +36,49 @@ class EnrichError(ValueError):
     pass
 
 
+LOCATION_KINDS = ["head office", "office", "branch", "site", "warehouse", "registered office"]
+_PC = re.compile(r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b", re.I)
+
+
+def _clean_locations(locations: list) -> list[dict]:
+    out = []
+    for loc in locations or []:
+        if isinstance(loc, str):
+            loc = {"address": loc}
+        if not isinstance(loc, dict):
+            raise EnrichError("Each location is {name?, address, postcode?, kind?}")
+        address = " ".join(str(loc.get("address") or "").split())
+        name = " ".join(str(loc.get("name") or "").split()) or None
+        if not address and not name:
+            raise EnrichError("A location needs an address or a name")
+        kind = (loc.get("kind") or "office").strip().lower()
+        if kind not in LOCATION_KINDS:
+            raise EnrichError(f"location kind must be one of {LOCATION_KINDS}")
+        pc = (loc.get("postcode") or "").strip().upper() or None
+        if not pc:
+            m = _PC.search(address)
+            pc = f"{m.group(1).upper()} {m.group(2).upper()}" if m else None
+        out.append({"name": name, "address": address or None, "postcode": pc, "kind": kind})
+    return out
+
+
+def _clean_facts(facts: list, source_url: str) -> list[dict]:
+    out = []
+    for f in facts or []:
+        if not isinstance(f, dict) or not str(f.get("label") or "").strip() or f.get("value") in (None, ""):
+            raise EnrichError("Each fact is {label, value, source_url?}")
+        src = (f.get("source_url") or source_url or "").strip()
+        out.append({"label": str(f["label"]).strip(), "value": str(f["value"]).strip(),
+                    "source_url": None if src in ("", "manual") else src})
+    return out
+
+
 def save_enrichment(conn, company_number: str, *, source_url: str, website: str | None = None,
                     business_type: str | None = None, recurring_revenue: str | None = None,
                     field_service: str | None = None, summary: str | None = None,
-                    confidence: str = "medium", source_label: str | None = None, by: str = "claude") -> dict:
+                    confidence: str = "medium", source_label: str | None = None, by: str = "claude",
+                    locations: list | None = None, facts: list | None = None, linkedin: str | None = None,
+                    phone: str | None = None, sources: list | None = None) -> dict:
     num = company_number.strip().upper()
     if not conn.execute("select 1 from company where company_number = %s", (num,)).fetchone():
         raise EnrichError(f"Company {num} is not in AcquireOS")
@@ -55,11 +94,32 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
     if website and not re.match(r"^https?://", website):
         website = "https://" + website.strip().lstrip("/")
 
+    if linkedin and not re.match(r"^https?://", linkedin):
+        linkedin = "https://" + linkedin.strip().lstrip("/")
+    locs = _clean_locations(locations) if locations is not None else None
+    fct = _clean_facts(facts, source_url) if facts is not None else None
+    extra_sources = []
+    for x in sources or []:
+        url, label = (x, None) if isinstance(x, str) else ((x or {}).get("url"), (x or {}).get("label"))
+        if url and str(url).strip():
+            extra_sources.append((str(url).strip(), label))
+
     fields = {"website": website, "business_type": business_type, "recurring_revenue": recurring_revenue,
-              "field_service": field_service, "summary": summary}
+              "field_service": field_service, "summary": summary, "linkedin": linkedin, "phone": phone}
     given = {k: v for k, v in fields.items() if v not in (None, "")}
-    if not given:
-        raise EnrichError("Nothing to save: give at least one of website, business_type, recurring_revenue, field_service, summary")
+    if locs is not None:
+        given["locations"] = json.dumps(locs)
+    if fct is not None:
+        given["facts"] = json.dumps(fct)
+    if not given and not extra_sources:
+        raise EnrichError("Nothing to save: give at least one of website, business_type, recurring_revenue, "
+                          "field_service, summary, locations, facts, linkedin, phone or sources")
+    if not given:  # sources only
+        for url, label in extra_sources:
+            conn.execute("""insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)
+                            values (%s, 'source', %s, %s, %s, %s, %s)""", (num, label or "Source", url, label, by, confidence))
+        return {"saved": ["sources"], "enrichment": conn.execute(
+            "select * from enrichment where company_number = %s", (num,)).fetchone()}
 
     cols = ", ".join(given)
     vals = ", ".join(f"%({k})s" for k in given)
@@ -72,15 +132,24 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
         {**given, "num": num, "conf": confidence, "by": by},
     )
     labels = {"website": "Website", "business_type": "Business type", "recurring_revenue": "Recurring revenue",
-              "field_service": "Field-service work", "summary": "Summary"}
+              "field_service": "Field-service work", "summary": "Summary", "linkedin": "LinkedIn", "phone": "Phone"}
     kinds = {"website": "website", "business_type": "classification", "recurring_revenue": "classification",
-             "field_service": "classification", "summary": "summary"}
-    for k, v in given.items():
+             "field_service": "classification", "summary": "summary", "linkedin": "contact", "phone": "contact"}
+    src = None if source_url == "manual" else source_url
+    rows = [(kinds[k], v if k == "summary" else f"{labels[k]}: {v}", src, source_label)
+            for k, v in given.items() if k in labels]
+    for loc in locs or []:
+        rows.append(("location", f"{loc['kind'].capitalize()}: {', '.join(x for x in (loc['name'], loc['address']) if x)}",
+                     src, source_label))
+    for f in fct or []:
+        rows.append(("fact", f"{f['label']}: {f['value']}", f["source_url"], None))
+    for url, label in extra_sources:
+        rows.append(("source", label or "Source", url, label))
+    for kind, content, url, label in rows:
         conn.execute(
             """insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)
                values (%s, %s, %s, %s, %s, %s, %s)""",
-            (num, kinds[k], v if k == "summary" else f"{labels[k]}: {v}",
-             None if source_url == "manual" else source_url, source_label, by, confidence),
+            (num, kind, content, url, label, by, confidence),
         )
     scoring.rescore(conn, company_number=num)
     row = conn.execute("select * from enrichment where company_number = %s", (num,)).fetchone()

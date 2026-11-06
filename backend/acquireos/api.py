@@ -618,6 +618,14 @@ def company(num: str, bb: str | None = None):
 
         sics = [{"code": code, "description": sic_mod.describe(code, sic_known)} for code in row["sic_codes"] or []]
         enr = c.execute("select * from enrichment where company_number = %s", (num,)).fetchone()
+        if enr and enr.get("locations"):
+            # Map positions for the other offices, where their postcodes are known.
+            pcs = [l["postcode"] for l in enr["locations"] if l.get("postcode")]
+            where = {r["postcode"]: r for r in c.execute(
+                "select postcode, lat, lon from postcode_geo where postcode = any(%s) and lat is not null", (pcs,))}
+            for l in enr["locations"]:
+                g = where.get(l.get("postcode"))
+                l["lat"], l["lon"] = (g["lat"], g["lon"]) if g else (None, None)
         issues = c.execute("select * from data_issue where company_number = %s order by status, created_at desc",
                            (num,)).fetchall()
         deal = _deal(c, num, (state or {}).get("status") or "new")
@@ -1183,6 +1191,11 @@ class EnrichIn(BaseModel):
     summary: str | None = None
     confidence: str = "high"
     source_label: str | None = None
+    locations: list | None = None
+    facts: list | None = None
+    linkedin: str | None = None
+    phone: str | None = None
+    sources: list | None = None
 
 
 @app.post("/api/companies/{num}/enrichment")

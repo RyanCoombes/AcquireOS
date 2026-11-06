@@ -166,6 +166,9 @@ export interface CompanyDetail {
   enrichment: {
     website: string | null; business_type: string | null; recurring_revenue: string | null; field_service: string | null;
     summary: string | null; confidence: string | null; updated_at: string; updated_by: string | null;
+    linkedin?: string | null; phone?: string | null;
+    locations?: { name: string | null; address: string | null; postcode: string | null; kind: string; lat?: number | null; lon?: number | null }[];
+    facts?: { label: string; value: string; source_url: string | null }[];
   } | null;
   issues: { id: number; issue: string; detail: string | null; suggested_fix: string | null; status: string; created_by: string | null; created_at: string; resolution: string | null }[];
   notes: Note[];

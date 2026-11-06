@@ -101,16 +101,25 @@ def audit_queue(check: str = "all", limit: int = 20, min_score: float = 0, pipel
     "Save researched facts about a company. source_url is required: the page where you verified it "
     "('manual' only if the user told you). business_type: " + "|".join(enrich.BUSINESS_TYPES) +
     ". recurring_revenue and field_service: yes|partly|no|unknown. confidence: high|medium|low. "
-    "Give only the fields you verified. Rescores the company and returns the new score."))
+    "summary may use short paragraphs and '- ' bullet lines. "
+    "locations: every office or site found, as [{name, address, postcode, kind}] with kind "
+    + "|".join(enrich.LOCATION_KINDS) + " (replaces the saved list, so send all of them). "
+    "facts: other key facts, each with its own source, as [{label, value, source_url}] e.g. "
+    "{label: 'Delisted from AIM', value: '11 Apr 2024', source_url: ...} (replaces the saved list). "
+    "linkedin, phone: company contact links. sources: extra pages used, as [url] or [{url, label}]. "
+    "Each save is also kept, dated and sourced, in the company's research history."))
 def save_enrichment(company_number: str, source_url: str, website: str | None = None,
                     business_type: str | None = None, recurring_revenue: str | None = None,
                     field_service: str | None = None, summary: str | None = None,
-                    confidence: str = "medium", source_label: str | None = None) -> str:
+                    confidence: str = "medium", source_label: str | None = None,
+                    locations: list[dict] | None = None, facts: list[dict] | None = None,
+                    linkedin: str | None = None, phone: str | None = None, sources: list | None = None) -> str:
     with db.conn() as c:
         return _j(enrich.save_enrichment(c, company_number, source_url=source_url, website=website,
                                          business_type=business_type, recurring_revenue=recurring_revenue,
                                          field_service=field_service, summary=summary, confidence=confidence,
-                                         source_label=source_label, by="claude (mcp)"))
+                                         source_label=source_label, locations=locations, facts=facts,
+                                         linkedin=linkedin, phone=phone, sources=sources, by="claude (mcp)"))
 
 
 @server.tool(description="Record a problem in the data for the user to review, e.g. wrong SIC code, owner link "
