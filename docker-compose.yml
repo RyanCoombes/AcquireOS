@@ -77,7 +77,7 @@ services:
       # Token for Claude (MCP at /mcp) and scripts. Generate one with:
       #   docker exec acquireos acquireos new-token
       API_TOKEN: ${API_TOKEN:-}
-      # Free Companies House API key (REST): charges and share issues per company.
+      # Free Companies House API key (REST): charges, directors, shareholders and filings per company.
       CH_API_KEY: ${CH_API_KEY:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
@@ -113,6 +113,8 @@ services:
       REFRESH_DAY: ${REFRESH_DAY:-6}
       REFRESH_HOUR: ${REFRESH_HOUR:-3}
       REFRESH_ACCOUNTS_MONTHS: ${REFRESH_ACCOUNTS_MONTHS:-1}
+      # Same key as the app: the scheduler fetches Companies House details in the background.
+      CH_API_KEY: ${CH_API_KEY:-}
       TZ: ${TZ:-Europe/London}
     volumes:
       - ${DATA_DIR:-/opt/acquireos/data}:/data

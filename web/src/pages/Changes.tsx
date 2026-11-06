@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Change } from "../api";
 import { ErrorLine, Score, StatusMark, useAsync } from "../components/bits";
@@ -20,6 +21,15 @@ export default function Changes() {
   if (kind) q.kind = kind;
   if (tracked) q.tracked = "true";
   const { data, error } = useAsync(() => api.changes(q), [days, kind, tracked]);
+  // Opening the page counts as seeing the changes (clears the alert badge).
+  const seenAt = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!data || seenAt.current !== undefined) return;
+    seenAt.current = data.seen_at;  // keep the earlier time, so rows stay marked new while you filter
+    api.changesSeen().catch(() => {});
+  }, [data]);
+  const since = new Date((seenAt.current ?? data?.seen_at) || Date.now() - 7 * 864e5);
+  const isNew = (r: Change) => new Date(r.detected_at) > since;
 
   // group by day
   const groups = new Map<string, Change[]>();
@@ -35,7 +45,7 @@ export default function Changes() {
         <div>
           <h1>Changes</h1>
           <div className="lede">
-            New accounts, status, names, addresses and owners, after each monthly refresh.
+            Monthly from the bulk files, and from Companies House checks on your pipeline (weekly) and targets (monthly).
           </div>
         </div>
       </div>
@@ -62,7 +72,7 @@ export default function Changes() {
       <ErrorLine error={error} />
       {data && data.summary.length > 0 && (
         <div className="summary-line">
-          <b>{total.toLocaleString("en-GB")}</b> changes:
+          <b>{total.toLocaleString("en-GB")}</b> {total === 1 ? "change" : "changes"}:
           {data.summary.map((s) => (
             <button key={s.kind} className={`linkish ${kind === s.kind ? "on" : ""}`} onClick={() => set("kind", kind === s.kind ? null : s.kind)}>
               {CHANGE_KIND[s.kind] ?? s.kind} {Number(s.n).toLocaleString("en-GB")}
@@ -72,8 +82,7 @@ export default function Changes() {
       )}
       {data && data.rows.length === 0 && (
         <div className="empty">
-          <b>No changes in this period.</b> Changes are recorded when you import a newer file over companies already in AcquireOS.{" "}
-          <Link to="/import">Import a file</Link>.
+          <b>No changes in this period.</b>
         </div>
       )}
       {[...groups.entries()].map(([day, rows]) => (
@@ -85,7 +94,7 @@ export default function Changes() {
                 <tr key={r.id} onClick={() => nav(`/c/${r.company_number}`)} className={r.excluded ? "excluded" : ""}>
                   <td style={{ width: 120 }}><Score value={r.score ?? null} /></td>
                   <td style={{ width: "34%" }}><div className="name"><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div><div className="sub">{r.company_number}</div></td>
-                  <td style={{ width: 130 }}><b>{CHANGE_KIND[r.kind] ?? r.kind}</b></td>
+                  <td style={{ width: 130 }}><b>{CHANGE_KIND[r.kind] ?? r.kind}</b>{isNew(r) && <span className="tag new">New</span>}</td>
                   <td className={(r.kind === "status" && isBadStatus(r.new_value)) ? "neg" : ""}>{describeChange(r)}</td>
                   <td style={{ width: 140 }}>{r.status && r.status !== "new" ? <StatusMark s={r.status} /> : ""}</td>
                 </tr>

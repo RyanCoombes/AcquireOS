@@ -2,6 +2,8 @@ import io
 
 from fastapi.testclient import TestClient
 
+from acquireos import db
+
 from .conftest import FIX
 
 
@@ -362,3 +364,95 @@ def test_mcp_tools_cover_owners_financials_research_and_pipeline(loaded):
         r = _j.loads(m.log_outreach("01000001", "Sent intro letter", channel="letter", follow_up_on="2026-12-01"))
         assert r["company_number"] == "01000001"
         assert _j.loads(m.get_company("01000001"))["state"]["next_action_on"] == "2026-12-01"
+
+
+def test_ch_sync_check_records_changes_and_queue(loaded, monkeypatch):
+    from acquireos import chapi, chsync
+    from acquireos.api import app
+
+    loaded.commit()
+    monkeypatch.setattr(chapi.config, "CH_API_KEY", "x")
+    state = {"filings": [{"transaction_id": "f1", "date": "2024-01-01", "type": "CS01", "category": "confirmation-statement",
+                          "description": "confirmation-statement"}],
+             "officers": [{"name": "SMITH, Alex", "officer_role": "director", "appointed_on": "2000-01-01",
+                           "links": {"officer": {"appointments": "/officers/OFF1/appointments"}}}],
+             "charges": [], "etag": "e1"}
+    calls = []
+
+    def fake(path):
+        calls.append(path)
+        if path == "/company/01000003":
+            return {"etag": state["etag"], "has_insolvency_history": False}
+        if "/filing-history" in path:
+            return {"items": state["filings"]}
+        if "/officers?" in path:
+            return {"items": state["officers"]}
+        if "/charges" in path:
+            return {"items": state["charges"]}
+        return {"items": []}
+    monkeypatch.setattr(chapi, "_get", fake)
+    monkeypatch.setattr(chapi, "_document", lambda url: None)
+    with TestClient(app) as cl:
+        r = cl.post("/api/companies/01000003/ch-check").json()  # never fetched: full fetch, no changes recorded
+        assert r["changed"] and r["changes"] == 0 and r["officers"]
+        calls.clear()
+        r = cl.post("/api/companies/01000003/ch-check").json()  # nothing new: two requests only
+        assert not r["changed"] and len(calls) == 2
+        state["filings"].insert(0, {"transaction_id": "f2", "date": "2025-02-01", "type": "SH01", "category": "capital",
+                                    "description": "capital-allotment-shares"})
+        state["officers"][0]["resigned_on"] = "2025-01-31"
+        state["officers"].append({"name": "JONES, Sam", "officer_role": "director", "appointed_on": "2025-02-01",
+                                  "links": {"officer": {"appointments": "/officers/OFF2/appointments"}}})
+        state["charges"] = [{"charge_code": "c9", "status": "outstanding", "persons_entitled": [{"name": "HSBC UK Bank PLC"}]}]
+        r = cl.post("/api/companies/01000003/ch-check").json()
+        assert r["changed"] and r["changes"] == 4
+        ch = cl.get("/api/changes", params={"days": 7, "scope": "all"}).json()["rows"]
+        api_rows = [(x["kind"], x["field"]) for x in ch if x["source"] == "api"]
+        assert ("filing", "SH01") in api_rows and ("director", "Resigned") in api_rows
+        assert ("director", "Appointed") in api_rows and ("charge", "New charge") in api_rows
+        # alerts: pipeline changes since last seen
+        cl.put("/api/companies/01000003/state", json={"status": "researching"})
+        assert cl.get("/api/meta").json()["counts"]["pipeline_new"] == 1
+        cl.post("/api/changes/seen")
+        assert cl.get("/api/meta").json()["counts"]["pipeline_new"] == 0
+        # sync queue: the pipeline company is current, so the next work is targets never fetched
+        with db.conn() as c:
+            batch = chsync.next_batch(c, 5)
+            assert batch and all(m == "full" for _, m in batch) and "01000003" not in [n for n, _ in batch]
+            st = chsync.status(c)
+            assert st["pipeline"]["fetched"] == 1 and st["targets"]["total"] >= 1
+        assert cl.put("/api/ch-sync", json={"paused": True}).json()["paused"] is True
+
+
+def test_ch_rate_schedule_is_shared(loaded):
+    from acquireos import chapi
+
+    loaded.commit()
+    a, b = chapi._reserve(0.2), chapi._reserve(0.2)
+    assert a is not None and b is not None and b >= a + 0.15  # the second request is booked after the first
+
+
+def test_ch_sync_loop_fetches_targets(loaded, monkeypatch):
+    import pytest
+
+    from acquireos import chapi, chsync
+
+    loaded.commit()
+    monkeypatch.setattr(chapi.config, "CH_API_KEY", "x")
+    monkeypatch.setattr(chapi, "_get", lambda path: {"items": []} if "?" in path or path.endswith("statements") else {"etag": "e"})
+    monkeypatch.setattr(chapi, "_document", lambda url: None)
+
+    class Stop(BaseException):
+        pass
+    sleeps = []
+
+    def fake_sleep(s):
+        sleeps.append(s)
+        if s >= 120:  # the loop has run out of work (or is waiting): stop the test
+            raise Stop
+    monkeypatch.setattr(chsync.time, "sleep", fake_sleep)
+    with pytest.raises(Stop):
+        chsync.run_forever()
+    with db.conn() as c:
+        st = chsync.status(c)
+        assert st["targets"]["fetched"] == st["targets"]["total"] > 0 and st["running"]

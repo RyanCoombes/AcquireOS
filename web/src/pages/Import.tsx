@@ -2,9 +2,9 @@ import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { duration, elapsed, useJob } from "../components/JobBar";
 import { Link } from "react-router-dom";
-import { api, type Preview } from "../api";
+import { api, type ChSync, type Preview } from "../api";
 import { ErrorLine, useAsync } from "../components/bits";
-import { dateTime } from "../format";
+import { dateTime, int } from "../format";
 
 const KINDS = {
   companies: {
@@ -168,7 +168,7 @@ export default function Import() {
       )}
 
       <ChFeed onDone={history.reload} />
-      <ChDetails />
+      <ChSyncPanel />
 
       <section>
         <h2>History</h2>
@@ -346,24 +346,55 @@ function Coverage() {
 
 
 /** Companies House API details (directors, shareholders, charges, filings) for many companies at once. */
-function ChDetails() {
-  const info = useAsync(() => api.connect(), []);
-  const [msg, setMsg] = useState<string | null>(null);
-  const run = async (scope: string, limit: number) => {
-    setMsg(null);
-    try { await api.chDetailsBatch(scope, limit); setMsg("Started. Progress shows at the top."); } catch (e: any) { setMsg(e.message); }
+function ChSyncPanel() {
+  const [st, setSt] = useState<ChSync | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () => api.chSync().then((d) => { if (live) { setSt(d); setErr(null); } }).catch((e) => live && setErr(e.message));
+    load();
+    const t = setInterval(load, 30_000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
+  const toggle = async () => {
+    if (!st) return;
+    try { setSt(await api.chSyncSet(!st.paused)); } catch (e: any) { setErr(e.message); }
   };
-  const on = !!info.data?.ch_key_set;
+  if (!st) return err ? <ErrorLine error={err} /> : null;
+  const state = !st.enabled ? ["Needs CH_API_KEY", ""] : st.paused ? ["Paused", ""]
+    : !st.running ? ["Not running", "red"] : st.state === "up to date" ? ["Up to date", "green"]
+    : st.state === "waiting for a data load" ? ["Waiting for the data load", ""] : ["Running", "green"];
+  const bar = (x: { total: number; fetched: number; current: number }, label: string, every: string) => (
+    <div>
+      <div className="small"><b>{label}</b> · {int(x.fetched)} of {int(x.total)} fetched</div>
+      <div className="syncbar"><i style={{ width: `${x.total ? Math.min(100, (100 * x.fetched) / x.total) : 0}%` }} /></div>
+      <div className="faint small">{int(x.current)} checked in the last {every}</div>
+    </div>
+  );
   return (
     <section>
-      <div className="sechead"><h2>Directors, shareholders and charges</h2>
-        <span className="faint small">{on ? "Companies House API key set" : "Needs CH_API_KEY in the stack"}</span></div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button className="btn" disabled={!on} onClick={() => run("pipeline", 500)}>Fetch for my pipeline</button>
-        <button className="btn" disabled={!on} onClick={() => run("targets", 200)}>Fetch for top 200 targets</button>
-        <button className="btn quiet" disabled={!on} onClick={() => run("targets", 1000)}>Top 1,000 (about 3 hours)</button>
-      </div>
-      {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
+      <div className="sechead"><h2>Companies House sync</h2>
+        <span className={`chip ${state[1]}`}>{state[0]}</span>
+        {st.enabled && <button className="btn quiet" style={{ marginLeft: "auto" }} onClick={toggle}>{st.paused ? "Resume" : "Pause"}</button>}</div>
+      {!st.enabled ? (
+        <p className="faint">Add your key as <code>CH_API_KEY</code> to the app and scheduler in the stack.</p>
+      ) : (
+        <>
+          <div className="syncgrid">
+            {bar(st.pipeline, "Pipeline", `${st.pipeline_days} days`)}
+            {bar(st.targets, "Buy-box targets", `${st.target_days} days`)}
+          </div>
+          <p className="small" style={{ margin: 0 }}>
+            Last 24 hours: <b>{int(st.last_24h.fetched)}</b> fetched, <b>{int(st.last_24h.checked)}</b> checked
+            {" · "}<Link to="/changes">{int(st.changes_7d)} changes found this week</Link>
+            {st.days_to_cover ? <> · about {st.days_to_cover < 1 ? "a day" : `${Math.ceil(st.days_to_cover)} days`} to cover every target</> : null}
+          </p>
+          {!st.running && !st.paused && (
+            <div className="callout red" style={{ marginTop: 8 }}>The scheduler isn't syncing. Check <code>CH_API_KEY</code> is set on the scheduler too, then update the stack.</div>
+          )}
+          <p className="faint small">Pipeline checked weekly, targets monthly, profiles when you open them.</p>
+        </>
+      )}
     </section>
   );
 }

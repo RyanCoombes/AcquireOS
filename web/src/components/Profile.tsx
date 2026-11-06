@@ -3,7 +3,7 @@
 import type React from "react";
 import { useState } from "react";
 import { api, type CompanyDetail } from "../api";
-import { date, money } from "../format";
+import { date, money, filingLabel } from "../format";
 
 type FinSummary = NonNullable<CompanyDetail["fin_summary"]>;
 
@@ -346,21 +346,3 @@ export function Filings({ data }: { data: CompanyDetail }) {
   );
 }
 
-const FILING_TYPES: Record<string, string> = {
-  AA: "Accounts", CS01: "Confirmation statement", AR01: "Annual return", SH01: "New shares issued", SH02: "Shares consolidated or split",
-  SH03: "Own shares bought back", SH06: "Shares cancelled", SH19: "Share capital reduced", AP01: "Director appointed", TM01: "Director left",
-  CH01: "Director details changed", AP03: "Secretary appointed", TM02: "Secretary left", AD01: "Registered office moved",
-  PSC01: "New owner (person)", PSC02: "New owner (company)", PSC04: "Owner details changed", PSC05: "Owner details changed",
-  PSC07: "Owner ceased", PSC08: "Owner statement", MR01: "New charge", MR04: "Charge repaid", MR05: "Charge part released",
-  RES01: "Resolution", RESOLUTIONS: "Resolution", IN01: "Incorporated", NM01: "Name changed", CERTNM: "Name changed",
-  AA01: "Year end changed", DS01: "Strike-off applied for", GAZ1: "Strike-off notice", SOAS: "Strike-off suspended",
-};
-function filingLabel(type: string | null, desc: string | null): string {
-  const base = FILING_TYPES[(type ?? "").toUpperCase()];
-  const d = (desc ?? "").replace(/-/g, " ");
-  if ((type ?? "").toUpperCase() === "AA") {
-    const kind = d.match(/accounts type (\w+)/)?.[1];
-    return kind ? `Accounts (${kind.replace("total exemption full", "small")})` : "Accounts";
-  }
-  return base ?? (d ? d.charAt(0).toUpperCase() + d.slice(1) : type ?? "Filing");
-}

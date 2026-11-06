@@ -387,6 +387,13 @@ def scheduler():
     hour = int(os.environ.get("REFRESH_HOUR", "3"))
     months = int(os.environ.get("REFRESH_ACCOUNTS_MONTHS", "1"))
     log(f"Scheduler started: monthly refresh on day {day} at {hour:02d}:00")
+    if os.environ.get("CH_SYNC", "on").lower() not in ("off", "0", "false", "no"):
+        import threading
+
+        from . import chsync
+
+        # Companies House API sync in the background (does nothing without CH_API_KEY).
+        threading.Thread(target=chsync.run_forever, daemon=True, name="ch-sync").start()
     last = None
     while True:
         now = datetime.now()

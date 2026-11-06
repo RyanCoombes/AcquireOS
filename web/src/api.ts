@@ -18,7 +18,7 @@ export interface Meta {
   address_flags: Record<string, string>;
   regions: string[];
   tiers: string[];
-  counts: { companies: number; in_scope: number; tracked: number; owner_records: number; last_import: string | null; changed_30d: number };
+  counts: { companies: number; in_scope: number; tracked: number; owner_records: number; last_import: string | null; changed_30d: number; pipeline_new?: number };
   company_statuses: string[];
   status_groups: { value: string; label: string }[];
   account_sizes: { value: string; label: string }[];
@@ -71,9 +71,16 @@ export interface Row {
   confirmation_overdue?: boolean | null;
 }
 
+export interface ChSync {
+  enabled: boolean; paused: boolean; running: boolean; state: string | null; last_beat: string | null;
+  pipeline: { total: number; fetched: number; current: number }; targets: { total: number; fetched: number; current: number };
+  last_24h: { fetched: number; checked: number }; changes_7d: number; pipeline_days: number; target_days: number;
+  days_to_cover: number | null;
+}
+
 export interface Change {
   id: number; company_number: string; kind: string; field: string | null; old_value: string | null;
-  new_value: string | null; detected_at: string; filename?: string | null;
+  new_value: string | null; detected_at: string; filename?: string | null; source?: string | null;
   name?: string; company_status?: string | null; status?: Status; score?: string | null; excluded?: boolean | null;
 }
 
@@ -168,7 +175,7 @@ export interface CompanyDetail {
   };
   ch?: {
     enabled: boolean;
-    fetched: { fetched_at: string; error: string | null; profile: Record<string, any>; insolvency: any[];
+    fetched: { fetched_at: string; checked_at?: string | null; error: string | null; profile: Record<string, any>; insolvency: any[];
                psc_statements: { statement: string; notified_on: string | null; ceased_on: string | null }[];
                shareholders_from: string | null } | null;
     officers: { officer_key: string; name: string; role: string | null; appointed_on: string | null; resigned_on: string | null;
@@ -238,6 +245,10 @@ export const api = {
     req<{ results: { url: string; reachable: boolean; confidence: "high" | "medium" | "low" | null; evidence: string; page?: string; title?: string | null }[];
           saved: string[] | null; message: string }>(`/api/companies/${encodeURIComponent(n)}/find-website`,
       { method: "POST", body: JSON.stringify({ url: url ?? null }) }),
+  chCheck: (n: string) => req<NonNullable<CompanyDetail["ch"]> & { changed: boolean; changes: number }>(
+    `/api/companies/${encodeURIComponent(n)}/ch-check`, { method: "POST" }),
+  chSync: () => req<ChSync>("/api/ch-sync"),
+  chSyncSet: (paused: boolean) => req<ChSync>("/api/ch-sync", { method: "PUT", body: JSON.stringify({ paused }) }),
   chDetailsBatch: (scope: string, limit: number) =>
     req<{ started: boolean }>(`/api/ch-details?scope=${scope}&limit=${limit}`, { method: "POST" }),
   researchBrief: (n: string) => req<Record<string, any>>(`/api/companies/${encodeURIComponent(n)}/research-brief`),
@@ -292,7 +303,8 @@ export const api = {
   dashboardFor: (bb: string) => req<Record<string, any>>(`/api/dashboard?bb=${encodeURIComponent(bb)}`),
   cancelJob: (id: number) => req<{ ok: boolean; message: string }>(`/api/jobs/${id}/cancel`, { method: "POST" }),
   changes: (params: Record<string, string>) =>
-    req<{ rows: Change[]; summary: { kind: string; n: number }[] }>("/api/changes?" + new URLSearchParams(params)),
+    req<{ rows: Change[]; summary: { kind: string; n: number }[]; seen_at: string | null }>("/api/changes?" + new URLSearchParams(params)),
+  changesSeen: () => req<{ ok: boolean }>("/api/changes/seen", { method: "POST" }),
   searches: () => req<SavedSearch[]>("/api/searches"),
   saveSearch: (name: string, params: Record<string, string>) =>
     req<SavedSearch>("/api/searches", { method: "POST", body: JSON.stringify({ name, params }) }),

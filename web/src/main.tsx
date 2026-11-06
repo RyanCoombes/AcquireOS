@@ -49,10 +49,11 @@ function Logo() {
 
 function Side({ meta }: { meta: Meta | null }) {
   const c = meta?.counts;
-  const item = (to: string, icon: string, label: string, count?: number | null, end = false) => (
+  const item = (to: string, icon: string, label: string, count?: number | null, end = false, alert = false) => (
     <NavLink to={to} end={end} className="nav">
       <Icon name={icon} />{label}
-      {count ? <span className="count">{count.toLocaleString("en-GB")}</span> : null}
+      {count ? <span className={alert ? "count alert" : "count"} title={alert ? "New for your pipeline" : undefined}>
+        {count.toLocaleString("en-GB")}</span> : null}
     </NavLink>
   );
   return (
@@ -63,7 +64,8 @@ function Side({ meta }: { meta: Meta | null }) {
       {item("/targets", "targets", "Targets", c?.in_scope)}
       {item("/review", "review", "Review")}
       {item("/pipeline", "pipeline", "Pipeline", c?.tracked)}
-      {item("/changes", "changes", "Changes", c?.changed_30d)}
+      {c?.pipeline_new ? item("/changes?tracked=1", "changes", "Changes", c.pipeline_new, false, true)
+        : item("/changes", "changes", "Changes", c?.changed_30d)}
       <div className="group">Analyse</div>
       {item("/map", "map", "Map")}
       {item("/owners", "owners", "Owners")}

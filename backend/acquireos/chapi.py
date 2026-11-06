@@ -1,22 +1,25 @@
 """Optional Companies House API (free key) for details the bulk files lack:
-charges (who has lent against the company's assets) and filing history
-(new share issues, a common sign of outside investment).
+charges, filing history, directors and their other companies, shareholders,
+insolvency and owner statements.
 
-Fetched per company on demand and stored, so the page and Claude can use
-them. Companies House allows 600 requests per 5 minutes per key; a company
-takes two or three.
+Fetched per company (on demand, on opening a profile, and by the background
+sync in chsync.py) and stored, so the page and Claude can use them. A full
+fetch takes 6-15 requests; a light check for changes takes two. Companies
+House allows 600 requests per 5 minutes per key: every process shares one
+request schedule in the database (ch_rate) to stay inside it.
 """
 from __future__ import annotations
 
 import base64
 import json
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
 from datetime import date
 
-from . import config
+from . import config, db
 
 BASE = "https://api.company-information.service.gov.uk"
 _last = [0.0]
@@ -56,18 +59,23 @@ def enabled() -> bool:
 def _get(path: str) -> dict | None:
     if not enabled():
         raise NoKey("No Companies House API key set (CH_API_KEY)")
-    _wait()
     auth = base64.b64encode(f"{config.CH_API_KEY}:".encode()).decode()
     req = urllib.request.Request(BASE + path, headers={"Authorization": f"Basic {auth}", "Accept": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            return json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        if e.code == 401:
-            raise NoKey("Companies House rejected the API key (check CH_API_KEY)") from e
-        raise
+    for attempt in range(4):
+        _wait()
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            if e.code == 401:
+                raise NoKey("Companies House rejected the API key (check CH_API_KEY)") from e
+            if e.code == 429 and attempt < 3:  # over the limit: wait for the window to pass
+                _backoff(int(e.headers.get("Retry-After") or 0) or 60 * (attempt + 1))
+                continue
+            raise
+    return None
 
 
 def _d(v):
@@ -80,11 +88,42 @@ def _d(v):
 DOC_BASE = "https://document-api.company-information.service.gov.uk"
 
 
+GAP = 0.55  # seconds between requests: about 545 per 5 minutes, inside the 600 allowed
+_rate = {"conn": None}
+_rate_lock = threading.Lock()
+
+
+def _reserve(delay: float) -> float | None:
+    """Book the next request slot in the shared schedule; seconds to wait.
+    None if the database is not reachable (then pace locally)."""
+    with _rate_lock:
+        try:
+            if _rate["conn"] is None or _rate["conn"].closed:
+                _rate["conn"] = db.connect()
+                _rate["conn"].autocommit = True
+            r = _rate["conn"].execute(
+                """update ch_rate set next_at = greatest(next_at, clock_timestamp()) + make_interval(secs => %s)
+                   where id = 1 returning extract(epoch from next_at - clock_timestamp()) - %s as wait""",
+                (delay, delay)).fetchone()
+            return float(r["wait"]) if r else None
+        except Exception:
+            _rate["conn"] = None
+            return None
+
+
 def _wait():
-    wait = 0.55 - (time.time() - _last[0])  # stay well inside 600 per 5 minutes
+    wait = _reserve(GAP)
+    if wait is None:
+        wait = GAP - (time.time() - _last[0])
     if wait > 0:
         time.sleep(wait)
     _last[0] = time.time()
+
+
+def _backoff(seconds: float):
+    """Push every process's next request back (after a 429), then wait."""
+    _reserve(seconds)
+    time.sleep(seconds)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -268,22 +307,105 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
                 shareholders_from = f"{f.get('type')} filed {f.get('date')}"
                 return
 
+    before = _snapshot(conn, num)
     for name, fn in (("profile", get_profile), ("charges", get_charges), ("filings", get_filings),
                      ("officers", get_officers), ("insolvency", get_insolvency), ("owner statements", get_statements),
                      ("shareholders", get_shareholders)):
         part(name, fn)
+    changes = _record_changes(conn, num, before, _snapshot(conn, num), profile) if before else 0
     keep = {k: profile.get(k) for k in ("has_charges", "has_insolvency_history", "has_been_liquidated", "can_file",
                                          "date_of_cessation", "jurisdiction", "type", "subtype", "accounts",
                                          "confirmation_statement", "registered_office_is_in_dispute",
                                          "undeliverable_registered_office_address") if k in profile}
     conn.execute(
-        """insert into ch_fetch (company_number, fetched_at, error, profile, insolvency, psc_statements, shareholders_from)
-           values (%s, now(), %s, %s, %s, %s, %s)
-           on conflict (company_number) do update set fetched_at = now(), error = excluded.error, profile = excluded.profile,
-             insolvency = excluded.insolvency, psc_statements = excluded.psc_statements,
-             shareholders_from = coalesce(excluded.shareholders_from, ch_fetch.shareholders_from)""",
-        (num, "; ".join(errors) or None, json.dumps(keep), json.dumps(insolvency), json.dumps(statements), shareholders_from))
-    return {**counts, "error": "; ".join(errors) or None}
+        """insert into ch_fetch (company_number, fetched_at, checked_at, error, profile, insolvency, psc_statements,
+                                 shareholders_from, etag)
+           values (%s, now(), now(), %s, %s, %s, %s, %s, %s)
+           on conflict (company_number) do update set fetched_at = now(), checked_at = now(), error = excluded.error,
+             profile = excluded.profile, insolvency = excluded.insolvency, psc_statements = excluded.psc_statements,
+             shareholders_from = coalesce(excluded.shareholders_from, ch_fetch.shareholders_from),
+             etag = coalesce(excluded.etag, ch_fetch.etag)""",
+        (num, "; ".join(errors) or None, json.dumps(keep), json.dumps(insolvency), json.dumps(statements), shareholders_from,
+         profile.get("etag")))
+    return {**counts, "changes": changes, "error": "; ".join(errors) or None}
+
+
+def check(conn, company_number: str) -> dict:
+    """A light check for changes (two requests: the profile and the newest
+    filings). Does a full fetch if anything is new, or if the company has
+    never been fetched. {changed, full, changes}."""
+    num = company_number.strip().upper()
+    prev = conn.execute("select etag from ch_fetch where company_number = %s", (num,)).fetchone()
+    if not prev:
+        return {"changed": False, "full": True, **fetch(conn, num)}
+    profile = _get(f"/company/{num}") or {}
+    fh = _get(f"/company/{num}/filing-history?items_per_page=25") or {}
+    ids = [it["transaction_id"] for it in fh.get("items") or [] if it.get("transaction_id")]
+    known = {r["transaction_id"] for r in conn.execute(
+        "select transaction_id from filing where company_number = %s and transaction_id = any(%s)", (num, ids))}
+    if any(i not in known for i in ids) or (profile.get("etag") or prev["etag"]) != prev["etag"]:
+        r = fetch(conn, num)
+        return {"changed": True, "full": True, **r}
+    conn.execute("update ch_fetch set checked_at = now() where company_number = %s", (num,))
+    return {"changed": False, "full": False, "changes": 0}
+
+
+# Filing categories whose changes are recorded in more detail elsewhere
+# (directors, charges), so a new filing in them is not listed twice.
+_COVERED = {"officers", "mortgage"}
+
+
+def _snapshot(conn, num: str) -> dict | None:
+    """What we hold for a company, to compare after a fetch. None if never fetched."""
+    f = conn.execute("select profile from ch_fetch where company_number = %s", (num,)).fetchone()
+    if not f:
+        return None
+    return {
+        "profile": f["profile"] or {},
+        "filings": {r["transaction_id"]: r for r in conn.execute(
+            "select transaction_id, filed_on, type, category, description from filing where company_number = %s", (num,))},
+        "charges": {r["charge_id"]: r for r in conn.execute(
+            "select charge_id, status, holders from charge where company_number = %s", (num,))},
+        "officers": {(r["officer_key"], r["role"]): r for r in conn.execute(
+            "select officer_key, role, name, resigned_on from officer where company_number = %s", (num,))},
+        "shareholders": {(r["name"].upper(), r["share_class"]): float(r["shares"] or 0) for r in conn.execute(
+            "select name, share_class, shares from shareholder where company_number = %s", (num,))},
+    }
+
+
+def _record_changes(conn, num: str, a: dict, b: dict, profile: dict) -> int:
+    """Store what changed between two snapshots as company_change rows
+    (source 'api'), so they show on the Changes page and as alerts."""
+    rows: list[tuple] = []
+    for tid, f in b["filings"].items():
+        if tid not in a["filings"] and (f["category"] or "") not in _COVERED:
+            rows.append(("filing", f["type"], str(f["filed_on"] or ""), f["description"]))
+    for key, o in b["officers"].items():
+        was = a["officers"].get(key)
+        if not was and not o["resigned_on"]:
+            rows.append(("director", "Appointed", None, f"{o['name']} ({(o['role'] or '').replace('-', ' ')})"))
+        elif was and not was["resigned_on"] and o["resigned_on"]:
+            rows.append(("director", "Resigned", None, f"{o['name']} ({(o['role'] or '').replace('-', ' ')})"))
+    for cid, c in b["charges"].items():
+        was = a["charges"].get(cid)
+        holders = ", ".join(c["holders"] or []) or "lender not named"
+        if not was:
+            rows.append(("charge", "New charge", None, holders))
+        elif was["status"] != c["status"] and c["status"] in ("fully-satisfied", "part-satisfied"):
+            rows.append(("charge", "Repaid" if c["status"] == "fully-satisfied" else "Part repaid", was["status"], holders))
+    if a["shareholders"] and b["shareholders"] and a["shareholders"] != b["shareholders"]:
+        total = sum(b["shareholders"].values()) or 1
+        top = sorted(b["shareholders"].items(), key=lambda x: -x[1])[:4]
+        rows.append(("shareholders", "Shareholders", None,
+                     ", ".join(f"{k[0].title()} {round(100 * v / total)}%" for k, v in top)))
+    for flag, text in (("has_insolvency_history", "Insolvency case recorded"), ("has_been_liquidated", "Liquidated")):
+        if profile.get(flag) and not a["profile"].get(flag):
+            rows.append(("insolvency", flag, None, text))
+    for kind, field, old, new in rows:
+        conn.execute(
+            """insert into company_change (company_number, kind, field, old_value, new_value, source)
+               values (%s, %s, %s, %s, %s, 'api')""", (num, kind, field, old, new))
+    return len(rows)
 
 
 def _late_filings(filings: list) -> list[dict]:

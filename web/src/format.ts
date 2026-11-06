@@ -89,11 +89,38 @@ export const CHANGE_KIND: Record<string, string> = {
   accounts: "New accounts",
   staff: "Staff",
   owner: "Owners",
-  charge: "New charge",
+  charge: "Charge",
+  filing: "Filing",
+  director: "Directors",
+  shareholders: "Shareholders",
+  insolvency: "Insolvency",
 };
+
+const FILING_TYPES: Record<string, string> = {
+  AA: "Accounts", CS01: "Confirmation statement", AR01: "Annual return", SH01: "New shares issued", SH02: "Shares consolidated or split",
+  SH03: "Own shares bought back", SH06: "Shares cancelled", SH19: "Share capital reduced", AP01: "Director appointed", TM01: "Director left",
+  CH01: "Director details changed", AP03: "Secretary appointed", TM02: "Secretary left", AD01: "Registered office moved",
+  PSC01: "New owner (person)", PSC02: "New owner (company)", PSC04: "Owner details changed", PSC05: "Owner details changed",
+  PSC07: "Owner ceased", PSC08: "Owner statement", MR01: "New charge", MR04: "Charge repaid", MR05: "Charge part released",
+  RES01: "Resolution", RESOLUTIONS: "Resolution", IN01: "Incorporated", NM01: "Name changed", CERTNM: "Name changed",
+  AA01: "Year end changed", DS01: "Strike-off applied for", GAZ1: "Strike-off notice", SOAS: "Strike-off suspended",
+};
+export function filingLabel(type: string | null, desc: string | null): string {
+  const base = FILING_TYPES[(type ?? "").toUpperCase()];
+  const d = (desc ?? "").replace(/-/g, " ");
+  if ((type ?? "").toUpperCase() === "AA") {
+    const kind = d.match(/accounts type (\w+)/)?.[1];
+    return kind ? `Accounts (${kind.replace("total exemption full", "small")})` : "Accounts";
+  }
+  return base ?? (d ? d.charAt(0).toUpperCase() + d.slice(1) : type ?? "Filing");
+}
 
 export function describeChange(c: { kind: string; field: string | null; old_value: string | null; new_value: string | null }): string {
   switch (c.kind) {
+    case "filing": return `Filed: ${filingLabel(c.field, c.new_value)}`;
+    case "director": return `${c.field}: ${c.new_value}`;
+    case "shareholders": return `Shareholders now: ${c.new_value}`;
+    case "insolvency": return c.new_value ?? "Insolvency";
     case "new_company": return "Added to your list";
     case "status": return `${cap(c.old_value)} → ${cap(c.new_value)}`;
     case "accounts": return `Accounts made up to ${date(c.new_value)}${c.old_value ? ` (previously ${date(c.old_value)})` : ""}`;
@@ -102,7 +129,10 @@ export function describeChange(c: { kind: string; field: string | null; old_valu
     case "name": return `Renamed from ${c.old_value}`;
     case "address": return `Registered office moved to ${c.new_value}`;
     case "sic": return `SIC ${c.old_value || "none"} → ${c.new_value}`;
-    case "charge": return `New charge registered: ${c.new_value} outstanding (was ${c.old_value})`;
+    case "charge":
+      if (c.field === "New charge") return `New charge to ${c.new_value}`;
+      if (c.field === "Repaid" || c.field === "Part repaid") return `Charge ${c.field.toLowerCase()}: ${c.new_value}`;
+      return `New charge registered: ${c.new_value} outstanding (was ${c.old_value})`;
     default: return `${c.field ?? c.kind}: ${c.old_value ?? ""} → ${c.new_value ?? ""}`;
   }
 }

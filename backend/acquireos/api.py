@@ -161,8 +161,15 @@ def _meta():
     with db.conn() as c:
         bb = scoring.active_buy_box(c)
         counts = {**d["counts"], **c.execute(
-            "select count(*) as tracked from user_company where user_id = %s and status not in ('new', 'rejected', 'passed')",
-            (UID,)).fetchone()}
+            """select (select count(*) from user_company where user_id = %(uid)s
+                         and status not in ('new', 'rejected', 'passed')) as tracked,
+                      (select count(distinct ch.company_number) from company_change ch
+                         join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
+                         where uc.status not in ('new', 'rejected', 'passed')
+                           and ch.detected_at > coalesce((select (value #>> '{}')::timestamptz from app_setting
+                                                          where key = 'changes_seen_at'), now() - interval '7 days')
+                      ) as pipeline_new""",
+            {"uid": UID}).fetchone()}
         boxes = [dict(r) for r in c.execute(
             "select id, name, is_active, scored_at from buy_box where user_id = %s order by id", (UID,))]
     return {
@@ -1258,7 +1265,7 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
             where.append("(exists (select 1 from company_best cb where cb.company_number = ch.company_number) "
                          "or coalesce(uc.status, 'new') <> 'new')")
         rows = c.execute(
-            f"""select ch.id, ch.company_number, ch.kind, ch.field, ch.old_value, ch.new_value, ch.detected_at,
+            f"""select ch.id, ch.company_number, ch.kind, ch.field, ch.old_value, ch.new_value, ch.detected_at, ch.source,
                        c.name, c.status as company_status, coalesce(uc.status, 'new') as status, s.score, s.excluded,
                        r.filename
                 from company_change ch join company c on c.company_number = ch.company_number
@@ -1279,7 +1286,17 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
                 group by 1 order by 2 desc""",
             params,
         ).fetchall()
-    return {"rows": rows, "summary": summary}
+        seen = c.execute("select value #>> '{}' as at from app_setting where key = 'changes_seen_at'").fetchone()
+    return {"rows": rows, "summary": summary, "seen_at": seen["at"] if seen else None}
+
+
+@app.post("/api/changes/seen")
+def changes_seen():
+    """Mark changes as looked at (clears the alert count on Changes)."""
+    with db.conn() as c:
+        c.execute("""insert into app_setting (key, value) values ('changes_seen_at', to_jsonb(now()))
+                     on conflict (key) do update set value = excluded.value, updated_at = now()""")
+    return {"ok": True}
 
 
 @app.get("/api/searches")
@@ -1472,6 +1489,44 @@ def ch_details_batch(scope: str = "pipeline", limit: int = 200):
     _run_detached(["ch-details", "--scope", "targets" if scope == "targets" else "pipeline",
                    "--limit", str(max(1, min(limit, 2000)))], after=clear_cache)
     return {"started": True}
+
+
+@app.post("/api/companies/{num}/ch-check")
+def ch_check(num: str):
+    """On opening a profile: a light check against Companies House (a full
+    fetch if never fetched or something changed). Returns the details."""
+    from . import chapi
+
+    if not chapi.enabled():
+        raise HTTPException(400, "No Companies House API key set (CH_API_KEY)")
+    with db.conn() as c:
+        if not c.execute("select 1 from company where company_number = %s", (num,)).fetchone():
+            raise HTTPException(404, "Company not found")
+        r = chapi.check(c, num)
+        c.commit()
+        return {"changed": bool(r.get("changed") or r.get("full")), "changes": r.get("changes") or 0,
+                **chapi.details(c, num)}
+
+
+@app.get("/api/ch-sync")
+def ch_sync_status():
+    from . import chsync
+
+    with db.conn() as c:
+        return chsync.status(c)
+
+
+class SyncIn(BaseModel):
+    paused: bool
+
+
+@app.put("/api/ch-sync")
+def ch_sync_set(body: SyncIn):
+    from . import chsync
+
+    with db.conn() as c:
+        chsync.set_setting(c, "ch_sync_paused", body.paused)
+        return chsync.status(c)
 
 
 # ---------------------------------------------------------------- owners

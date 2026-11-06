@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
 import { ErrorLine, Flags, Score, Toast, useAsync } from "../components/bits";
@@ -39,6 +39,24 @@ export default function Company() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  // On opening: check Companies House for anything new (needs CH_API_KEY).
+  // Skipped if checked in the last day; the page shows stored data meanwhile.
+  const [chCheck, setChCheck] = useState<string | null>(null);
+  const checkedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!data?.ch?.enabled || checkedFor.current === num) return;
+    checkedFor.current = num;
+    const last = data.ch.fetched?.checked_at ?? data.ch.fetched?.fetched_at;
+    if (last && Date.now() - new Date(last).getTime() < 864e5) return;
+    setChCheck("Checking Companies House…");
+    api.chCheck(num)
+      .then((r) => {
+        setChCheck(r.changes ? `${r.changes} new from Companies House` : r.changed ? "Updated from Companies House" : null);
+        if (r.changed) reload();
+      })
+      .catch(() => setChCheck(null));
+  }, [data, num]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (error) return <ErrorLine error={error} />;
   if (!data) return <div className="empty">Loading…</div>;
   const { company: c, financials: fin, estimate: est, ownership: own } = data;
@@ -58,6 +76,7 @@ export default function Company() {
         <div>
           <div className="crumb">
             <a href="/companies" onClick={(e) => { if (window.history.length > 1) { e.preventDefault(); nav(-1); } }}>← Back</a> / {c.company_number}
+            {chCheck && <span className="chcheck"> · {chCheck}</span>}
           </div>
           <h1 className="coname">{c.name}</h1>
           <div className="chips">
