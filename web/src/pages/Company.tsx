@@ -7,8 +7,8 @@ import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
 import MyScores from "../components/MyScores";
 import { Enrichment, Location } from "../components/CompanyExtras";
-import { Charges, Filings, FinancialOverview, Head, People, Shareholders, WebsiteFinder } from "../components/Profile";
-import { ageFrom, CHANGE_KIND, chUrl, date, dateTime, describeChange, int, isBadStatus, LINK_KIND, money, MONTHS, OWNERSHIP, range, relDays, toNum, years } from "../format";
+import { Charges, Filings, FinancialOverview, Head, OwnersDirectors, WebsiteFinder } from "../components/Profile";
+import { ageFrom, CHANGE_KIND, chUrl, date, dateTime, describeChange, int, isBadStatus, LINK_KIND, money, OWNERSHIP, range, relDays, toNum, years } from "../format";
 
 
 export default function Company() {
@@ -117,7 +117,7 @@ export default function Company() {
       <div className="company-grid">
         <div className="main">
           <nav className="secnav" aria-label="Sections">
-            {[["overview", "Overview"], ["financials", "Financials"], ["ownership", "Ownership"], ["people", "Directors"],
+            {[["overview", "Overview"], ["financials", "Financials"], ["ownership", "Owners & directors"],
               ["charges", "Charges"], ["filings", "Filings"], ["group", "Group"], ["score", "Score"], ["value", "Value"],
               ["research", "Research"], ["changes", "History"]].map(([id, l]) => (
               <a key={id} href={`#${id}`} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{l}</a>
@@ -189,54 +189,7 @@ export default function Company() {
             ) : <div className="faint">No accounts imported.</div>}
           </section>
 
-          <section id="ownership">
-            <Head icon="owners" tone="orange" title="Ownership" aside={<Flags flags={own?.flags} address={c.address_flag} />} />
-            {own ? (
-              <>
-                <p style={{ margin: "0 0 10px" }}><b>{OWNERSHIP[own.ownership_type] ?? own.ownership_type}.</b> <span className="muted">{own.explanation}</span></p>
-                {own.ultimate_owners.length > 0 && (
-                  <table>
-                    <thead><tr><th>Ultimate owner</th><th>Born</th><th className="num">Age</th><th>Held through</th></tr></thead>
-                    <tbody>
-                      {own.ultimate_owners.map((u, i) => (
-                        <tr key={i}>
-                          <td>{u.person_id ? <Link to={`/owners/${u.person_id}`} title="Everything this owner controls">{u.name}</Link> : u.name}
-                            {u.unresolved && <span className="faint small"> · {u.kind}, not traced further</span>}</td>
-                          <td>{u.birth_year ? `${MONTHS[u.birth_month ?? 0]} ${u.birth_year}` : "—"}</td>
-                          <td className="num">{ageFrom(u.birth_year) ?? "—"}</td>
-                          <td className="muted">{u.via.length ? u.via.join(" → ") : "Direct"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-                {data.people.length > 0 && (
-                  <details style={{ marginTop: 12 }}>
-                    <summary className="muted" style={{ cursor: "pointer" }}>All owner records on file ({data.people.length})</summary>
-                    <table style={{ marginTop: 8 }}>
-                      <thead><tr><th>Name</th><th>Type</th><th>Control</th><th>From</th><th>Ceased</th></tr></thead>
-                      <tbody>
-                        {data.people.map((p, i) => (
-                          <tr key={i} className={p.ceased_on ? "excluded" : ""}>
-                            <td><Link to={`/owners/${p.person_id}`}>{p.name}</Link>{p.registration_number ? <span className="faint small"> · {p.registration_number}{p.country_registered ? `, ${p.country_registered}` : ""}</span> : null}</td>
-                            <td>{p.kind}</td>
-                            <td className="small">{p.natures.map(natureLabel).join("; ")}</td>
-                            <td>{date(p.notified_on)}</td>
-                            <td>{p.ceased_on ? date(p.ceased_on) : ""}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </details>
-                )}
-              </>
-            ) : (
-              <div className="faint">No owner records on file.</div>
-            )}
-            <Shareholders data={data} />
-          </section>
-
-          <People data={data} />
+          <OwnersDirectors data={data} flags={<Flags flags={own?.flags} address={c.address_flag} />} />
           <Charges data={data} num={num} onFetched={reload} />
           <Filings data={data} />
 
@@ -534,9 +487,6 @@ function Research({ data, num, onAdded }: { data: CompanyDetail; num: string; on
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, " ");
 const hostOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u; } };
-function natureLabel(n: string) {
-  return n.replace(/-/g, " ").replace(/ percent/, "%").replace(/ownership of shares/, "shares").replace(/voting rights/, "votes");
-}
 
 
 function overdue(d: string | null | undefined, status: string | null) {

@@ -827,3 +827,25 @@ table.list td .name { font-size: 14.5px; font-weight: 600; }
 .syncbar i { display: block; height: 100%; background: var(--teal, #0e7c6b); }
 .syncgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 10px 0; }
 .chcheck { font-size: 12.5px; color: var(--ink-3); display: inline-flex; gap: 6px; align-items: center; }
+
+/* Owners & directors */
+.ownbar { display: flex; height: 16px; border-radius: 8px; overflow: hidden; background: var(--grey-soft); gap: 2px; }
+.ownbar i { display: block; height: 100%; }
+.ownbar i.rest { background: repeating-linear-gradient(45deg, var(--grey-soft), var(--grey-soft) 5px, #dfe3e8 5px, #dfe3e8 10px); }
+.whos { display: grid; gap: 2px; }
+.who { display: grid; grid-template-columns: 12px 1fr 150px; gap: 12px; align-items: start; padding: 10px 4px; border-top: 1px solid var(--line); }
+.who:first-child { border-top: 0; }
+.who .dot { width: 12px; height: 12px; border-radius: 4px; margin-top: 4px; }
+.who .wname { font-weight: 650; font-size: 14.5px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.who .wname a { color: inherit; }
+.who .role { font-size: 11px; font-weight: 650; padding: 1px 7px; border-radius: 99px; background: var(--grey-soft); color: var(--ink-2, #444); }
+.who .role.owner { background: var(--orange-soft); color: var(--orange); }
+.who .role.director { background: var(--blue-soft); color: var(--blue); }
+.who .role.secretary { background: var(--purple-soft); color: var(--purple); }
+.who .wmeta { font-size: 12.5px; color: var(--ink-3); margin-top: 2px; }
+.who .wother { font-size: 12.5px; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.who .wpct { text-align: right; }
+.who .wpct b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.who .mini { display: block; height: 6px; border-radius: 3px; background: var(--grey-soft); margin-top: 4px; overflow: hidden; }
+.who .mini i { display: block; height: 100%; }
+@media (max-width: 760px) { .who { grid-template-columns: 12px 1fr 90px; } }
