@@ -302,9 +302,11 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
                     conn.execute(
                         """insert into shareholder (company_number, name, shares, share_class, as_at, source)
                            values (%s, %s, %s, %s, %s, %s) on conflict do nothing""",
-                        (num, sh["name"], sh["shares"], sh["share_class"], _d(f.get("date")), f.get("type")))
+                        (num, sh["name"], sh["shares"], sh["share_class"],
+                         _d((f.get("description_values") or {}).get("made_up_date") or f.get("date")), f.get("type")))
                 counts["shareholders"] = len(found)
-                shareholders_from = f"{f.get('type')} filed {f.get('date')}"
+                made_up = (f.get("description_values") or {}).get("made_up_date")
+                shareholders_from = f"{f.get('type')} made up to {made_up}" if made_up else f"{f.get('type')} filed {f.get('date')}"
                 return
 
     before = _snapshot(conn, num)

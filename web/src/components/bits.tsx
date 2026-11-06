@@ -32,7 +32,7 @@ export function Flags({ flags, address }: { flags?: string[] | null; address?: s
   const shown = [...(flags ?? []).filter((f) => f !== "via_holdco" && f !== "no_psc_data"), ...(address ? [address] : [])];
   if (!shown.length) return null;
   return (
-    <span>
+    <span className="flags">
       {shown.map((f) => (
         <span key={f} className={`flag ${["foreign_parent", "eot", "ch_default", "formation_agent"].includes(f) ? "red" : ""}`}>
           {FLAGS[f] ?? f}

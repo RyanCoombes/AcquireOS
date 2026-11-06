@@ -321,7 +321,7 @@ const SEG_COLOURS = ["var(--teal)", "var(--orange)", "var(--blue)", "var(--purpl
 type Who = {
   key: string; name: string; company: boolean; roles: Set<string>; pct: number | null; band: [number, number] | null;
   personId?: number; birthYear: number | null; since: string | null; boards: number; officerKey?: string; regNo?: string | null;
-  ultimately: string[]; colour?: string;
+  ultimately: string[]; colour?: string; left?: string | null; note?: { warn: boolean; text: string };
 };
 
 export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: React.ReactNode }) {
@@ -354,6 +354,27 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
     w.roles.add("Shareholder");
     w.pct = Math.round(((w.pct ?? 0) + (s.pct ?? 0)) * 10) / 10;
   }
+  // People who left the owners register but still appear on the statement.
+  for (const p of data.people.filter((x) => x.ceased_on)) {
+    const w = map.get((p.kind !== "individual" ? "C:" : "P:") + personKey(p.name, p.kind !== "individual"));
+    if (w && w.pct != null && !w.roles.has("Owner")) {
+      w.left = p.ceased_on; w.personId = w.personId ?? p.person_id; w.regNo = w.regNo ?? p.registration_number;
+      w.birthYear = w.birthYear ?? p.birth_year;
+    }
+  }
+  // Where the statement and the owners register disagree, say so on the row.
+  const asAt = shareholders[0]?.as_at ?? null;
+  for (const w of map.values()) {
+    if (w.pct != null && w.band && (w.pct < w.band[0] - 0.5 || w.pct > w.band[1] + 0.5)) {
+      w.note = { warn: true, text: `Owners register says ${w.band[0]}–${w.band[1]}%${w.since ? ` since ${date(w.since)}` : ""}` };
+    } else if (w.pct != null && w.left) {
+      w.note = w.pct <= 25
+        ? { warn: false, text: `Left the owners register ${date(w.left)}: 25% or less isn't listed there` }
+        : { warn: true, text: `Left the owners register ${date(w.left)}, but the statement shows ${w.pct}%` };
+    } else if (shareholders.length && w.band && w.pct == null) {
+      w.note = { warn: true, text: `On the owners register, not on the ${asAt ? `statement of ${date(asAt)}` : "statement"}` };
+    }
+  }
   for (const o of (ch?.officers ?? []).filter((x) => !x.resigned_on)) {
     const w = get(o.name, /corporate/.test(o.role ?? ""));
     w.roles.add((o.role ?? "").includes("secretary") ? "Secretary" : "Director");
@@ -376,8 +397,12 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
   people.filter((w) => !w.colour && (w.pct || w.band)).forEach((w, i) => { w.colour = SEG_COLOURS[(owners.length + i) % SEG_COLOURS.length]; });
   const shown = owners.reduce((s, w) => s + (exact ? w.pct ?? 0 : w.band![0]), 0);
   const others = ch?.other_appointments ?? [];
+  const conflict = [...map.values()].some((w) => w.note?.warn);
+  const stillHeld = new Set([...map.values()].filter((w) => w.pct != null).map((w) => w.key));
   const former = [
-    ...data.people.filter((p) => p.ceased_on).map((p) => niceName(p.name, p.kind !== "individual")),
+    ...data.people.filter((p) => p.ceased_on)
+      .filter((p) => !stillHeld.has((p.kind !== "individual" ? "C:" : "P:") + personKey(p.name, p.kind !== "individual")))
+      .map((p) => niceName(p.name, p.kind !== "individual")),
     ...(ch?.officers ?? []).filter((o) => o.resigned_on).map((o) => niceName(o.name, false)),
   ].filter((v, i, a) => a.indexOf(v) === i);
 
@@ -396,9 +421,16 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
             {shown < 99.5 && <i className="rest" style={{ width: `${100 - shown}%` }} title={exact ? "Others" : "Not stated"} />}
           </div>
           <div className="faint small" style={{ margin: "4px 0 12px" }}>
-            {exact ? `Exact, from the ${ch?.fetched?.shareholders_from ?? "confirmation statement"}`
-              : "Approximate: owners register bands. Owners under 25% aren't named."}
+            {exact ? `Shareholdings from the confirmation statement${asAt ? ` of ${date(asAt)}` : ""}`
+              : "Approximate: owners register bands. Owners with 25% or less aren't named."}
           </div>
+          {conflict && (
+            <div className="callout amber" style={{ marginBottom: 10 }}>
+              The confirmation statement and the owners register disagree (notes below). Share classes with different
+              votes, or a change after the statement, can explain it.{" "}
+              <a href={`https://find-and-update.company-information.service.gov.uk/company/${data.company.company_number}/filing-history`} target="_blank" rel="noreferrer">Check the filings ↗</a>
+            </div>
+          )}
         </>
       )}
 
@@ -424,6 +456,7 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                       : <>{age ? `Age ${age}` : "Age not known"}{yrs !== null ? ` · ${yrs} yrs` : ""}
                           {w.roles.has("Director") ? ` · ${w.boards} other ${w.boards === 1 ? "board" : "boards"}` : ""}</>}
                   </div>
+                  {w.note && <div className={`wnote ${w.note.warn ? "warn" : ""}`}>{w.note.warn ? "⚠ " : ""}{w.note.text}</div>}
                   {theirs.length > 0 && (
                     <div className="wother">
                       {theirs.slice(0, 3).map((a) => <Link key={a.company_number} to={`/c/${a.company_number}`}>{a.company_name ?? a.company_number}</Link>)}
