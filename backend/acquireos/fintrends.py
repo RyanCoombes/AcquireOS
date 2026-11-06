@@ -84,7 +84,7 @@ def _trend(values: list[float], higher_good: bool) -> str:
     if len(recent) >= 3 and 0 < peak_i < len(recent) - 1 and recent[-1] < recent[peak_i] * 0.9:
         return f"Peaked earlier in the past {len(recent)} years and has been falling since"
     if len(recent) >= 3 and 0 < low_i < len(recent) - 1 and recent[-1] > recent[low_i] * 1.1:
-        return "Dipped and has been recovering since"
+        return "Dipped and has risen since"
     if change is None:
         return "Changed from zero"
     if change >= 0.10:

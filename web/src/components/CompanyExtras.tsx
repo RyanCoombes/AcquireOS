@@ -1,3 +1,4 @@
+import type React from "react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
@@ -58,7 +59,7 @@ const BT = ["software", "saas", "data", "msp", "it_consultancy", "field_service"
 const BT_LABEL: Record<string, string> = { software: "Software", saas: "SaaS", data: "Data", msp: "Managed service provider",
   it_consultancy: "IT consultancy", field_service: "Field service", agency: "Agency", reseller: "Reseller", other: "Other" };
 
-export function Enrichment({ data, num, onSaved }: { data: CompanyDetail; num: string; onSaved: () => void }) {
+export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail; num: string; onSaved: () => void; finder?: React.ReactNode }) {
   const e = data.enrichment;
   const [edit, setEdit] = useState(false);
   const [f, setF] = useState({ website: e?.website ?? "", business_type: e?.business_type ?? "", recurring_revenue: e?.recurring_revenue ?? "",
@@ -81,6 +82,7 @@ export function Enrichment({ data, num, onSaved }: { data: CompanyDetail; num: s
         <div><span className="label">Field-service work</span>{tri(e?.field_service)}</div>
       </div>
       {e?.summary && <p style={{ margin: "0 0 8px" }}>{e.summary}</p>}
+      {!e?.website && finder}
       {!e && !edit && <div className="faint small">Ask Claude to enrich this company (see <a href="/connect">Connect Claude</a>), or add what you know with Edit.</div>}
       {edit && (
         <form style={{ display: "grid", gap: 10, marginTop: 8 }} onSubmit={async (ev) => {

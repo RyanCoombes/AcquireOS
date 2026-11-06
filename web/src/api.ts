@@ -160,6 +160,19 @@ export interface CompanyDetail {
   } | null;
   issues: { id: number; issue: string; detail: string | null; suggested_fix: string | null; status: string; created_by: string | null; created_at: string; resolution: string | null }[];
   notes: Note[];
+  fin_summary?: {
+    period_end: string | null; previous_end?: string | null; months?: number | null;
+    rows: { key: string; label: string; value: number; change: number | null; change_pct: number | null; good: boolean | null; trend: string }[];
+    series: { period_end: string; total_assets: number | null; total_liabilities: number | null; net_assets: number | null;
+              debt_ratio: number | null; cash: number | null; turnover: number | null; employees: number | null }[];
+  };
+  ch?: {
+    enabled: boolean; fetched: { fetched_at: string; error: string | null } | null;
+    charges: { charge_id: string; status: string | null; classification: string | null; holders: string[]; created_on: string | null;
+               satisfied_on: string | null; particulars: string | null }[];
+    filings: { transaction_id: string; filed_on: string | null; type: string | null; description: string | null }[];
+    signals: { kind: string; strength: "strong" | "possible"; text: string; date: string | null }[];
+  };
   research: { id: number; kind: string; content: string; source_url: string | null; source_label: string | null; retrieved_at: string }[];
   outreach: Outreach[];
 }
@@ -209,6 +222,12 @@ export const api = {
   outreach: () => req<Outreach[]>("/api/outreach"),
   addOutreach: (body: Record<string, unknown>) => req<Outreach>("/api/outreach", { method: "POST", body: JSON.stringify(body) }),
   reports: () => req<Record<string, any>>("/api/reports"),
+  fetchDetails: (n: string) => req<CompanyDetail["ch"]>(`/api/companies/${encodeURIComponent(n)}/fetch-details`, { method: "POST" }),
+  findWebsite: (n: string, url?: string) =>
+    req<{ results: { url: string; reachable: boolean; confidence: "high" | "medium" | "low" | null; evidence: string; page?: string; title?: string | null }[];
+          saved: string[] | null; message: string }>(`/api/companies/${encodeURIComponent(n)}/find-website`,
+      { method: "POST", body: JSON.stringify({ url: url ?? null }) }),
+  researchBrief: (n: string) => req<Record<string, any>>(`/api/companies/${encodeURIComponent(n)}/research-brief`),
   owners: (q: string) => req<{ rows: OwnerHit[] }>("/api/owners?" + new URLSearchParams({ q })),
   owner: (id: number) => req<OwnerDetail>(`/api/owners/${id}`),
   graph: (n: string, depth = 2) => req<{ nodes: GNode[]; edges: GEdge[] }>(`/api/links/${encodeURIComponent(n)}?depth=${depth}`),

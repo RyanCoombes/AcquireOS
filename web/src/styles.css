@@ -717,3 +717,36 @@ tr.ticked td { background: var(--teal-soft); }
 .dc-sources td .sub { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
 .dc-sources input[type="number"] { padding: 3px 6px; }
 .dc-walk th, .dc-sources th { font-size: 12px; }
+
+/* ---------------------------------------------------------------- company profile */
+.secnav { position: sticky; top: 60px; z-index: 6; display: flex; gap: 4px; flex-wrap: wrap; margin: 0 0 14px;
+  padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.secnav a { padding: 5px 10px; border-radius: 8px; font-size: 13px; color: var(--ink-2); text-decoration: none; }
+.secnav a:hover { background: var(--teal-soft); color: var(--teal-2); }
+.company-grid section[id], .company-grid div[id] { scroll-margin-top: 120px; }
+p.summary { font-size: 15px; line-height: 1.6; margin: 0 0 14px; max-width: 75ch; }
+h2.partline { margin: 28px 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+.balchart { margin: 0 0 12px; }
+.balchart svg { width: 100%; height: auto; display: block; }
+.balchart text { font-size: 11px; fill: var(--ink-3); }
+.balchart .grid { stroke: var(--line); stroke-width: 1; }
+.balchart .zero { stroke: var(--ink-3); stroke-width: 1; }
+.balchart .a-assets { fill: #7fd1c2; opacity: .55; }
+.balchart .a-net { fill: #2a7fa8; opacity: .75; }
+.balchart .a-liab { fill: #b9c3cc; opacity: .6; }
+.balchart .l-assets { fill: none; stroke: #2aa58f; stroke-width: 1.5; }
+.balchart .l-net { fill: none; stroke: #1d5f80; stroke-width: 1.5; }
+.balchart .l-liab { fill: none; stroke: #8795a3; stroke-width: 1.5; }
+.balchart figcaption { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-2); margin-top: 4px; }
+.balchart figcaption i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.k-assets { background: #7fd1c2; } .k-net { background: #2a7fa8; } .k-liab { background: #b9c3cc; }
+table.fintrend td { padding: 12px 10px; vertical-align: middle; }
+table.fintrend td:first-child { width: 150px; color: var(--ink-2); }
+table.fintrend td:nth-child(2) { width: 170px; }
+table.fintrend .chg { font-size: 12px; margin-top: 2px; }
+table.fintrend .chg.pos { color: #0e7c6b; } table.fintrend .chg.neg { color: var(--red); }
+.signals { display: grid; gap: 6px; margin: 4px 0 8px; }
+.signal { padding: 8px 12px; border-radius: 8px; font-size: 13.5px; background: var(--panel-2); border-left: 3px solid var(--ink-3); }
+.signal.strong { background: #fff6e6; border-left-color: #d68a00; }
+.webfind { margin: 6px 0 4px; padding: 10px 12px; border: 1px dashed var(--line-2); border-radius: var(--radius); }
+@media (max-width: 860px) { .secnav { top: 52px; } table.fintrend td:first-child { width: auto; } }
