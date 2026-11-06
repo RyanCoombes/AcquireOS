@@ -30,8 +30,7 @@ function OwnerSearch() {
         <div>
           <h1>Owners</h1>
           <div className="lede">
-            People and companies recorded at Companies House as controlling a company (persons with significant control).
-            Type a name to see everything they own.
+            Search an owner to see everything they control.
           </div>
         </div>
       </div>

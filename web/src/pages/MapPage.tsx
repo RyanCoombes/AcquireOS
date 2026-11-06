@@ -38,7 +38,7 @@ export default function MapPage() {
       <div className="pagehead">
         <div>
           <h1>Map</h1>
-          <div className="lede">Registered offices on OpenStreetMap, coloured by score. Lines join parents to subsidiaries and companies with the same owner.</div>
+          <div className="lede">Registered offices, coloured by score.</div>
         </div>
         <div className="right">
           {counts && counts.pending > 0 && (

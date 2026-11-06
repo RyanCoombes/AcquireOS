@@ -797,3 +797,24 @@ h3.subh { font-size: 14px; margin: 0 0 8px; }
                         background: var(--panel); border: 2px solid var(--amber); }
 .timeline .tdate { color: var(--ink-3); } .timeline .ttype { font-weight: 650; } .timeline .tdesc { text-transform: capitalize; }
 @media (max-width: 860px) { h1.coname { font-size: 24px; } .timeline .tl { grid-template-columns: 90px 1fr; } }
+
+/* ---------------------------------------------------------------- app-wide: clearer hierarchy, colour */
+body { font-size: 14.5px; }
+h2 { font-size: 16px; }
+.pagehead h1 { font-size: 28px; }
+.lede { font-size: 14.5px; }
+.kpi { border-top: 3px solid var(--teal); }
+.kpis > .kpi:nth-child(2) { border-top-color: var(--blue); }
+.kpis > .kpi:nth-child(3) { border-top-color: var(--amber); }
+.kpis > .kpi:nth-child(4) { border-top-color: var(--orange); }
+.kpis > .kpi:nth-child(5) { border-top-color: var(--purple); }
+.kpis > .kpi:nth-child(2) .k i { background: var(--blue); }
+.kpis > .kpi:nth-child(3) .k i { background: var(--amber); }
+.kpis > .kpi:nth-child(4) .k i { background: var(--orange); }
+.kpis > .kpi:nth-child(5) .k i { background: var(--purple); }
+.kpi .v { font-size: 30px; }
+.steps3 { display: inline-flex; flex-wrap: wrap; gap: 6px 14px; color: var(--ink-3); }
+.steps3 b { color: var(--ink); font-weight: 650; margin-right: 4px; }
+.steps3 b::first-letter { color: var(--teal-2); }
+table.list td .name { font-size: 14.5px; font-weight: 600; }
+.sechead h2 { font-size: 16px; }

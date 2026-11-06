@@ -20,8 +20,7 @@ export default function Connections() {
         <div>
           <h1>Connections</h1>
           <div className="lede">
-            Companies linked by ownership, by the same owner, or by the same registered address.
-            Confirmed links come from registration numbers; likely ones match a name and birth date; possible ones need checking.
+            Linked by ownership, a shared owner or a shared address.
           </div>
         </div>
       </div>

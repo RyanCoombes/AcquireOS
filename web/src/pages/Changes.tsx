@@ -35,8 +35,7 @@ export default function Changes() {
         <div>
           <h1>Changes</h1>
           <div className="lede">
-            What moved between imports: new accounts, status changes such as dissolution, new names and addresses, and owner changes.
-            Changes appear after each monthly Companies House refresh (Refresh data on Home, or the Data page).
+            New accounts, status, names, addresses and owners, after each monthly refresh.
           </div>
         </div>
       </div>

@@ -239,14 +239,11 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
           <div className="lede">
             {m ? (mode === "directory" ? (
               <>
-                Every company on the Companies House register: <b className="ink">{int(m.counts.companies)}</b>.
-                Search and filter it any way you like; buy boxes are just one of the filters.
+                <b className="ink">{int(m.counts.companies)}</b> UK companies.
               </>
             ) : (
               <>
-                <b className="ink">{int(m.counts.in_scope)}</b> companies fit at least one of your{" "}
-                <Link to="/buy-box">buy boxes</Link>, best fit first. {int(m.counts.tracked)} in your pipeline.{" "}
-                <Link to="/companies">Browse all companies</Link>
+                <b className="ink">{int(m.counts.in_scope)}</b> in your <Link to="/buy-box">buy boxes</Link> · {int(m.counts.tracked)} in your pipeline
               </>
             )) : " "}
           </div>

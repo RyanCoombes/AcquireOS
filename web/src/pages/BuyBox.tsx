@@ -78,10 +78,7 @@ export default function BuyBox() {
           <h1 style={{ fontSize: 22 }}>Editing: {data.name}</h1>
           <div className="lede">
             {data.description ? <>{data.description} </> : null}
-            A buy box works in three steps. <b>Universe</b>: which companies are even in the running (industry, area, age).{" "}
-            <b>Exclusions</b>: hard no's that drop a company out of the box. <b>Scoring</b>: everything still in is scored
-            0–100 by the criteria below; each criterion earns points up to its weight, and the score is the share of all
-            points earned. Missing data is neutral (half the points) and lowers the coverage figure.
+            <span className="steps3"><b>1 Universe</b> who's in <b>2 Exclusions</b> hard no's <b>3 Scoring</b> ranks the rest</span>
           </div>
         </div>
         <div className="right">
@@ -92,11 +89,7 @@ export default function BuyBox() {
 
       <section>
         <h2>Your own criteria</h2>
-        <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}>
-          Things only you can judge. You score each company 0 to 5 on these (on its page or in Review); they then count towards
-          its score with the weight you set here. Unscored criteria are left out of the total, so companies you have not reviewed
-          are neither helped nor hurt. Scores belong to the company, so a criterion with the same name in another buy box reuses them.
-        </p>
+        <p className="muted" style={{ marginTop: -4 }}>You score these 0–5 on each company. Not scored yet = not counted.</p>
         <div className="manual-ed label"><span>Criterion</span><span>Weight</span><span>What a 5 looks like</span><span /></div>
         {(c.manual ?? []).map((m: any, i: number) => (
           <div key={m.key} className="manual-ed">
@@ -118,8 +111,7 @@ export default function BuyBox() {
 
       <section style={{ paddingBottom: 0 }}>
         <h2>Scoring criteria</h2>
-        <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}><b>Step 3: rank what is in.</b> These do not keep anything out; they decide the score. A company below the
-          acceptable range on a criterion scores 0 on it, within the ideal range scores full points, and in between scores in proportion.</p>
+        <p className="muted" style={{ marginTop: -4 }}>Step 3. Ranks what's in; never keeps anything out. Missing data scores half.</p>
       </section>
       <table>
         <thead><tr><th>Criterion</th><th className="num">Weight</th><th className="num">Share</th><th>Settings</th></tr></thead>
@@ -169,14 +161,7 @@ export default function BuyBox() {
 
       <section>
         <h2>Universe</h2>
-        <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}>
-          <b>Step 1: which companies are in the running at all. Anything listed here is included</b>; everything else is left out. AcquireOS keeps every company on the register (5.7 million),
-          but only the universe gets scored: a company is in if it is active, old enough, in your postcode areas (if any), and
-          either has one of the SIC codes below, or has a keyword in its name plus one of the secondary SIC codes (to catch,
-          say, a software firm filed as a consultancy). The scoring criteria above then rank what is inside. Keep the universe
-          wide and let the scores do the sorting; make it narrow only to keep whole industries out. Everything outside is still
-          in Companies, marked “outside your universe”.
-        </p>
+        <p className="muted" style={{ marginTop: -4 }}>Step 1. <b>Anything listed here is included</b>; everything else is left out. Keep it wide.</p>
         <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
           <dt>Include SIC codes starting with</dt><dd><SicPicker value={c.universe?.sic_prefixes ?? []} onChange={(v) => upd(["universe", "sic_prefixes"], v)} /></dd>
           <dt>…or names containing</dt><dd><input type="text" style={{ width: "100%", maxWidth: 620 }} placeholder="software, data, digital" value={(c.universe?.name_keywords ?? []).join(", ")}
@@ -192,8 +177,7 @@ export default function BuyBox() {
                      onChange={(e) => upd(["universe", "include_parents"], e.target.checked)} />
               Include parent companies of targets
             </label>
-            <div className="faint small">A company that owns (as a person with significant control) a company in this universe comes into
-              scope too, whatever its own SIC code, so you can buy the group rather than the subsidiary. Its page shows which subsidiary brought it in.</div>
+            <div className="faint small">Brings in holding companies that own a company in the universe.</div>
           </dd>
         </dl>
         <p className="faint small">Saving rescores this buy box in the background (a few minutes on the full register). Everything stays usable while it runs.</p>
@@ -201,23 +185,19 @@ export default function BuyBox() {
 
       <section>
         <h2>Valuation assumptions</h2>
-        <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}>
-          Used for the indicative value on every company. Where filed operating profit exists it is used directly;
-          otherwise profit is revenue × margin. Value is profit × multiple. You can override these on any single company.
-        </p>
+        <p className="muted" style={{ marginTop: -4 }}>Value = profit × multiple. Profit is filed, or revenue × margin.</p>
         <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
           <dt>Profit margin</dt>
           <dd className="range">{n(["valuation", "margin_low"], { step: 1 })}<span className="faint">to</span>{n(["valuation", "margin_high"], { step: 1 })}<span className="faint">% of revenue</span></dd>
           <dt>EBITDA multiple</dt>
           <dd className="range">{n(["valuation", "multiple_low"], { step: 0.25 })}<span className="faint">to</span>{n(["valuation", "multiple_high"], { step: 0.25 })}<span className="faint">times</span></dd>
         </dl>
-        <p className="faint small">Small UK IT services and software businesses often trade at roughly 3 to 6 times EBITDA, higher with strong recurring revenue. Treat this as a starting point and replace it with real deal evidence as you gather it.</p>
+        <p className="faint small">Small UK IT and software firms often sell at 3–6× EBITDA.</p>
       </section>
 
       <section>
         <h2>Exclusions</h2>
-        <p className="muted" style={{ marginTop: -4, maxWidth: "80ch" }}><b>Step 2: hard no's.</b> <b>Anything you tick or list here is excluded</b>:
-          a company that matches it is dropped from this buy box rather than scored low. In Companies it still shows, in grey with the reason.</p>
+        <p className="muted" style={{ marginTop: -4 }}>Step 2. <b>Anything ticked or listed here is excluded.</b></p>
         <div className={`exsummary ${exList.length ? "" : "none"}`}>
           {exList.length ? <><b>Excluding:</b> {exList.join(" · ")}</> : "Nothing excluded yet."}
         </div>
@@ -226,7 +206,7 @@ export default function BuyBox() {
           <dd>
             <textarea style={{ minHeight: 56 }} value={c.exclude.keywords.join(", ")}
                       onChange={(e) => upd(["exclude", "keywords"], e.target.value.split(",").map((s) => s.trim()).filter(Boolean))} />
-            <div className="faint small">Comma separated. Whole words only, so “van” does not exclude “Vanguard”.</div>
+            <div className="faint small">Comma separated, whole words.</div>
           </dd>
           <dt>Exclude regions</dt>
           <dd>{xchecks(meta.data?.regions.map((r) => [r, r]) ?? [], ["exclude", "regions"])}
@@ -239,8 +219,7 @@ export default function BuyBox() {
           <dd>{xchecks((meta.data?.tiers ?? []).map((t) => [t, t]), ["exclude", "tiers"])}
             <div className="faint small">Tiers from a ranked file you imported, if any.</div></dd>
           <dt>Always excluded</dt>
-          <dd className="muted">Companies that are dissolved, in liquidation, administration or receivership, under a voluntary
-            arrangement, being struck off, or removed from the register.</dd>
+          <dd className="muted">Dissolved, insolvent or being struck off.</dd>
         </dl>
       </section>
       <Toast msg={toast} onDone={() => setToast(null)} />
@@ -274,9 +253,7 @@ function BoxManager({ current, onToast, select }: { current: number; onToast: (m
       <div className="pagehead" style={{ paddingBottom: 12 }}>
         <div>
           <h1>Buy boxes</h1>
-          <div className="lede">A buy box is a lens over all your company data: which companies count (universe), how they are scored and what
-            they are worth. Every box is scored all the time, so you can filter by any of them on Targets, Home, Review and the map.
-            Your pipeline, notes, stages and your own scores are shared across all of them.</div>
+          <div className="lede">Saved searches that score every company. Filter by any of them anywhere.</div>
         </div>
         {active && (
           <div className="right">

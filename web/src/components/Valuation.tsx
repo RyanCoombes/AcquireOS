@@ -201,8 +201,7 @@ function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave }: {
               <td key={i} className={`num ${coverCls(c)}`}><b>{c === null ? "—" : `${c.toFixed(1)}×`}</b><div className="small">{verdict(c)}</div></td>); })}</tr>
         </tbody>
       </table>
-      <p className="faint small">Repayments are level yearly payments of capital and interest. Ignores tax, capital expenditure, working capital,
-        fees and your own salary, so the real figures will be lower.</p>
+      <p className="faint small">Before tax, capex, fees and your salary.</p>
     </details>
   );
 }

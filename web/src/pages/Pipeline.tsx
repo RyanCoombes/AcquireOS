@@ -43,7 +43,7 @@ export default function Pipeline() {
       <div className="pagehead">
         <div>
           <h1>Pipeline</h1>
-          <div className="lede">Your acquisition process from first look to handover. Drag a card, or use its Move to… menu; every move is logged on the company.</div>
+          <div className="lede">From first look to handover. Drag a card or use Move to….</div>
         </div>
       </div>
       {due.length > 0 && (

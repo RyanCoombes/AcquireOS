@@ -20,7 +20,7 @@ export default function Reports() {
       <div className="pagehead">
         <div>
           <h1>Reports</h1>
-          <div className="lede">The shape of your dataset and your search. Click a bar to see those companies.</div>
+          <div className="lede">Click a bar to see those companies.</div>
         </div>
       </div>
       <div className="report-grid">

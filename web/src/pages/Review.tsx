@@ -98,9 +98,8 @@ export default function Review() {
         <div>
           <h1>Review</h1>
           <div className="lede">
-            One company at a time from{" "}
-            <b className="ink">{bbId ? meta.data?.buy_boxes.find((b) => b.id === bbId)?.name : "any of your buy boxes"}</b>, best score first.
-            Score your criteria with <span className="kbd">0</span>–<span className="kbd">5</span>, then decide with one key.
+            <b className="ink">{bbId ? meta.data?.buy_boxes.find((b) => b.id === bbId)?.name : "All buy boxes"}</b>, best first.
+            Keys <span className="kbd">0</span>–<span className="kbd">5</span> to score, one key to decide.
           </div>
         </div>
       </div>

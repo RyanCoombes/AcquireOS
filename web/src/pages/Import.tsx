@@ -65,7 +65,7 @@ export default function Import() {
       <div className="pagehead">
         <div>
           <h1>Data</h1>
-          <div className="lede">Load your own files, and keep everything current from the free Companies House bulk data.</div>
+          <div className="lede">Companies House data and your own files.</div>
         </div>
       </div>
 
@@ -168,6 +168,7 @@ export default function Import() {
       )}
 
       <ChFeed onDone={history.reload} />
+      <ChDetails />
 
       <section>
         <h2>History</h2>
@@ -279,17 +280,14 @@ function ChFeed({ onDone }: { onDone: () => void }) {
             </details>
           )}
           <p className="faint small" style={{ marginBottom: 0 }}>
-            This runs on the server: you can close this page or the browser and it keeps going. Progress shows at the top of every page.
+            Runs on the server; you can close this page.
           </p>
         </div>
       )}
       {msg && <div className="callout" style={{ marginBottom: 12 }}>{msg}</div>}
 
       <p className="muted" style={{ maxWidth: "80ch", marginTop: 0 }}>
-        AcquireOS downloads these free files itself, keeps <b>every</b> UK company, its filed accounts and its owners, and deletes
-        each file once read. It runs automatically each month (the <code>scheduler</code> service in the stack). The first time,
-        choose how many months of accounts to load. Each filing includes the year before, so 48 months gives about five years of figures per company (each month is a 1–2 GB download). Owners load first, then accounts newest month first; an older filing can never
-        overwrite figures from a newer one, and months already loaded are skipped if you run it again.
+        Runs itself monthly. 48 months of accounts ≈ 5 years of figures (1–2 GB a month). Loaded months are skipped.
       </p>
       <table>
         <thead><tr><th>File</th><th>What it adds</th><th>Size</th></tr></thead>
@@ -342,6 +340,30 @@ function Coverage() {
         </tbody>
       </table>
       <p className="faint small">Directors are not in the free bulk files; Companies House only provides them company by company through its API.</p>
+    </section>
+  );
+}
+
+
+/** Companies House API details (directors, shareholders, charges, filings) for many companies at once. */
+function ChDetails() {
+  const info = useAsync(() => api.connect(), []);
+  const [msg, setMsg] = useState<string | null>(null);
+  const run = async (scope: string, limit: number) => {
+    setMsg(null);
+    try { await api.chDetailsBatch(scope, limit); setMsg("Started. Progress shows at the top."); } catch (e: any) { setMsg(e.message); }
+  };
+  const on = !!info.data?.ch_key_set;
+  return (
+    <section>
+      <div className="sechead"><h2>Directors, shareholders and charges</h2>
+        <span className="faint small">{on ? "Companies House API key set" : "Needs CH_API_KEY in the stack"}</span></div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="btn" disabled={!on} onClick={() => run("pipeline", 500)}>Fetch for my pipeline</button>
+        <button className="btn" disabled={!on} onClick={() => run("targets", 200)}>Fetch for top 200 targets</button>
+        <button className="btn quiet" disabled={!on} onClick={() => run("targets", 1000)}>Top 1,000 (about 3 hours)</button>
+      </div>
+      {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
     </section>
   );
 }

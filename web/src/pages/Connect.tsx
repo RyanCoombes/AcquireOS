@@ -39,8 +39,7 @@ export default function Connect() {
         <div>
           <h1>Connect Claude</h1>
           <div className="lede">
-            AcquireOS has an MCP server, so Claude on your computer can search and analyse your targets, audit the data,
-            and save researched enrichment (websites, business type, recurring revenue, field-service checks) with a source for every fact.
+            Let Claude search, analyse and enrich your companies.
           </div>
         </div>
       </div>

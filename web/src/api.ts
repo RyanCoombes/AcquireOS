@@ -238,6 +238,8 @@ export const api = {
     req<{ results: { url: string; reachable: boolean; confidence: "high" | "medium" | "low" | null; evidence: string; page?: string; title?: string | null }[];
           saved: string[] | null; message: string }>(`/api/companies/${encodeURIComponent(n)}/find-website`,
       { method: "POST", body: JSON.stringify({ url: url ?? null }) }),
+  chDetailsBatch: (scope: string, limit: number) =>
+    req<{ started: boolean }>(`/api/ch-details?scope=${scope}&limit=${limit}`, { method: "POST" }),
   researchBrief: (n: string) => req<Record<string, any>>(`/api/companies/${encodeURIComponent(n)}/research-brief`),
   owners: (q: string) => req<{ rows: OwnerHit[] }>("/api/owners?" + new URLSearchParams({ q })),
   owner: (id: number) => req<OwnerDetail>(`/api/owners/${id}`),

@@ -1241,6 +1241,7 @@ def connect_info(request: Request):
                                 (select count(*) from data_issue where status = 'open') as open_issues,
                                 (select max(updated_at) from enrichment where updated_by like 'claude%%') as last_claude""").fetchone()
     return {"mcp_url": f"{base}/mcp", "api_docs": f"{base}/docs", "token_set": bool(config.API_TOKEN),
+            "ch_key_set": bool(config.CH_API_KEY),
             "password_set": bool(config.APP_PASSWORD), **e}
 
 

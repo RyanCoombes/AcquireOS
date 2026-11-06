@@ -102,22 +102,22 @@ export default function Home() {
           <span className="s">{int(h.strong)} score 70 or more</span>
         </Link>
         <Link className="kpi" to="/pipeline">
-          <span className="k"><i style={{ background: "#2f62d8" }} />In your pipeline</span>
+          <span className="k"><i />In your pipeline</span>
           <span className="v">{int(h.pipeline)}</span>
           <span className="s">{int(h.talking)} contacted or in talks</span>
         </Link>
         <Link className="kpi" to="/changes?days=30">
-          <span className="k"><i style={{ background: "#e0a245" }} />Changed in 30 days</span>
+          <span className="k"><i />Changed in 30 days</span>
           <span className="v">{int(h.changed_30d)}</span>
           <span className="s">{int(h.status_30d)} status changes · {int(h.changed_7d)} this week</span>
         </Link>
         <Link className="kpi" to={tq({ in_box: "1", min_owner_age: "60" })}>
-          <span className="k"><i style={{ background: "#8a919d" }} />Median owner age</span>
+          <span className="k"><i />Median owner age</span>
           <span className="v">{h.median_owner_age ? Math.round(h.median_owner_age) : "—"}</span>
           <span className="s">{int(h.owners_60)} owners aged 60+</span>
         </Link>
         <Link className="kpi" to="/pipeline">
-          <span className="k"><i style={{ background: "#141820" }} />Pipeline value</span>
+          <span className="k"><i />Pipeline value</span>
           <span className="v">{h.pipeline_value_low ? range(h.pipeline_value_low, h.pipeline_value_high) : "—"}</span>
           <span className="s">Indicative range: screening estimates, not valuations</span>
         </Link>
@@ -125,7 +125,7 @@ export default function Home() {
 
       <div className="home-grid">
         <section className="span-7">
-          <div className="sechead"><h2>Best new targets</h2><span className="faint small">Active companies scoring 40+ that you haven't given a status yet</span>
+          <div className="sechead"><h2>Best new targets</h2><span className="faint small">Scoring 40+, not yet reviewed</span>
             <span className="right"><Link to={tq({ in_box: "1", status: "new" })}>See all</Link></span></div>
           <table>
             <tbody>
@@ -163,7 +163,7 @@ export default function Home() {
 
         <section className="span-8">
           <div className="sechead"><h2>Staff across your buy box</h2>
-            <span className="faint small">Median staff per company, by year of accounts</span></div>
+            <span className="faint small">Median staff by year</span></div>
           <TrendLine points={data.trend.map((t: any) => ({ x: String(t.year), y: Number(t.median_staff) }))} format={(n) => int(Math.round(n))} />
           {data.trend.length > 0 && (
             <div className="faint small">

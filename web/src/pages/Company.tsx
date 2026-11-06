@@ -577,9 +577,7 @@ function BalanceSheet({ fin }: { fin: CompanyDetail["financials"] }) {
           ))}
         </tbody>
       </table>
-      <p className="faint small">“Owed within a year” is current assets minus net current assets; “owed after a year” is the rest of the
-        liabilities and provisions (total assets less current liabilities, minus net assets). Charges are loans secured on assets; see the record below. Most small companies file abridged accounts
-        without profit and loss detail, so those columns are often blank.</p>
+      <p className="faint small">Owed figures worked out from the filed totals.</p>
     </>
   );
 }
