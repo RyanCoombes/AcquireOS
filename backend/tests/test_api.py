@@ -278,3 +278,38 @@ def test_show_filter_hides_decided_companies(loaded):
         assert "01000005" in allc and "01000005" not in hidden
         assert "01000004" in pipe and "01000005" not in pipe
         assert "01000004" not in fresh and "01000005" not in fresh
+
+
+def test_profile_financials_brief_website_and_charges(loaded, monkeypatch):
+    from acquireos import chapi, website
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        d = cl.get("/api/companies/01000001").json()
+        assert d["fin_summary"]["period_end"] and any(r["key"] == "net_assets" for r in d["fin_summary"]["rows"])
+        assert d["ch"]["enabled"] is False and d["ch"]["charges"] == []
+        b = cl.get("/api/companies/01000002/research-brief").json()
+        assert b["name"] and b["search_queries"] and "how_to_confirm" in b
+        assert any("DEMO HOLDINGS" in p for p in b["parent_companies"])
+        # website check: a page showing the company number is confirmed and saved
+        monkeypatch.setattr(website, "_fetch", lambda url, limit=600_000: (url, "<footer>Registered in England 01000001</footer>"))
+        r = cl.post("/api/companies/01000001/find-website", json={"url": "examplesystems.co.uk"}).json()
+        assert r["saved"] and r["results"][0]["confidence"] == "high"
+        assert cl.get("/api/companies/01000001").json()["enrichment"]["website"] == "https://examplesystems.co.uk"
+        # Companies House details need a key
+        assert cl.post("/api/companies/01000001/fetch-details").status_code == 400
+        monkeypatch.setattr(chapi.config, "CH_API_KEY", "x")
+        def fake(path):
+            if "/charges" in path:
+                return {"items": [{"charge_code": "c1", "status": "outstanding", "created_on": "2023-01-02",
+                                   "classification": {"description": "A registered charge"},
+                                   "persons_entitled": [{"name": "Development Bank of Wales PLC"}]}]}
+            return {"items": [{"transaction_id": "t1", "date": "2023-01-03", "type": "SH01", "category": "capital",
+                               "description": "capital-allotment-shares",
+                               "description_values": {"capital": [{"currency": "GBP", "figure": "1,000"}]}}]}
+        monkeypatch.setattr(chapi, "_get", fake)
+        r = cl.post("/api/companies/01000001/fetch-details").json()
+        assert r["fetched_charges"] == 1 and r["fetched_filings"] == 1 and len(r["charges"]) == 1
+        kinds = [s["kind"] for s in r["signals"]]
+        assert "charge" in kinds and "allotment" in kinds

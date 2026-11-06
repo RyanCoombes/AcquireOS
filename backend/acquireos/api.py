@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import enrich, fintrends
 from . import __version__, config, db, scoring, stages, valuation
 from .importers import companies as company_importer
 from .importers import notes as notes_importer
@@ -574,6 +575,9 @@ def company(num: str, bb: str | None = None):
             (num,),
         ).fetchall()
         links = _links_for(c, num)
+        from . import chapi
+
+        ch_details = chapi.details(c, num)
         sc = c.execute(
             "select * from score where company_number = %s and buy_box_id = %s", (num, bb["id"])
         ).fetchone()
@@ -643,7 +647,7 @@ def company(num: str, bb: str | None = None):
     return {
         "deal": deal, "manual": manual, "buy_box": {"id": bb["id"], "name": bb["name"]}, "scores": scores,
         "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
-        "changes": changes, "valuation": val,
+        "changes": changes, "valuation": val, "fin_summary": fintrends.summary(fin), "ch": ch_details,
         "company": row, "financials": fin, "estimate": est, "ownership": own, "people": people,
         "links": links, "score": sc, "state": state or {"status": "new", "rating": None, "tags": []},
         "notes": notes, "research": research, "outreach": outreach,
@@ -1396,6 +1400,62 @@ def _reports():
     }
 
 
+@app.post("/api/companies/{num}/fetch-details")
+def fetch_details(num: str):
+    """Charges and share-issue filings from the Companies House API (needs CH_API_KEY)."""
+    from . import chapi
+
+    with db.conn() as c:
+        if not c.execute("select 1 from company where company_number = %s", (num,)).fetchone():
+            raise HTTPException(404, "Company not found")
+        try:
+            r = chapi.fetch(c, num)
+        except chapi.NoKey as e:
+            raise HTTPException(400, str(e))
+        return {"fetched_charges": r["charges"], "fetched_filings": r["filings"], "error": r["error"], **chapi.details(c, num)}
+
+
+@app.get("/api/companies/{num}/research-brief")
+def research_brief(num: str):
+    """Names, address, owners, related companies and search queries for
+    finding the company online (used by Claude and the website finder)."""
+    from . import website
+
+    with db.conn() as c:
+        b = website.brief(c, num)
+    if not b:
+        raise HTTPException(404, "Company not found")
+    return b
+
+
+class WebsiteCheckIn(BaseModel):
+    url: str | None = None
+
+
+@app.post("/api/companies/{num}/find-website")
+def find_website(num: str, body: WebsiteCheckIn | None = None):
+    """Check a given site, or try likely domains, and save a site confirmed
+    by the company number or postcode as the company's website."""
+    from . import website
+
+    with db.conn() as c:
+        b = website.brief(c, num)
+        if not b:
+            raise HTTPException(404, "Company not found")
+        names = [b["name"], *b["previous_names"], *b["parent_companies"], *b["subsidiaries"]]
+        results = ([website.check(body.url, b["company_number"], b["postcode"], names)] if body and body.url
+                   else website.find(names, b["company_number"], b["postcode"]))
+        best = next((r for r in results if r.get("confidence") in ("high", "medium")), None)
+        saved = None
+        if best:
+            saved = enrich.save_enrichment(
+                c, b["company_number"], source_url=best.get("page") or best["url"], website=best["url"],
+                confidence=best["confidence"], source_label=f"Website check: {best['evidence']}", by="website check")["saved"]
+    return {"results": results, "saved": saved,
+            "message": (f"Saved {best['url']} ({best['evidence']})." if best else
+                        "No site could be confirmed. Ask Claude to search using the research brief, or enter one you know.")}
+
+
 # ---------------------------------------------------------------- owners
 
 @app.get("/api/owners")
@@ -1864,7 +1924,7 @@ def start_refresh(months: int = 1, reread: bool = False):
         clear_cache()
         _start_scoring()  # any buy box changed while the refresh ran
 
-    _run_detached(["fetch", "all", "--months", str(max(1, min(months, 36)))] + (["--reread"] if reread else []), after=after)
+    _run_detached(["fetch", "all", "--months", str(max(1, min(months, 72)))] + (["--reread"] if reread else []), after=after)
     import time
 
     time.sleep(0.5)  # let the job row appear

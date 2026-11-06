@@ -229,7 +229,9 @@ function ChFeed({ onDone }: { onDone: () => void }) {
               <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <span className="label">Months of accounts</span>
                 <select value={months} onChange={(e) => setMonths(Number(e.target.value))}>
-                  {[1, 3, 6, 12, 24].map((m) => <option key={m} value={m}>{m}</option>)}
+                  {[[1, "1 (monthly top-up)"], [12, "12 (about 2 years of figures)"], [24, "24 (about 3 years)"],
+                    [36, "36 (about 4 years)"], [48, "48 (about 5 years)"], [60, "60 (about 6 years)"]].map(([m, l]) =>
+                    <option key={m} value={m}>{l}</option>)}
                 </select>
               </label>
               <label className="check small" title="Months loaded before AcquireOS read balance sheet and cost figures are downloaded and read again">
@@ -286,7 +288,7 @@ function ChFeed({ onDone }: { onDone: () => void }) {
       <p className="muted" style={{ maxWidth: "80ch", marginTop: 0 }}>
         AcquireOS downloads these free files itself, keeps <b>every</b> UK company, its filed accounts and its owners, and deletes
         each file once read. It runs automatically each month (the <code>scheduler</code> service in the stack). The first time,
-        choose 12 or 24 months of accounts to build up history: owners load first, then accounts newest month first; an older filing can never
+        choose how many months of accounts to load. Each filing includes the year before, so 48 months gives about five years of figures per company (each month is a 1–2 GB download). Owners load first, then accounts newest month first; an older filing can never
         overwrite figures from a newer one, and months already loaded are skipped if you run it again.
       </p>
       <table>

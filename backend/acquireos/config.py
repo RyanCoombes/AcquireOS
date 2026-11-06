@@ -19,6 +19,9 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 # Send it as "Authorization: Bearer <token>". Strongly recommended; required
 # for /mcp whenever APP_PASSWORD is set.
 API_TOKEN = os.environ.get("API_TOKEN", "")
+# Optional free Companies House API key (developer.company-information.service.gov.uk):
+# unlocks charge details (who holds each loan) and filing history (share allotments).
+CH_API_KEY = os.environ.get("CH_API_KEY", "").strip()
 # Map tiles. The default is OpenStreetMap's own server, which is fine for
 # personal use; a hosted product should use a commercial tile provider.
 MAP_TILE_URL = os.environ.get("MAP_TILE_URL", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
