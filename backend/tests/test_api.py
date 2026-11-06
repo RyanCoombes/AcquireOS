@@ -301,18 +301,41 @@ def test_profile_financials_brief_website_and_charges(loaded, monkeypatch):
         assert cl.post("/api/companies/01000001/fetch-details").status_code == 400
         monkeypatch.setattr(chapi.config, "CH_API_KEY", "x")
         def fake(path):
-            if "/charges" in path:
+            if path.endswith("/charges?items_per_page=100"):
                 return {"items": [{"charge_code": "c1", "status": "outstanding", "created_on": "2023-01-02",
                                    "classification": {"description": "A registered charge"},
                                    "persons_entitled": [{"name": "Development Bank of Wales PLC"}]}]}
-            return {"items": [{"transaction_id": "t1", "date": "2023-01-03", "type": "SH01", "category": "capital",
-                               "description": "capital-allotment-shares",
-                               "description_values": {"capital": [{"currency": "GBP", "figure": "1,000"}]}}]}
+            if "/filing-history" in path:
+                return {"items": [
+                    {"transaction_id": "t1", "date": "2023-01-03", "type": "SH01", "category": "capital",
+                     "description": "capital-allotment-shares", "description_values": {"capital": [{"currency": "GBP", "figure": "1,000"}]}},
+                    {"transaction_id": "t2", "date": "2024-02-01", "type": "CS01", "category": "confirmation-statement",
+                     "description": "confirmation-statement", "links": {"document_metadata": "/document/abc"}},
+                    {"transaction_id": "t3", "date": "2025-03-15", "type": "AA", "category": "accounts",
+                     "description": "accounts-with-accounts-type-small", "description_values": {"made_up_date": "2024-03-31"}}]}
+            if path.startswith("/company/01000001/officers"):
+                return {"items": [{"name": "SMITH, Alex", "officer_role": "director", "appointed_on": "1994-03-01",
+                                   "date_of_birth": {"year": 1961, "month": 4}, "occupation": "Director",
+                                   "links": {"officer": {"appointments": "/officers/OFF1/appointments"}}}]}
+            if path.startswith("/officers/OFF1/appointments"):
+                return {"items": [{"officer_role": "director", "appointed_on": "2010-01-01",
+                                   "appointed_to": {"company_number": "09999999", "company_name": "OTHER CO LTD", "company_status": "active"}}]}
+            if path.endswith("/persons-with-significant-control-statements"):
+                return {"items": []}
+            if path == "/company/01000001":
+                return {"has_charges": True, "has_insolvency_history": False}
+            return None
+        monkeypatch.setattr(chapi, "_document", lambda url: b"pdf")
+        monkeypatch.setattr(chapi, "_pdf_text", lambda b: "Shareholding 1: 70 ORDINARY shares held as at the date of this confirmation statement\nName: ALEX SMITH\nShareholding 2: 30 ORDINARY shares held as at the date of this confirmation statement\nName: DBW INVESTMENTS (10) LIMITED\n")
         monkeypatch.setattr(chapi, "_get", fake)
         r = cl.post("/api/companies/01000001/fetch-details").json()
-        assert r["fetched_charges"] == 1 and r["fetched_filings"] == 1 and len(r["charges"]) == 1
+        assert r["fetched_charges"] == 1 and r["fetched_filings"] == 3 and len(r["charges"]) == 1
         kinds = [s["kind"] for s in r["signals"]]
-        assert "charge" in kinds and "allotment" in kinds
+        assert "charge" in kinds and "allotment" in kinds and "shareholder" in kinds
+        assert r["officers"][0]["name"] == "SMITH, Alex" and r["officers"][0]["other_current"] == 1
+        assert r["other_appointments"][0]["company_name"] == "OTHER CO LTD"
+        assert [x["pct"] for x in r["shareholders"]] == [70.0, 30.0]
+        assert r["late_filings"] and r["late_filings"][0]["days_late"] > 0
 
 
 def test_mcp_tools_cover_owners_financials_research_and_pipeline(loaded):

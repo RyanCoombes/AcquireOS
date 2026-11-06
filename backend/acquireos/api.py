@@ -1412,7 +1412,8 @@ def fetch_details(num: str):
             r = chapi.fetch(c, num)
         except chapi.NoKey as e:
             raise HTTPException(400, str(e))
-        return {"fetched_charges": r["charges"], "fetched_filings": r["filings"], "error": r["error"], **chapi.details(c, num)}
+        return {"fetched_charges": r["charges"], "fetched_filings": r["filings"], "fetched_officers": r["officers"],
+                "fetched_shareholders": r["shareholders"], "error": r["error"], **chapi.details(c, num)}
 
 
 @app.get("/api/companies/{num}/research-brief")
@@ -1454,6 +1455,22 @@ def find_website(num: str, body: WebsiteCheckIn | None = None):
     return {"results": results, "saved": saved,
             "message": (f"Saved {best['url']} ({best['evidence']})." if best else
                         "No site could be confirmed. Ask Claude to search using the research brief, or enter one you know.")}
+
+
+@app.post("/api/ch-details")
+def ch_details_batch(scope: str = "pipeline", limit: int = 200):
+    """Fetch Companies House API details for your pipeline or top targets, as a background job."""
+    from . import chapi, jobs
+
+    if not chapi.enabled():
+        raise HTTPException(400, "Add your Companies House API key (CH_API_KEY) to the stack first")
+    with db.conn() as c:
+        cur = jobs.current(c)
+        if cur and cur["status"] == "running":
+            raise HTTPException(409, "Another job is running; try again when it finishes")
+    _run_detached(["ch-details", "--scope", "targets" if scope == "targets" else "pipeline",
+                   "--limit", str(max(1, min(limit, 2000)))], after=clear_cache)
+    return {"started": True}
 
 
 # ---------------------------------------------------------------- owners

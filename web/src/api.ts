@@ -167,7 +167,18 @@ export interface CompanyDetail {
               debt_ratio: number | null; cash: number | null; turnover: number | null; employees: number | null }[];
   };
   ch?: {
-    enabled: boolean; fetched: { fetched_at: string; error: string | null } | null;
+    enabled: boolean;
+    fetched: { fetched_at: string; error: string | null; profile: Record<string, any>; insolvency: any[];
+               psc_statements: { statement: string; notified_on: string | null; ceased_on: string | null }[];
+               shareholders_from: string | null } | null;
+    officers: { officer_key: string; name: string; role: string | null; appointed_on: string | null; resigned_on: string | null;
+                birth_year: number | null; birth_month: number | null; occupation: string | null; nationality: string | null;
+                other_current: number; other_total: number }[];
+    other_appointments: { officer_key: string; officer_name: string; company_number: string; company_name: string | null;
+                          company_status: string | null; role: string | null; appointed_on: string | null; resigned_on: string | null;
+                          name_on_register: string | null; score: string | null }[];
+    shareholders: { name: string; shares: number | null; share_class: string | null; as_at: string | null; source: string | null; pct: number | null }[];
+    late_filings: { made_up_to: string; filed_on: string; days_late: number }[];
     charges: { charge_id: string; status: string | null; classification: string | null; holders: string[]; created_on: string | null;
                satisfied_on: string | null; particulars: string | null }[];
     filings: { transaction_id: string; filed_on: string | null; type: string | null; description: string | null }[];

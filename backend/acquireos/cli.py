@@ -55,6 +55,9 @@ def main(argv=None):
     sub.add_parser("demo", help="Load a fictional demo dataset (for trying the app out)")
     sub.add_parser("rescore", help="Recompute scores against the active buy box")
     sub.add_parser("score-pending", help="Score buy boxes marked as needing it (used by the web app)")
+    p = sub.add_parser("ch-details", help="Fetch Companies House API details (needs CH_API_KEY) for your pipeline or top targets")
+    p.add_argument("--scope", choices=["pipeline", "targets"], default="pipeline")
+    p.add_argument("--limit", type=int, default=200)
 
     a = ap.parse_args(argv)
     if a.cmd == "new-token":
@@ -66,6 +69,37 @@ def main(argv=None):
         from .fetch import scheduler
 
         scheduler()
+        return
+    if a.cmd == "ch-details":
+        from . import chapi, jobs
+
+        with db.conn(dedicated=True) as c:
+            if a.scope == "pipeline":
+                nums = [r["company_number"] for r in c.execute(
+                    """select company_number from user_company where user_id = 1
+                       and status not in ('new', 'passed', 'rejected') order by updated_at desc limit %s""", (a.limit,))]
+            else:
+                nums = [r["company_number"] for r in c.execute(
+                    """select cb.company_number from company_best cb
+                       where not exists (select 1 from user_company uc where uc.company_number = cb.company_number
+                                         and uc.status in ('passed', 'rejected'))
+                       order by cb.score desc limit %s""", (a.limit,))]
+            job = jobs.Job("ch-details", ["Companies House details"])
+            job.stage("Companies House details")
+            done = 0
+            try:
+                for i, num in enumerate(nums):
+                    job.check_cancel()
+                    chapi.fetch(c, num)
+                    c.commit()
+                    done += 1
+                    job.progress((i + 1) / max(len(nums), 1), f"{i + 1:,} of {len(nums):,} companies")
+                job.finish({"companies": done})
+            except jobs.Cancelled:
+                job.finish({"companies": done}, status="cancelled")
+            except Exception as e:
+                job.finish({"companies": done}, status="failed", error=str(e))
+                raise
         return
     if a.cmd == "score-pending":
         from .api import score_pending

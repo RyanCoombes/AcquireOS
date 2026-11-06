@@ -30,7 +30,7 @@ Finding websites and enriching: call research_brief (every name the company may 
 address, owners, parent and subsidiaries, and search queries), search the web with those queries, then
 check_website with the most likely site: it confirms the site by the company number or postcode on it
 and saves it. Then classify with save_enrichment. find_website tries likely domains by itself.
-Investment: get_charges_and_investment shows charge holders, share issues and investor owners.
+Directors, shareholders, charges, filings and investment signals: get_charges_and_investment.
 Start with dataset_overview, list_targets, search_companies or audit_queue."""
 
 server = MCPServer(name="AcquireOS", instructions=INSTRUCTIONS)
@@ -249,8 +249,10 @@ def get_financials(company_number: str) -> str:
 
 
 @server.tool(description=(
-    "Charges (secured loans) with who holds them, share issues and other signs of outside investment. "
-    "refresh=true fetches the latest from the Companies House API (needs the user's CH_API_KEY)."))
+    "Companies House details: directors (ages, tenure) and their other companies, shareholders from the latest "
+    "confirmation statement that lists them, charges and who holds them, filing history incl. late accounts, "
+    "insolvency, owner statements, and signs of outside investment. refresh=true fetches the latest "
+    "(needs the user's CH_API_KEY; about 10 seconds a company)."))
 def get_charges_and_investment(company_number: str, refresh: bool = False) -> str:
     from . import chapi
 
@@ -265,7 +267,9 @@ def get_charges_and_investment(company_number: str, refresh: bool = False) -> st
         counts = c.execute(
             """select charges_total, charges_outstanding, charges_part_satisfied, charges_satisfied
                from company where company_number = %s""", (num,)).fetchone()
-        return _j({"counts_from_register": counts, **chapi.details(c, num), "note": note})
+        d = chapi.details(c, num)
+        d["filings"] = d["filings"][:40]
+        return _j({"counts_from_register": counts, **d, "note": note})
 
 
 @server.tool(description=(

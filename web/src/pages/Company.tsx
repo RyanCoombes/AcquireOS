@@ -7,7 +7,7 @@ import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
 import MyScores from "../components/MyScores";
 import { Enrichment, Location } from "../components/CompanyExtras";
-import { Charges, FinancialOverview, WebsiteFinder } from "../components/Profile";
+import { Charges, Filings, FinancialOverview, Head, People, Shareholders, WebsiteFinder } from "../components/Profile";
 import { ageFrom, CHANGE_KIND, chUrl, date, dateTime, describeChange, int, isBadStatus, LINK_KIND, money, MONTHS, OWNERSHIP, range, relDays, toNum, years } from "../format";
 
 
@@ -59,18 +59,24 @@ export default function Company() {
           <div className="crumb">
             <a href="/companies" onClick={(e) => { if (window.history.length > 1) { e.preventDefault(); nav(-1); } }}>← Back</a> / {c.company_number}
           </div>
-          <h1>{c.name}</h1>
-          <div className="lede">
-            {c.status ? (isBadStatus(c.status) ? <span className="tag red" style={{ marginLeft: 0 }}>{cap(c.status)}{c.dissolution_date ? ` ${date(c.dissolution_date)}` : ""}</span> : cap(c.status)) : "Status unknown"}
-            {c.incorporation_date ? ` · incorporated ${date(c.incorporation_date)}` : ""}
-            {c.region ? ` · ${c.region}` : ""}
-            {" · "}<a href={chUrl(c.company_number)} target="_blank" rel="noreferrer">Companies House record ↗</a>
+          <h1 className="coname">{c.name}</h1>
+          <div className="chips">
+            <span className={`chip ${isBadStatus(c.status) ? "red" : "green"}`}>{c.status ? cap(c.status) : "Status unknown"}{c.dissolution_date ? ` ${date(c.dissolution_date)}` : ""}</span>
+            <span className="chip">No. {c.company_number}</span>
+            {c.incorporation_date && <span className="chip">Since {c.incorporation_date.slice(0, 4)} · {years(c.incorporation_date)} yrs</span>}
+            {c.region && <span className="chip">{c.postcode ? `${c.postcode.split(" ")[0]} · ` : ""}{c.region}</span>}
+            {c.accounts_category && <span className="chip">{accountsLabel(c.accounts_category).replace(/ accounts?.*$/, "").replace(/^./, (x) => x.toUpperCase())}</span>}
+            {own && own.ownership_type !== "unknown" && <span className="chip teal">{OWNERSHIP[own.ownership_type]}</span>}
+            {data.enrichment?.website && <a className="chip link" href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")} ↗</a>}
           </div>
         </div>
-        <div className="right"><Link className="btn" to={`/connections/${c.company_number}`}>Connection map</Link></div>
+        <div className="right">
+          <a className="btn quiet" href={chUrl(c.company_number)} target="_blank" rel="noreferrer">Companies House ↗</a>
+          <Link className="btn" to={`/connections/${c.company_number}`}>Connection map</Link>
+        </div>
       </div>
 
-      <div className="factline">
+      <div className="factline stats">
         <div><b><Score value={score && !score.excluded ? score.score : null} coverage={score?.coverage} /></b>
           <span>{score?.excluded ? `Outside ${shownName}` : `Score in ${shownName}`}{score && !score.excluded ? ` · ${Math.round(Number(score.coverage))}% had data` : ""}</span></div>
         <div><b>{int(latest?.employees)}</b><span>Staff{latest ? ` · ${date(latest.period_end)}` : ""}</span></div>
@@ -92,21 +98,21 @@ export default function Company() {
       <div className="company-grid">
         <div className="main">
           <nav className="secnav" aria-label="Sections">
-            {[["overview", "Overview"], ["financials", "Financials"], ["ownership", "Ownership"], ["charges", "Charges"],
-              ["group", "Group"], ["score", "Score"], ["value", "Value"], ["research", "Research"], ["changes", "History"]].map(([id, l]) => (
+            {[["overview", "Overview"], ["financials", "Financials"], ["ownership", "Ownership"], ["people", "Directors"],
+              ["charges", "Charges"], ["filings", "Filings"], ["group", "Group"], ["score", "Score"], ["value", "Value"],
+              ["research", "Research"], ["changes", "History"]].map(([id, l]) => (
               <a key={id} href={`#${id}`} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{l}</a>
             ))}
           </nav>
           <section id="overview">
-            <h2>Overview</h2>
+            <Head icon="overview" title="Overview" />
             <p className="summary">{overviewSentence(data)}</p>
             <dl className="facts">
-              <dt>Company number</dt><dd>{c.company_number}</dd>
               <dt>Type</dt><dd>{companyType(c.company_type)}</dd>
               <dt>Industry</dt><dd>{data.sics.length ? data.sics.map((x) => <div key={x.code}>{x.description} <span className="faint">· {x.code}</span></div>) : c.sic_codes.join(", ") || "—"}</dd>
               {data.enrichment?.website && <><dt>Website</dt><dd><a href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "")} ↗</a></dd></>}
               <dt>Registered office</dt><dd>{c.registered_address ?? "—"} <Flags address={c.address_flag} /></dd>
-              <dt>Review tier</dt><dd>{c.review_tier ?? "—"}</dd>
+              {c.review_tier && <><dt>Review tier</dt><dd>{c.review_tier}</dd></>}
               {c.last_accounts_date && <><dt>Last accounts</dt><dd>Made up to {date(c.last_accounts_date)}
                 {c.accounts_category ? <span className="faint"> · {accountsLabel(c.accounts_category)}</span> : null}</dd></>}
               {c.accounts_next_due && <><dt>Next accounts due</dt><dd className={overdue(c.accounts_next_due, c.status) ? "neg" : ""}>
@@ -116,7 +122,7 @@ export default function Company() {
               {c.previous_names && c.previous_names.length > 0 && <><dt>Previous names</dt><dd>
                 {c.previous_names.map((p, i) => <div key={i}>{p.name}{p.until ? <span className="faint"> · until {date(p.until)}</span> : null}</div>)}
               </dd></>}
-              <dt>Source</dt><dd>{c.source ?? "—"} · updated {dateTime(c.updated_at)} ({relDays(c.updated_at)})</dd>
+              <dt>Updated</dt><dd className="muted">{relDays(c.updated_at)} · {c.source ?? "—"}</dd>
             </dl>
             {Object.keys(c.extra ?? {}).length > 0 && (
               <details className="small" style={{ marginTop: 8 }}>
@@ -127,7 +133,7 @@ export default function Company() {
           </section>
 
           <section id="financials">
-            <div className="sechead"><h2>Financials</h2><span className="faint small">{(() => { const n = fin.filter((f) => !f.period_inferred).length; return `${n} ${n === 1 ? "year" : "years"} from filed accounts`; })()}{fin.some((f) => f.period_inferred) ? "; dashed points are prior-year figures with an inferred date" : ""}</span></div>
+            <Head icon="money" tone="green" title="Financials" aside={(() => { const n = fin.filter((f) => !f.period_inferred).length; return `${n} ${n === 1 ? "year" : "years"} filed`; })()} />
             {fin.length ? (
               <>
                 {data.fin_summary && <FinancialOverview s={data.fin_summary} />}
@@ -165,7 +171,7 @@ export default function Company() {
           </section>
 
           <section id="ownership">
-            <div className="sechead"><h2>Ownership</h2><Flags flags={own?.flags} address={c.address_flag} /></div>
+            <Head icon="owners" tone="orange" title="Ownership" aside={<Flags flags={own?.flags} address={c.address_flag} />} />
             {own ? (
               <>
                 <p style={{ margin: "0 0 10px" }}><b>{OWNERSHIP[own.ownership_type] ?? own.ownership_type}.</b> <span className="muted">{own.explanation}</span></p>
@@ -206,14 +212,17 @@ export default function Company() {
                 )}
               </>
             ) : (
-              <div className="faint">No owner data yet. Owners load with the Companies House refresh (see the Data page). Some companies file no owner details.</div>
+              <div className="faint">No owner records on file.</div>
             )}
+            <Shareholders data={data} />
           </section>
 
+          <People data={data} />
           <Charges data={data} num={num} onFetched={reload} />
+          <Filings data={data} />
 
           <section id="group">
-            <div className="sechead"><h2>Group and connections</h2><span className="right"><Link to={`/connections/${c.company_number}`}>Open map</Link></span></div>
+            <Head icon="group" tone="blue" title="Group and connections" right={<Link to={`/connections/${c.company_number}`}>Open map</Link>} />
             {data.links.length ? (
               <table>
                 <thead><tr><th>Company</th><th>Link</th><th>Confidence</th><th className="hide-sm">Evidence</th></tr></thead>
@@ -236,8 +245,7 @@ export default function Company() {
 
           <h2 className="partline">Your assessment</h2>
           <section id="score">
-            <div className="sechead"><h2>Why this score</h2>
-              <span className="right"><Link to={`/buy-box?id=${shownId}`}>Edit {shownName}</Link></span></div>
+            <Head icon="target" title="Why this score" right={<Link to={`/buy-box?id=${shownId}`}>Edit {shownName}</Link>} />
             {scores.length > 1 && (
               <div className="boxtabs" role="tablist" aria-label="Score in each buy box">
                 {scores.map((x) => (
@@ -283,7 +291,7 @@ export default function Company() {
           <Location data={data} />
 
           <section id="changes">
-            <div className="sechead"><h2>Change history</h2><span className="faint small">What differed each time new data was imported.</span></div>
+            <Head icon="clock" tone="grey" title="Change history" />
             {data.changes.length ? (
               <table>
                 <tbody>
@@ -577,31 +585,26 @@ function BalanceSheet({ fin }: { fin: CompanyDetail["financials"] }) {
 }
 
 
-/** One plain-English paragraph about the company, from the facts on file. */
+/** A few short sentences about the company, from the facts on file. */
 function overviewSentence(d: CompanyDetail): string {
   const c = d.company;
-  const yrs = c.incorporation_date ? Math.floor((Date.now() - new Date(c.incorporation_date).getTime()) / 3.156e10) : null;
   const latest = [...d.financials].reverse().find((f) => !f.period_inferred);
   const town = (c.registered_address ?? "").split(",").map((x) => x.trim()).filter((x) => x && !/\d/.test(x)).slice(-1)[0];
-  const parts: string[] = [];
-  parts.push(`${c.name} is ${c.status && c.status !== "active" ? `a ${c.status} ` : "an active "}${companyType(c.company_type).toLowerCase().replace(/^—$/, "company")}` +
-    (c.incorporation_date ? `, incorporated ${date(c.incorporation_date)}${yrs !== null ? ` (${yrs} years ago)` : ""}` : "") +
-    (town ? `, registered in ${town}${c.region ? `, ${c.region}` : ""}` : "") + ".");
-  if (d.sics.length) parts.push(`Its business is ${d.sics.map((x) => x.description.toLowerCase()).join(" and ")}.`);
+  const out: string[] = [];
+  out.push(`${companyType(c.company_type).replace(/^—$/, "Company")}${town ? ` in ${town}` : ""}${c.incorporation_date ? `, founded ${c.incorporation_date.slice(0, 4)}` : ""}.`);
+  if (d.sics.length) out.push(d.sics.map((x) => x.description).join("; ") + ".");
   if (latest) {
     const bits = [latest.employees != null ? `${latest.employees.toLocaleString("en-GB")} staff` : null,
-                  latest.turnover ? `turnover of ${money(latest.turnover)}` : null,
-                  latest.net_assets != null ? `net assets of ${money(latest.net_assets)}` : null].filter(Boolean);
-    if (bits.length) parts.push(`Its latest accounts, to ${date(latest.period_end)}, show ${bits.join(", ")}.`);
+                  latest.turnover ? `${money(latest.turnover)} turnover` : null,
+                  latest.net_assets != null ? `${money(latest.net_assets)} net assets` : null].filter(Boolean);
+    if (bits.length) out.push(`${bits.join(", ")} (year to ${date(latest.period_end)}).`);
   }
   if (d.ownership && d.ownership.ownership_type !== "unknown") {
-    const n = d.ownership.owner_count;
-    parts.push(`It is ${(OWNERSHIP[d.ownership.ownership_type] ?? d.ownership.ownership_type).toLowerCase()}` +
-      (n ? `, with ${n} individual owner${n === 1 ? "" : "s"} traced` : "") +
-      (d.ownership.oldest_birth_year ? `; the oldest is about ${new Date().getFullYear() - d.ownership.oldest_birth_year}` : "") + ".");
+    out.push(`${OWNERSHIP[d.ownership.ownership_type] ?? d.ownership.ownership_type}` +
+      (d.ownership.oldest_birth_year ? `; oldest owner about ${new Date().getFullYear() - d.ownership.oldest_birth_year}` : "") + ".");
   }
-  if (c.charges_outstanding) parts.push(`It has ${c.charges_outstanding} outstanding charge${c.charges_outstanding === 1 ? "" : "s"} (secured lending).`);
-  return parts.join(" ");
+  if (c.charges_outstanding) out.push(`${c.charges_outstanding} outstanding charge${c.charges_outstanding === 1 ? "" : "s"}.`);
+  return out.join(" ");
 }
 
 const COMPANY_TYPES: Record<string, string> = {
