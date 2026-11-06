@@ -86,7 +86,12 @@ export default function Connect() {
         <table>
           <tbody>
             {[
-              ["dataset_overview, search_companies, get_company, list_changes", "Answer questions: “owner-held MSPs in Wales with 20–60 staff and an owner over 60”."],
+              ["dataset_overview, list_targets, search_companies, get_company, list_changes", "Answer questions: “owner-held MSPs in Wales with 20–60 staff and an owner over 60”."],
+              ["get_financials, compare_companies", "Each figure's trend year on year (assets, liabilities, debt ratio, cash, staff), and companies side by side."],
+              ["search_owners, get_owner", "Find an owner by name and everything they control, directly or through holding companies."],
+              ["get_charges_and_investment", "Who holds each charge, share issues and investor owners (charge holders and share issues need your Companies House key)."],
+              ["research_brief, check_website, find_website", "Every name the company may trade under, its owners and search queries; then a website is saved only when its company number or postcode is on it."],
+              ["list_pipeline, set_next_action, log_outreach", "Your pipeline, next actions and outreach log. Writes only when you ask."],
               ["describe_database, query_database", "Read-only SQL over everything, for audits and one-off analysis (15 second limit, 500 rows)."],
               ["audit_queue", "Companies missing a website, research, owners, filed turnover or a field-service check; or with a SIC code that doesn't match the name. Pipeline first, then by score."],
               ["save_enrichment", "Saves website, business type, recurring revenue, field service and a summary. A source link is required; the company is rescored straight away."],
@@ -100,6 +105,9 @@ export default function Connect() {
       <section>
         <h2>Try asking</h2>
         <Copy text={`Use the audit_and_enrich prompt from AcquireOS on my top 10 targets without a website.`} />
+        <Copy text={`In AcquireOS, find the website for each of my top 20 targets: use research_brief, search the web, and confirm with check_website. Then summarise what each sells.`} />
+        <Copy text={`Which of my AcquireOS targets show signs of outside investment? Refresh charges for the top 30 and list any investor owners, investor charge holders or share issues.`} />
+        <Copy text={`Compare 01000001, 01000002 and 01000003 in AcquireOS: financial trends, owners, value and debt.`} />
         <Copy text={`From AcquireOS, which owner-held companies scoring over 70 have an owner aged 60+ and grew staff in the last two years? Show a table.`} />
         <Copy text={`Audit AcquireOS for companies whose SIC code doesn't match what their website says they do, and flag each one as a data issue.`} />
       </section>

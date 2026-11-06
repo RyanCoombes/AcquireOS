@@ -313,3 +313,29 @@ def test_profile_financials_brief_website_and_charges(loaded, monkeypatch):
         assert r["fetched_charges"] == 1 and r["fetched_filings"] == 1 and len(r["charges"]) == 1
         kinds = [s["kind"] for s in r["signals"]]
         assert "charge" in kinds and "allotment" in kinds
+
+
+def test_mcp_tools_cover_owners_financials_research_and_pipeline(loaded):
+    import json as _j
+
+    from acquireos import mcp_server as m
+
+    loaded.commit()
+    from acquireos.api import app
+    with TestClient(app):
+        t = _j.loads(m.list_targets(limit=10))
+        assert t["companies"] and all(c["score"] is not None for c in t["companies"])
+        o = _j.loads(m.search_owners("alex example"))["rows"]
+        assert o and _j.loads(m.get_owner(o[0]["id"]))["companies"]
+        f = _j.loads(m.get_financials("01000001"))
+        assert f["summary"]["rows"]
+        b = _j.loads(m.research_brief("01000002"))
+        assert b["search_queries"]
+        ch = _j.loads(m.get_charges_and_investment("01000001", refresh=True))
+        assert ch["enabled"] is False and "API key" in (ch["note"] or "")
+        assert "rows" in _j.loads(m.list_pipeline())
+        cmp = _j.loads(m.compare_companies(["01000001", "01000002", "XX999999"]))
+        assert cmp[0]["name"] and "error" in cmp[2]
+        r = _j.loads(m.log_outreach("01000001", "Sent intro letter", channel="letter", follow_up_on="2026-12-01"))
+        assert r["company_number"] == "01000001"
+        assert _j.loads(m.get_company("01000001"))["state"]["next_action_on"] == "2026-12-01"

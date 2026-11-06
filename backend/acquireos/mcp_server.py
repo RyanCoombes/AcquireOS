@@ -26,7 +26,12 @@ Ground rules:
 - Use save_enrichment for researched facts and flag_data_issue for problems in the data.
 - Only use add_note or set_status when the user explicitly asks you to change their notes or pipeline.
 - Owner names and birth dates are personal data: use them for this research only.
-Start with dataset_overview, search_companies or audit_queue."""
+Finding websites and enriching: call research_brief (every name the company may trade under, its
+address, owners, parent and subsidiaries, and search queries), search the web with those queries, then
+check_website with the most likely site: it confirms the site by the company number or postcode on it
+and saves it. Then classify with save_enrichment. find_website tries likely domains by itself.
+Investment: get_charges_and_investment shows charge holders, share issues and investor owners.
+Start with dataset_overview, list_targets, search_companies or audit_queue."""
 
 server = MCPServer(name="AcquireOS", instructions=INSTRUCTIONS)
 
@@ -54,11 +59,12 @@ def dataset_overview() -> str:
 def search_companies(query: str | None = None, region: str | None = None, min_score: float | None = None,
                      ownership: str | None = None, status: str | None = None, min_staff: int | None = None,
                      max_staff: int | None = None, min_owner_age: int | None = None, sic: str | None = None,
-                     changed_days: int | None = None, include_excluded: bool = False, sort: str = "score",
+                     changed_days: int | None = None, include_excluded: bool = False, sort: str | None = None,
                      limit: int = 25) -> str:
     r = _api().companies(q=query, region=region, min_score=min_score, ownership=ownership, status=status,
                          min_staff=min_staff, max_staff=max_staff, min_owner_age=min_owner_age, sic=sic,
-                         changed_days=changed_days, include_excluded=include_excluded, sort=sort,
+                         changed_days=changed_days, include_excluded=include_excluded,
+                         sort=sort or ("relevance" if query else "score"),
                          limit=max(1, min(limit, 200)))
     keep = ("company_number", "name", "region", "postcode", "sic_codes", "employees", "revenue_low", "revenue_high",
             "revenue_basis", "value_low", "value_high", "ownership_type", "oldest_birth_year", "flags", "score",
@@ -201,15 +207,155 @@ def set_my_score(company_number: str, criterion_key: str, value: int | None, not
                                 _api().ManualIn(key=criterion_key, value=value, note=note)))
 
 
+@server.tool(description=(
+    "Companies in the user's buy boxes, best score first (the Targets list). buy_box: a buy box id from "
+    "list_buy_boxes, or omit for any. show: hide_closed (default: hides passed and rejected) | all | pipeline | untouched. "
+    "Other filters as search_companies."))
+def list_targets(buy_box: int | None = None, show: str = "hide_closed", region: str | None = None,
+                 min_score: float | None = None, ownership: str | None = None, min_staff: int | None = None,
+                 max_staff: int | None = None, min_owner_age: int | None = None, sic: str | None = None,
+                 limit: int = 25) -> str:
+    r = _api().companies(bb=str(buy_box) if buy_box else "all", in_box=True, mine=None if show == "all" else show,
+                         region=region, min_score=min_score, ownership=ownership, min_staff=min_staff,
+                         max_staff=max_staff, min_owner_age=min_owner_age, sic=sic, sort="score",
+                         limit=max(1, min(limit, 200)))
+    keep = ("company_number", "name", "region", "postcode", "employees", "revenue_low", "revenue_high", "revenue_basis",
+            "value_low", "value_high", "ownership_type", "oldest_birth_year", "score", "box_name", "status",
+            "accounts_category", "charges_outstanding", "website")
+    return _j({"total": r["total"], "companies": [{k: row.get(k) for k in keep} for row in r["rows"]]})
+
+
+@server.tool(description="Find owners (persons with significant control) by name, with how many companies each controls. "
+                         "Then get_owner for everything one owner holds.")
+def search_owners(name: str, limit: int = 25) -> str:
+    return _j(_api().owners(q=name, limit=max(1, min(limit, 100))))
+
+
+@server.tool(description="One owner and every company they control: directly, through holding companies, and in the past.")
+def get_owner(owner_id: int) -> str:
+    return _j(_api().owner(owner_id))
+
+
+@server.tool(description=("A company's financial trends: each year's figures (total assets and liabilities worked out "
+                          "from the accounts), the change on the year before, and a plain-English trend per figure."))
+def get_financials(company_number: str) -> str:
+    from . import fintrends
+
+    num = company_number.strip().upper()
+    with db.conn() as c:
+        fin = c.execute("select * from financial_period where company_number = %s order by period_end", (num,)).fetchall()
+        est = c.execute("select * from estimate where company_number = %s", (num,)).fetchone()
+    return _j({"summary": fintrends.summary(fin), "revenue_estimate": est})
+
+
+@server.tool(description=(
+    "Charges (secured loans) with who holds them, share issues and other signs of outside investment. "
+    "refresh=true fetches the latest from the Companies House API (needs the user's CH_API_KEY)."))
+def get_charges_and_investment(company_number: str, refresh: bool = False) -> str:
+    from . import chapi
+
+    num = company_number.strip().upper()
+    with db.conn() as c:
+        note = None
+        if refresh:
+            try:
+                chapi.fetch(c, num)
+            except chapi.NoKey as e:
+                note = str(e)
+        counts = c.execute(
+            """select charges_total, charges_outstanding, charges_part_satisfied, charges_satisfied
+               from company where company_number = %s""", (num,)).fetchone()
+        return _j({"counts_from_register": counts, **chapi.details(c, num), "note": note})
+
+
+@server.tool(description=(
+    "Everything for finding a company online: current, previous, parent and subsidiary names (a website is "
+    "often under one of these), registered address and town, owners, industry, domain guesses and ready-made "
+    "web search queries, and how to confirm a site."))
+def research_brief(company_number: str) -> str:
+    return _j(_api().research_brief(company_number.strip().upper()))
+
+
+@server.tool(description=(
+    "Check a website for a company: fetches it (and its contact, about and legal pages) and confirms it by the "
+    "company number (high) or registered postcode (medium) on the site. A confirmed site is saved as the "
+    "company's website with the page as its source."))
+def check_website(company_number: str, url: str) -> str:
+    return _j(_api().find_website(company_number.strip().upper(), _api().WebsiteCheckIn(url=url)))
+
+
+@server.tool(description="Try likely domains from the company's names and save one confirmed by its company number or postcode.")
+def find_website(company_number: str) -> str:
+    return _j(_api().find_website(company_number.strip().upper(), None))
+
+
+@server.tool(description="The user's pipeline: companies by stage, with checklist progress, next actions and last notes.")
+def list_pipeline() -> str:
+    d = _api().pipeline()
+    keep = ("company_number", "name", "status", "score", "value_low", "value_high", "next_action", "next_action_on",
+            "stage_entered_at", "tasks_done", "tasks_total", "last_note", "rating")
+    return _j({"rows": [{k: r.get(k) for k in keep} for r in d["rows"]]})
+
+
+@server.tool(description="Set the next action (and its date, YYYY-MM-DD) on a company. Only when the user asks.")
+def set_next_action(company_number: str, action: str, on: str | None = None) -> str:
+    body = {"next_action": action or None}
+    if on:
+        body["next_action_on"] = on
+    return _j(_api().set_state(company_number.strip().upper(), _api().StateIn(**body)))
+
+
+@server.tool(description=(
+    "Log contact with a company (letter, email, call, meeting...) on the user's outreach record. Only when the user "
+    "asks. follow_up_on (YYYY-MM-DD) also sets the company's next action."))
+def log_outreach(company_number: str, summary: str, channel: str = "email", contact_name: str = "Owner",
+                 contact_role: str = "owner", happened_on: str | None = None, follow_up_on: str | None = None) -> str:
+    num = company_number.strip().upper()
+    nxt = f"Follow up: {summary[:80]}" if follow_up_on else None
+    r = _api().outreach_add(_api().OutreachIn(company_number=num, contact_name=contact_name, contact_role=contact_role,
+                                              channel=channel, summary=summary, happened_on=happened_on,
+                                              next_action=nxt, next_action_on=follow_up_on))
+    if follow_up_on:
+        _api().set_state(num, _api().StateIn(next_action=nxt, next_action_on=follow_up_on))
+    return _j(r)
+
+
+@server.tool(description="Side-by-side key facts for 2 to 8 companies: score, staff, revenue, value, owners, trends.")
+def compare_companies(company_numbers: list[str]) -> str:
+    from . import fintrends
+
+    out = []
+    for raw in company_numbers[:8]:
+        num = raw.strip().upper()
+        try:
+            d = _api().company(num)
+        except Exception as e:  # unknown number
+            out.append({"company_number": num, "error": str(e)})
+            continue
+        fs = fintrends.summary(d["financials"])
+        own = d["ownership"] or {}
+        out.append({
+            "company_number": num, "name": d["company"]["name"], "status": d["company"]["status"],
+            "region": d["company"]["region"], "incorporated": d["company"]["incorporation_date"],
+            "best_score": max((float(x["score"]) for x in d["scores"] if not x["excluded"]), default=None),
+            "revenue_estimate": d["estimate"], "valuation": {k: d["valuation"].get(k) for k in ("value_low", "value_high", "basis")},
+            "ownership": own.get("ownership_type"), "oldest_owner_born": own.get("oldest_birth_year"),
+            "latest_figures": {r["label"]: {"value": r["value"], "change_pct": r["change_pct"], "trend": r["trend"]} for r in fs["rows"]},
+            "charges_outstanding": d["company"].get("charges_outstanding"), "my_status": d["state"].get("status"),
+            "website": (d["enrichment"] or {}).get("website"),
+        })
+    return _j(out)
+
+
 @server.prompt(description="Work through the audit queue: verify each company and save sourced enrichment.")
 def audit_and_enrich(batch_size: int = 10, check: str = "all") -> str:
     return f"""Please audit and enrich AcquireOS data.
 
 1. Call audit_queue(check="{check}", limit={batch_size}).
 2. For each company:
-   - Open its Companies House page (given in the result) and its own website. Find the website by searching
-     the company name plus town or postcode; confirm it is the same company (company number, address or
-     name in the site footer). If you cannot confirm it, do not save a website.
+   - Call research_brief and search the web with its queries (the site may be under a previous, parent,
+     subsidiary or trading name). Pass the most likely site to check_website: it saves it only if the
+     company number or postcode is on it. If nothing confirms, do not save a website.
    - Decide business_type, whether revenue looks recurring (contracts, subscriptions, managed services,
      support plans) and whether it does field-service or van-based work (installations, engineers on site).
    - Write a two or three sentence factual summary of what it sells and to whom.
