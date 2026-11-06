@@ -67,7 +67,7 @@ def _trend(values: list[float], higher_good: bool) -> str:
     """One sentence on the shape of the last few years (oldest first)."""
     vals = [v for v in values if v is not None]
     if len(vals) < 2:
-        return "Only one year on file"
+        return ""
     last, prev = vals[-1], vals[-2]
     change = (last - prev) / abs(prev) if prev else None
     recent = vals[-5:]

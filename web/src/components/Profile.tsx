@@ -15,7 +15,14 @@ const fmtChange = (key: string, v: number) =>
 /** Assets, net assets and liabilities over the years, like a balance-sheet strip. */
 function BalanceChart({ series }: { series: FinSummary["series"] }) {
   const pts = series.filter((s) => s.total_assets != null || s.net_assets != null);
-  if (pts.length < 2) return null;
+  if (pts.length < 2) {
+    return (
+      <div className="callout" style={{ marginBottom: 12 }}>
+        {pts.length === 1 ? "Only one year of balance-sheet figures on file, so there is no trend to chart yet." : "No balance-sheet figures on file yet."}{" "}
+        More years appear as more months of accounts are loaded (Data page: 48 months gives about five years).
+      </div>
+    );
+  }
   const W = 720, H = 240, L = 58, R = 26, T = 14, B = 26;
   const ta = pts.map((p) => p.total_assets ?? p.net_assets ?? 0);
   const na = pts.map((p) => p.net_assets ?? 0);

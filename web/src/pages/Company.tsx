@@ -131,9 +131,7 @@ export default function Company() {
             {fin.length ? (
               <>
                 {data.fin_summary && <FinancialOverview s={data.fin_summary} />}
-                <details style={{ marginTop: 12 }} open={!data.fin_summary?.rows.length}>
-                <summary className="muted" style={{ cursor: "pointer" }}>All figures by year, with charts</summary>
-                <div className="multiples" style={{ marginTop: 10 }}>
+                <div className="multiples" style={{ marginTop: 14 }}>
                   <SmallLine title="Staff" points={series("employees")} format={(n) => int(n)} />
                   <SmallLine title="Net assets" points={series("net_assets")} format={(n) => money(n)} />
                   <SmallLine title="Cash" points={series("cash")} format={(n) => money(n)} />
@@ -141,7 +139,9 @@ export default function Company() {
                   {fin.some((f) => f.turnover) && <SmallLine title="Turnover" points={series("turnover")} format={(n) => money(n)} />}
                   {fin.some((f) => f.profit_loss) && <SmallLine title="Profit" points={series("profit_loss")} format={(n) => money(n)} />}
                 </div>
-                <table style={{ marginTop: 14 }}>
+                <details style={{ marginTop: 12 }}>
+                <summary className="muted" style={{ cursor: "pointer" }}>All figures by year</summary>
+                <table style={{ marginTop: 10 }}>
                   <thead><tr><th>Period end</th><th className="num">Staff</th><th className="num">Turnover</th><th className="num">Profit</th><th className="num">Net assets</th><th className="num">Cash</th><th className="num hide-sm">Debtors</th></tr></thead>
                   <tbody>
                     {[...fin].reverse().map((f) => (
