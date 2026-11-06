@@ -299,3 +299,22 @@ def test_a_bad_accounts_file_is_fetched_again_then_skipped(loaded, monkeypatch, 
     assert sum("April" in u for u in downloads) == 2  # tried again once
     assert read == ["Accounts_Monthly_Data-March2022.zip"]  # the next month still loads
     assert "web page" in r[0]["error"] and not (tmp_path / "Accounts_Monthly_Data-April2022.zip").exists()
+
+
+def test_a_damaged_daily_zip_inside_a_monthly_zip_is_skipped(tmp_path):
+    import io
+    import zipfile
+
+    from acquireos.importers import accounts as acc
+
+    good = io.BytesIO()
+    with zipfile.ZipFile(good, "w") as z:
+        z.writestr("Prod224_0001_01000001_20270331.html", "<html></html>")
+    monthly = tmp_path / "Accounts_Monthly_Data-April2022.zip"
+    with zipfile.ZipFile(monthly, "w") as z:
+        z.writestr("Accounts_Bulk_Data-2022-04-01.zip", good.getvalue())
+        z.writestr("Accounts_Bulk_Data-2022-04-02.zip", b"this is not a zip")
+    acc.BAD_INNER.clear()
+    names = [n for n, _ in acc._members(monthly)]
+    assert names == ["Prod224_0001_01000001_20270331.html"]
+    assert "2022-04-02" in acc.BAD_INNER[0]

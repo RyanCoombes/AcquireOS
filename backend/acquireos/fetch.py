@@ -289,6 +289,8 @@ def fetch_accounts(conn, months: int = 1, keep: bool = False, skip_loaded: bool 
                 continue
             results.append({"file": name, **{x: v for x, v in r.items() if x != "messages"}})
             log(f"{name}: {r['companies_matched']:,} filings, {r['periods']:,} figures, {r['changes']:,} changes")
+            for bad in r.get("skipped_files") or []:
+                log(f"{name}: skipped a damaged file inside it: {bad}")
             if not keep:  # kept if loading failed, so a re-run does not download it again
                 path.unlink(missing_ok=True)
     return results

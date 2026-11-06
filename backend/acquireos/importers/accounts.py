@@ -321,6 +321,7 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
 
     seen = matched = periods = changes = 0
     buf: list[tuple] = []
+    BAD_INNER.clear()
     total_files = _count_members(paths)
 
     def flush():
@@ -409,7 +410,8 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
         (seen, matched, json.dumps([]), run_id),
     )
     return {"run_id": run_id, "files_seen": seen, "companies_matched": matched, "periods": periods,
-            "changes": changes, "messages": []}
+            "changes": changes, "skipped_files": list(BAD_INNER),
+            "messages": [f"Skipped a damaged file inside the zip: {b}" for b in BAD_INNER]}
 
 
 def _batch_changes(conn, run_id) -> int:
@@ -496,12 +498,31 @@ def _members(path: Path, refs: bool = False):
             if low.endswith(".zip"):
                 import io
 
-                with z.open(info) as f, zipfile.ZipFile(io.BytesIO(f.read())) as inner:
+                inner = _open_inner(z, info)
+                if inner is None:
+                    continue
+                with inner:
                     for name, read in _zip_members(inner):
                         yield (name, read, None) if refs else (name, read)
             elif low.endswith((".html", ".xhtml", ".xml")):
                 reader = (lambda i=info: z.read(i))
                 yield (info.filename, reader, (path, info.filename)) if refs else (info.filename, reader)
+
+
+# Daily zips inside a monthly zip that could not be opened (Companies House
+# archives occasionally hold a damaged one); skipped, and reported by run().
+BAD_INNER: list[str] = []
+
+
+def _open_inner(z: zipfile.ZipFile, info) -> zipfile.ZipFile | None:
+    import io
+
+    try:
+        with z.open(info) as f:
+            return zipfile.ZipFile(io.BytesIO(f.read()))
+    except (zipfile.BadZipFile, OSError, EOFError) as e:
+        BAD_INNER.append(f"{info.filename} ({e})")
+        return None
 
 
 def _zip_members(z: zipfile.ZipFile):
@@ -512,7 +533,10 @@ def _zip_members(z: zipfile.ZipFile):
             continue
         low = info.filename.lower()
         if low.endswith(".zip"):
-            with z.open(info) as f, zipfile.ZipFile(io.BytesIO(f.read())) as inner:
+            inner = _open_inner(z, info)
+            if inner is None:
+                continue
+            with inner:
                 yield from _zip_members(inner)
         elif low.endswith((".html", ".xhtml", ".xml")):
             yield info.filename, (lambda i=info: z.read(i))
