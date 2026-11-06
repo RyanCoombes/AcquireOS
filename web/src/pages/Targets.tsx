@@ -5,6 +5,7 @@ import { ErrorLine, Flags, Score, StatusMark, Toast, useAsync } from "../compone
 import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
 import MoneyInput from "../components/MoneyInput";
+import { NumField, NumRange, Select } from "../components/Filters";
 import { ageFrom, cap, CHANGE_KIND, int, isBadStatus, OWNERSHIP, range, relDays, years } from "../format";
 
 const PAGE = 100;
@@ -148,6 +149,11 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const boxName = boxId ? m?.buy_boxes.find((b) => b.id === boxId)?.name : null;
   const empty = m && m.counts.companies === 0;
   // Export exactly the list on screen: same filters and sort (up to 50,000 rows).
+  // The same filters on the map (all companies for the directory, buy-box companies for targets).
+  const mapHref = "/map?" + new URLSearchParams({
+    ...Object.fromEntries(Object.entries({ ...DEFAULTS[mode], ...query }).filter(([k, v]) => v && FILTER_KEYS.includes(k))),
+    ...(mode === "directory" ? { include_excluded: "1" } : {}),
+  });
   const exportHref = "/api/export.csv?" + new URLSearchParams(
     Object.fromEntries(Object.entries(apiParams).filter(([k]) => k !== "limit" && k !== "offset"))).toString();
 
@@ -249,6 +255,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
           </div>
         </div>
         <div className="right">
+          <Link className="btn quiet" to={mapHref}>Show on map</Link>
           <a className="btn" href={exportHref} title="Download this list, with your filters, as a spreadsheet (up to 50,000 rows)">Export this list</a>
         </div>
       </div>
@@ -406,47 +413,6 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
       )}
       <Toast msg={toast} onDone={() => setToast(null)} />
     </>
-  );
-}
-
-type SetFn = (k: string, v: string | null) => void;
-
-function Select({ label, k, query, set, options }: { label: string; k: string; query: Record<string, string>; set: SetFn; options: [string, string][] }) {
-  return (
-    <div className="field">
-      <label htmlFor={`f-${k}`}>{label}</label>
-      <select id={`f-${k}`} value={query[k] ?? ""} onChange={(e) => set(k, e.target.value)} className={query[k] ? "set" : ""}>
-        <option value="">Any</option>
-        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-      </select>
-    </div>
-  );
-}
-
-function NumField({ label, k, placeholder, query, set }: { label: string; k: string; placeholder?: string; query: Record<string, string>; set: SetFn }) {
-  return (
-    <div className="field">
-      <label htmlFor={`f-${k}`}>{label}</label>
-      <input id={`f-${k}`} type="number" min={0} key={`${k}-${query[k] ?? ""}`} placeholder={placeholder} defaultValue={query[k] ?? ""}
-             className={query[k] ? "set" : ""}
-             onBlur={(e) => set(k, e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") set(k, (e.target as HTMLInputElement).value); }} />
-    </div>
-  );
-}
-
-function NumRange({ label, lo, hi, query, set, wide }: { label: string; lo: string; hi: string; query: Record<string, string>; set: SetFn; wide?: boolean }) {
-  const style = wide ? { width: 104 } : undefined;
-  return (
-    <div className="field">
-      <label>{label}</label>
-      <div className="range">
-        <input type="number" min={0} placeholder="min" style={style} key={`${lo}-${query[lo] ?? ""}`} defaultValue={query[lo] ?? ""} className={query[lo] ? "set" : ""}
-               aria-label={`${label} minimum`} onBlur={(e) => set(lo, e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") set(lo, (e.target as HTMLInputElement).value); }} />
-        <span className="faint">to</span>
-        <input type="number" min={0} placeholder="max" style={style} key={`${hi}-${query[hi] ?? ""}`} defaultValue={query[hi] ?? ""} className={query[hi] ? "set" : ""}
-               aria-label={`${label} maximum`} onBlur={(e) => set(hi, e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") set(hi, (e.target as HTMLInputElement).value); }} />
-      </div>
-    </div>
   );
 }
 

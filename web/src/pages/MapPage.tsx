@@ -4,6 +4,8 @@ import { api } from "../api";
 import { ErrorLine, useAsync } from "../components/bits";
 import MapView, { type MapLink, type MapPoint } from "../components/MapView";
 import SicPicker from "../components/SicPicker";
+import MoneyInput from "../components/MoneyInput";
+import { NumField, NumRange, Select } from "../components/Filters";
 import { int, OWNERSHIP } from "../format";
 
 export default function MapPage() {
@@ -23,6 +25,20 @@ export default function MapPage() {
     const p = new URLSearchParams(params);
     if (!v) p.delete(k); else p.set(k, v);
     setParams(p, { replace: true });
+  };
+  const query = useMemo(() => Object.fromEntries(params.entries()), [params]);
+  const m = meta.data;
+  const saved = useAsync(() => api.searches(), []);
+  const [more, setMore] = useState(false);
+  const MORE = ["sic", "company_status", "status", "min_years", "accounts_size", "overdue", "charges", "min_value", "max_value", "changed_days", "flag"];
+  const moreActive = MORE.filter((k) => query[k]).length;
+  const active = Object.keys(query).length;
+  // A saved search from the lists: its filters, on the map (all companies unless it was a targets search).
+  const applySaved = (sp: Record<string, string>) => {
+    const p: Record<string, string> = {};
+    for (const [k, v] of Object.entries(sp)) if (v && !["sort", "dir", "page", "list", "include_excluded", "in_box"].includes(k)) p[k] = v;
+    if (sp.list !== "targets" && sp.in_box !== "1") p.include_excluded = "1";
+    setParams(new URLSearchParams(p), { replace: true });
   };
 
   const points: MapPoint[] = (data.data?.points ?? []).map((p: any) => ({ ...p, label: `${p.company_number} · ${p.postcode}` }));
@@ -57,39 +73,65 @@ export default function MapPage() {
             <button className={params.get("include_excluded") === "1" ? "on" : ""} onClick={() => set("include_excluded", "1")}>All companies</button>
           </div>
         </div>
+        <Select label="Buy box" k="bb" query={query} set={set} options={(m?.buy_boxes ?? []).map((b) => [String(b.id), b.name])} />
         <div className="field">
-          <label htmlFor="m-bb">Buy box</label>
-          <select id="m-bb" value={params.get("bb") ?? ""} onChange={(e) => set("bb", e.target.value)}>
-            <option value="">Any</option>
-            {meta.data?.buy_boxes.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          <label htmlFor="f-mine">Decided</label>
+          <select id="f-mine" value={query.mine ?? "all"} className={query.mine ? "set" : ""} onChange={(e) => set("mine", e.target.value === "all" ? null : e.target.value)}>
+            <option value="all">Everything</option>
+            <option value="hide_closed">Hide passed and rejected</option>
+            <option value="pipeline">Only my pipeline</option>
+            <option value="untouched">Only not looked at yet</option>
           </select>
         </div>
-        <div className="field">
-          <label htmlFor="m-score">Score at least</label>
-          <input id="m-score" type="number" min={0} max={100} defaultValue={params.get("min_score") ?? ""} onBlur={(e) => set("min_score", e.target.value)} />
+        <NumField label="Score" k="min_score" placeholder="at least" query={query} set={set} />
+        <NumRange label="Staff" lo="min_staff" hi="max_staff" query={query} set={set} />
+        <NumField label="Owner aged" k="min_owner_age" placeholder="at least" query={query} set={set} />
+        <Select label="Region" k="region" query={query} set={set} options={(m?.regions ?? []).map((r) => [r, r])} />
+        <Select label="Ownership" k="ownership" query={query} set={set} options={Object.entries(OWNERSHIP)} />
+        <button className="btn quiet" onClick={() => setMore(!more)} aria-expanded={more}>{more ? "Fewer filters" : `More filters${moreActive ? ` (${moreActive})` : ""}`}</button>
+        <div className="band-actions">
+          {saved.data && saved.data.length > 0 && (
+            <select aria-label="Saved search" value="" onChange={(e) => { const s = saved.data!.find((x) => String(x.id) === e.target.value); if (s) applySaved(s.params); }}>
+              <option value="">Saved searches…</option>
+              {saved.data.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          )}
+          {active > 0 && <button className="btn quiet" onClick={() => setParams(new URLSearchParams(), { replace: true })}>Clear</button>}
+          <span className="faint small">{data.data ? `${int(data.data.located)} of ${int(data.data.total)} on the map` : ""}</span>
         </div>
-        <div className="field">
-          <label htmlFor="m-own">Ownership</label>
-          <select id="m-own" value={params.get("ownership") ?? ""} onChange={(e) => set("ownership", e.target.value)}>
-            <option value="">Any</option>
-            {Object.entries(OWNERSHIP).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="m-status">My status</label>
-          <select id="m-status" value={params.get("status") ?? ""} onChange={(e) => set("status", e.target.value)}>
-            <option value="">Any</option>
-            {meta.data?.statuses.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-          </select>
-        </div>
-        <div className="field" style={{ minWidth: 320 }}>
-          <label>Industry (SIC)</label>
-          <SicPicker value={(params.get("sic") ?? "").split(",").filter(Boolean)} onChange={(v) => set("sic", v.join(","))} />
-        </div>
-        <label className="check"><input type="checkbox" checked={showLinks} onChange={(e) => setShowLinks(e.target.checked)} />Ownership links</label>
-        <div className="band-actions faint small">
-          {data.data ? `${int(data.data.located)} of ${int(data.data.total)} located` : ""}
-        </div>
+        {more && (
+          <div className="band-more">
+            <div className="field" style={{ flexBasis: "100%" }}>
+              <label>Industry (SIC)</label>
+              <SicPicker value={(params.get("sic") ?? "").split(",").filter(Boolean)} width="100%" onChange={(v) => set("sic", v.join(","))} />
+            </div>
+            <Select label="Company status" k="company_status" query={query} set={set} options={(m?.status_groups ?? []).map((g) => [g.value, g.label])} />
+            <Select label="My status" k="status" query={query} set={set} options={(m?.statuses ?? []).map((x) => [x.value, x.label])} />
+            <NumField label="Years trading" k="min_years" placeholder="at least" query={query} set={set} />
+            <Select label="Accounts filed" k="accounts_size" query={query} set={set} options={(m?.account_sizes ?? []).map((g) => [g.value, g.label])} />
+            <Select label="Overdue filings" k="overdue" query={query} set={set}
+                    options={[["any", "Accounts or confirmation"], ["accounts", "Accounts overdue"], ["confirmation", "Confirmation statement overdue"]]} />
+            <Select label="Charges (secured loans)" k="charges" query={query} set={set}
+                    options={[["outstanding", "Has outstanding charges"], ["none", "No outstanding charges"]]} />
+            <div className="field">
+              <label>Indicative value</label>
+              <div className="range">
+                <MoneyInput value={query.min_value ? Number(query.min_value) : null} commit="blur" width={120} placeholder="min, e.g. 500k"
+                            aria-label="Indicative value minimum" onChange={(v) => set("min_value", v === null ? null : String(v))} />
+                <span className="faint">to</span>
+                <MoneyInput value={query.max_value ? Number(query.max_value) : null} commit="blur" width={120} placeholder="max, e.g. 3m"
+                            aria-label="Indicative value maximum" onChange={(v) => set("max_value", v === null ? null : String(v))} />
+              </div>
+            </div>
+            <Select label="Changed in" k="changed_days" query={query} set={set}
+                    options={[["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"], ["365", "Last year"]]} />
+            <Select label="Flag" k="flag" query={query} set={set} options={[
+              ["recent_change", "Recent ownership change"], ["via_holdco", "Owned via holdco"], ["foreign_parent", "Foreign parent"],
+              ["investor", "Investor"], ["trust", "Trust"], ["eot", "EOT"], ["mass_address", "Shared address"],
+            ]} />
+          </div>
+        )}
+        <label className="check" style={{ flexBasis: "100%" }}><input type="checkbox" checked={showLinks} onChange={(e) => setShowLinks(e.target.checked)} />Show ownership links</label>
       </div>
       <ErrorLine error={data.error} />
       {meta.data && (
