@@ -68,6 +68,7 @@ def migrate(url: str | None = None) -> list[str]:
             "create table if not exists schema_migration ("
             "name text primary key, applied_at timestamptz not null default now())"
         )
+        c.execute("select pg_advisory_xact_lock(727001)")  # one process migrates at a time
         done = {r["name"] for r in c.execute("select name from schema_migration")}
         files = sorted(
             p for p in resources.files("acquireos.migrations").iterdir() if p.name.endswith(".sql")

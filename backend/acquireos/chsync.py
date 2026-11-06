@@ -119,6 +119,19 @@ def _beat(conn, state: str, **extra):
 def run_forever():
     """The sync loop. Never raises: problems are logged and retried later."""
     log(f"started (API key {'set' if chapi.enabled() else 'NOT set'})")
+    # The app applies database updates when it starts; wait for them rather than error.
+    waited = False
+    while True:
+        try:
+            with db.conn(dedicated=True) as c:
+                if c.execute("select to_regclass('app_setting') as t").fetchone()["t"]:
+                    break
+        except Exception:
+            pass
+        if not waited:
+            log("waiting for the app to update the database")
+            waited = True
+        time.sleep(20)
     while True:
         try:
             if not chapi.enabled():
@@ -171,4 +184,4 @@ def run_forever():
                 log(f"batch: {full} fetched, {checks} checked, {changes} changes")
         except Exception as e:
             log(f"error: {e}")
-            time.sleep(300)
+            time.sleep(120)
