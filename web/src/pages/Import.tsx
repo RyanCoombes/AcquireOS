@@ -362,6 +362,7 @@ function ChSyncPanel() {
   };
   if (!st) return err ? <ErrorLine error={err} /> : null;
   const state = !st.enabled ? ["Needs CH_API_KEY", ""] : st.paused ? ["Paused", ""]
+    : st.running && st.state === "no API key" ? ["No key on scheduler", "red"]
     : !st.running ? ["Not running", "red"] : st.state === "up to date" ? ["Up to date", "green"]
     : st.state === "waiting for a data load" ? ["Waiting for the data load", ""] : ["Running", "green"];
   const bar = (x: { total: number; fetched: number; current: number }, label: string, every: string) => (
@@ -389,9 +390,14 @@ function ChSyncPanel() {
             {" · "}<Link to="/changes">{int(st.changes_7d)} changes found this week</Link>
             {st.days_to_cover ? <> · about {st.days_to_cover < 1 ? "a day" : `${Math.ceil(st.days_to_cover)} days`} to cover every target</> : null}
           </p>
-          {!st.running && !st.paused && (
-            <div className="callout red" style={{ marginTop: 8 }}>The scheduler isn't syncing. Check <code>CH_API_KEY</code> is set on the scheduler too, then update the stack.</div>
-          )}
+          {st.running && st.state === "no API key" ? (
+            <div className="callout red" style={{ marginTop: 8 }}>The scheduler has no <code>CH_API_KEY</code>. Add it to the scheduler in the stack, then update the stack.</div>
+          ) : !st.running && !st.paused ? (
+            <div className="callout red" style={{ marginTop: 8 }}>
+              {st.last_beat ? <>The scheduler last reported {dateTime(st.last_beat)}. Check it's running.</>
+                : <>The scheduler hasn't started the sync. It's probably on an older version: update the stack with “Re-pull image and redeploy” on.</>}
+            </div>
+          ) : null}
           <p className="faint small">Pipeline checked weekly, targets monthly, profiles when you open them.</p>
         </>
       )}

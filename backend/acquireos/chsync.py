@@ -118,10 +118,12 @@ def _beat(conn, state: str, **extra):
 
 def run_forever():
     """The sync loop. Never raises: problems are logged and retried later."""
-    log("started")
+    log(f"started (API key {'set' if chapi.enabled() else 'NOT set'})")
     while True:
         try:
             if not chapi.enabled():
+                with db.conn(dedicated=True) as c:
+                    _beat(c, "no API key")  # so the Data page can say why nothing is happening
                 time.sleep(600)
                 continue
             with db.conn(dedicated=True) as c:
