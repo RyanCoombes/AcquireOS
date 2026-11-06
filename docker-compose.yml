@@ -115,6 +115,8 @@ services:
       REFRESH_ACCOUNTS_MONTHS: ${REFRESH_ACCOUNTS_MONTHS:-1}
       # Same key as the app: the scheduler fetches Companies House details in the background.
       CH_API_KEY: ${CH_API_KEY:-}
+      # Optional Companies House Streaming API key (a separate key): live changes for every company.
+      CH_STREAM_KEY: ${CH_STREAM_KEY:-}
       TZ: ${TZ:-Europe/London}
     volumes:
       - ${DATA_DIR:-/opt/acquireos/data}:/data

@@ -456,3 +456,57 @@ def test_ch_sync_loop_fetches_targets(loaded, monkeypatch):
     with db.conn() as c:
         st = chsync.status(c)
         assert st["targets"]["fetched"] == st["targets"]["total"] > 0 and st["running"]
+
+
+def test_ch_stream_updates_status_and_marks_watched(loaded):
+    from acquireos import chstream, chsync
+
+    loaded.commit()
+    with db.conn() as c:
+        c.execute("insert into ch_fetch (company_number, checked_at) values ('01000001', now())")
+        target = c.execute("select company_number from company_best where company_number <> '01000001' limit 1").fetchone()
+        batch = [
+            ("companies", {"resource_uri": "/company/01000002", "event": {"type": "changed", "timepoint": 5},
+                           "data": {"company_number": "01000002", "company_status": "active",
+                                    "company_status_detail": "active-proposal-to-strike-off"}}),
+            ("filings", {"resource_uri": "/company/01000001/filing-history/abc", "event": {"timepoint": 9}, "data": {}}),
+            ("officers", {"resource_uri": "/company/01000001/appointments/x", "event": {"timepoint": 10}, "data": {}}),
+            ("filings", {"resource_uri": "/company/99999999/filing-history/z", "event": {"timepoint": 11}, "data": {}}),
+        ]
+        if target:  # a target not yet fetched is left to the normal pass
+            batch.append(("filings", {"resource_uri": f"/company/{target['company_number']}/filing-history/q", "data": {}}))
+        got = chstream.process(c, batch)
+        assert got["status_changes"] == 1
+        dirty = {r["company_number"] for r in c.execute("select company_number from ch_dirty")}
+        assert "01000001" in dirty and "99999999" not in dirty and (not target or target["company_number"] not in dirty)
+        assert c.execute("select status from company where company_number = '01000002'").fetchone()["status"] == \
+            "active - proposal to strike off"
+        assert c.execute("select kinds from ch_dirty where company_number = '01000001'").fetchone()["kinds"] == \
+            ["filings", "officers"]
+        assert ("01000001", "full") in chsync.next_batch(c, 5)
+        assert chstream.process(c, batch[:1])["status_changes"] == 0  # no change, nothing recorded
+
+
+def test_ch_stream_reads_lines(monkeypatch):
+    from acquireos import chstream
+
+    monkeypatch.setattr(chstream.config, "CH_STREAM_KEY", "k")
+    lines = [b"\n", b'{"resource_uri": "/company/01000001", "event": {"timepoint": 3}, "data": {}}\n', b"not json\n"]
+
+    class Resp:
+        def __enter__(self):
+            return iter(lines)
+
+        def __exit__(self, *a):
+            return False
+
+    class Stop(BaseException):
+        pass
+    monkeypatch.setattr(chstream.urllib.request, "urlopen", lambda req, timeout: Resp())
+    monkeypatch.setattr(chstream.time, "sleep", lambda s: (_ for _ in ()).throw(Stop()))
+    s = chstream.Streamer()
+    import pytest
+    with pytest.raises(Stop):
+        s.read("filings")
+    assert s.q.get_nowait()[1]["event"]["timepoint"] == 3 and s.q.empty()
+    assert s.state["filings"]["error"] == "stream closed"

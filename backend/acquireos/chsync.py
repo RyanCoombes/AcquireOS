@@ -53,10 +53,21 @@ def busy(conn) -> bool:
 
 
 def next_batch(conn, n: int = 40) -> list[tuple[str, str]]:
-    """Up to n (company_number, 'full' | 'check'), most urgent first."""
+    """Up to n (company_number, 'full' | 'check'), most urgent first. Companies
+    the stream says have changed (ch_dirty) come first; with the stream live,
+    targets are re-checked on a timer far less often."""
+    from . import chstream
+
+    target_days = TARGET_DAYS * 4 if chstream.live(conn) else TARGET_DAYS
     out = [(r["company_number"], "full") for r in conn.execute(
+        f"""select d.company_number from ch_dirty d join ({PIPELINE_SQL}) p using (company_number)
+            order by d.first_at limit %s""", (n,))]
+    out += [(r["company_number"], "full") for r in conn.execute(
         f"""select p.company_number from ({PIPELINE_SQL}) p
             where not exists (select 1 from ch_fetch f where f.company_number = p.company_number) limit %s""", (n,))]
+    if len(out) < n:
+        out += [(r["company_number"], "full") for r in conn.execute(
+            "select company_number from ch_dirty order by first_at limit %s", (n - len(out),))]
     if len(out) < n:
         out += [(r["company_number"], "check") for r in conn.execute(
             f"""select f.company_number from ({PIPELINE_SQL}) p join ch_fetch f using (company_number)
@@ -71,7 +82,7 @@ def next_batch(conn, n: int = 40) -> list[tuple[str, str]]:
         out += [(r["company_number"], "check") for r in conn.execute(
             f"""select f.company_number from ({TARGET_SQL}) t join ch_fetch f using (company_number)
                 where f.checked_at < now() - make_interval(days => %s) order by f.checked_at limit %s""",
-            (TARGET_DAYS, n - len(out)))]
+            (target_days, n - len(out)))]
     seen, uniq = set(), []
     for num, mode in out:
         if num not in seen:
@@ -82,6 +93,8 @@ def next_batch(conn, n: int = 40) -> list[tuple[str, str]]:
 
 def status(conn) -> dict:
     """Coverage and activity for the Data page."""
+    from . import chstream
+
     pipe = conn.execute(
         f"""select count(*) as total, count(f.company_number) as fetched,
                    count(*) filter (where f.checked_at >= now() - make_interval(days => %s)) as current
@@ -111,7 +124,8 @@ def status(conn) -> dict:
         "running": alive, "state": (beat["value"] or {}).get("state") if beat else None,
         "last_beat": beat["updated_at"] if beat else None,
         "pipeline": dict(pipe), "targets": dict(tgt), "last_24h": dict(day), "changes_7d": found,
-        "pipeline_days": PIPELINE_DAYS, "target_days": TARGET_DAYS,
+        "pipeline_days": PIPELINE_DAYS, "target_days": TARGET_DAYS * 4 if chstream.live(conn) else TARGET_DAYS,
+        "stream": chstream.status(conn),
         "per_hour": round(per_hour) if per_hour else None,
         "days_to_cover": round(remaining / (per_hour * 24), 1) if remaining and per_hour else None,
     }
@@ -164,7 +178,9 @@ def run_forever():
                     if get_setting(c, "ch_sync_paused", False) or busy(c):
                         break
                     try:
+                        t0 = c.execute("select now() as t").fetchone()["t"]
                         r = chapi.fetch(c, num) if mode == "full" else chapi.check(c, num)
+                        c.execute("delete from ch_dirty where company_number = %s and last_at <= %s", (num, t0))
                         c.commit()
                     except chapi.NoKey as e:
                         c.rollback()

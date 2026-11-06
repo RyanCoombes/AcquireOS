@@ -394,6 +394,22 @@ def scheduler():
 
         # Companies House API sync in the background (does nothing without CH_API_KEY).
         threading.Thread(target=chsync.run_forever, daemon=True, name="ch-sync").start()
+    if os.environ.get("CH_STREAM", "on").lower() not in ("off", "0", "false", "no"):
+        from . import chstream
+
+        def _stream():
+            # wait for the app's database updates (ch_dirty), as the sync does
+            from . import db
+            while True:
+                try:
+                    with db.conn(dedicated=True) as c:
+                        if c.execute("select to_regclass('ch_dirty') as t").fetchone()["t"]:
+                            break
+                except Exception:
+                    pass
+                time.sleep(20)
+            chstream.run()
+        threading.Thread(target=_stream, daemon=True, name="ch-stream-start").start()
     last = None
     while True:
         now = datetime.now()

@@ -346,6 +346,21 @@ function Coverage() {
 
 
 /** Companies House API details (directors, shareholders, charges, filings) for many companies at once. */
+function StreamLine({ s }: { s: ChSync["stream"] }) {
+  if (!s?.enabled) return <p className="small" style={{ margin: "8px 0 0" }}><b>Live updates</b> · off. Add <code>CH_STREAM_KEY</code> to the scheduler for changes within minutes.</p>;
+  const names = Object.entries(s.streams);
+  const on = names.filter(([, x]) => x.connected).length;
+  const events = names.reduce((a, [, x]) => a + (x.events || 0), 0);
+  const err = names.find(([, x]) => !x.connected && x.error)?.[1].error;
+  return (
+    <p className="small" style={{ margin: "8px 0 0" }}>
+      <b>Live updates</b> · <span className={`chip ${s.live ? "green" : "red"}`}>{s.live ? `${on} of ${names.length} streams connected` : "Not connected"}</span>
+      {" "}{int(events)} events, {int(s.status_changes ?? 0)} status changes, {int(s.waiting)} companies waiting for a re-fetch
+      {err && <span className="neg"> · {err}</span>}
+    </p>
+  );
+}
+
 function ChSyncPanel() {
   const [st, setSt] = useState<ChSync | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -399,7 +414,8 @@ function ChSyncPanel() {
                 : <>The scheduler hasn't started the sync. It's probably on an older version: update the stack with “Re-pull image and redeploy” on.</>}
             </div>
           ) : null}
-          <p className="faint small">Pipeline checked weekly, targets monthly, profiles when you open them.</p>
+          <StreamLine s={st.stream} />
+          <p className="faint small">Pipeline checked weekly, targets every {st.target_days} days, profiles when you open them.</p>
         </>
       )}
     </section>

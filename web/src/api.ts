@@ -76,6 +76,8 @@ export interface ChSync {
   pipeline: { total: number; fetched: number; current: number }; targets: { total: number; fetched: number; current: number };
   last_24h: { fetched: number; checked: number }; changes_7d: number; pipeline_days: number; target_days: number;
   days_to_cover: number | null; per_hour: number | null;
+  stream?: { enabled: boolean; live: boolean; waiting: number; status_changes?: number; marked?: number; since?: string;
+             streams: Record<string, { connected: boolean; events: number; last_at: string | null; error: string | null }> };
 }
 
 export interface Change {
