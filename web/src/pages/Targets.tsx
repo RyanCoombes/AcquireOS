@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Row } from "../api";
-import { ErrorLine, Flags, Score, StatusMark, Toast, useAsync } from "../components/bits";
+import { ErrorLine, Flags, RevenueTag, Score, StatusMark, Toast, useAsync } from "../components/bits";
 import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
 import MoneyInput from "../components/MoneyInput";
@@ -461,7 +461,7 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
   const revenueCell = (
     <td className="num hide-sm">
       {range(r.revenue_low, r.revenue_high)}
-      {r.revenue_basis === "estimated" && <div className="sub">estimate</div>}
+      {r.revenue_low != null && <div><RevenueTag basis={r.revenue_basis} method={r.revenue_method} /></div>}
     </td>
   );
   const statusCell = (
@@ -503,7 +503,9 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
       <td className="num hide-sm">
         {range(r.value_low, r.value_high)}
         {r.value_basis === "loss" ? <div className="sub">loss-making as filed</div>
-          : r.value_low && r.value_basis ? <div className="sub">{r.value_basis === "filed" ? "from filed profit" : "estimate"}</div> : null}
+          : r.value_low && r.value_basis ? <div><span className={`revtag ${r.value_basis === "filed" ? "filed" : "est"}`}
+              title={r.value_basis === "filed" ? "From profit in the filed accounts" : "From estimated revenue × margin"}>
+              {r.value_basis === "filed" ? "✓ Filed profit" : "≈ Estimate"}</span></div> : null}
       </td>
       <td className="num hide-sm">{years(r.incorporation_date)}</td>
       <td className="num">{age ?? "—"}</td>

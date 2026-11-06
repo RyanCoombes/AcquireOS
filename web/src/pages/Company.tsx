@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
-import { ErrorLine, Flags, Score, Toast, useAsync } from "../components/bits";
+import { ErrorLine, Flags, RevenueTag, Score, Toast, useAsync } from "../components/bits";
 import { AreaChart as SmallLine } from "../components/charts";
 import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
@@ -99,7 +99,7 @@ export default function Company() {
         <div><b><Score value={score && !score.excluded ? score.score : null} coverage={score?.coverage} /></b>
           <span>{score?.excluded ? `Outside ${shownName}` : `Score in ${shownName}`}{score && !score.excluded ? ` · ${Math.round(Number(score.coverage))}% had data` : ""}</span></div>
         <div><b>{int(latest?.employees)}</b><span>Staff{latest ? ` · ${date(latest.period_end)}` : ""}</span></div>
-        <div><b>{est ? range(est.revenue_low, est.revenue_high) : "—"}</b><span>Revenue · {est ? (est.basis === "filed" ? "filed" : "estimate") : "unknown"}</span></div>
+        <div><b>{est ? range(est.revenue_low, est.revenue_high) : "—"}</b><span>Revenue {est ? <RevenueTag basis={est.basis} method={est.method} long /> : "· not filed or estimated"}</span></div>
         <div><b>{years(c.incorporation_date)}</b><span>Years trading</span></div>
         <div><b>{age ?? "—"}</b><span>Oldest owner's age</span></div>
         <div><b>{money(latest?.net_assets ?? null)}</b><span>Net assets</span></div>

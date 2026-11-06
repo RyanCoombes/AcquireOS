@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail, type Status } from "../api";
-import { ErrorLine, Flags, Score, StatusMark, Toast, useAsync } from "../components/bits";
+import { ErrorLine, Flags, Score, StatusMark, Toast, useAsync, RevenueTag } from "../components/bits";
 import { AreaChart } from "../components/charts";
 import MyScores from "../components/MyScores";
 import SicPicker from "../components/SicPicker";
@@ -161,7 +161,7 @@ export default function Review() {
                   <div className="factline">
                     <div><b><Score value={d.score?.score ?? null} coverage={d.score?.coverage} /></b><span>Score</span></div>
                     <div><b>{int(d.financials.filter((f) => !f.period_inferred).slice(-1)[0]?.employees)}</b><span>Staff</span></div>
-                    <div><b>{d.estimate ? range(d.estimate.revenue_low, d.estimate.revenue_high) : "—"}</b><span>Revenue{d.estimate?.basis === "estimated" ? " · estimate" : ""}</span></div>
+                    <div><b>{d.estimate ? range(d.estimate.revenue_low, d.estimate.revenue_high) : "—"}</b><span>Revenue <RevenueTag basis={d.estimate?.basis} method={d.estimate?.method} /></span></div>
                     <div><b>{range(d.valuation.value_low, d.valuation.value_high)}</b><span>Indicative value</span></div>
                     <div><b>{ageFrom(d.ownership?.oldest_birth_year) ?? "—"}</b><span>Oldest owner</span></div>
                     <div><b style={{ fontSize: 16 }}>{d.ownership ? OWNERSHIP[d.ownership.ownership_type] : "—"}</b><span>Ownership <Flags flags={d.ownership?.flags} address={d.company.address_flag} /></span></div>

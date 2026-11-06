@@ -73,3 +73,23 @@ export function ErrorLine({ error }: { error: string | null }) {
   if (!error) return null;
   return <div className="callout red">{error}</div>;
 }
+
+/** Where a revenue figure comes from, as a pill: "Filed · Mar 2025" (from the
+    company's own accounts) or "Estimate" (from staff numbers), with the method
+    on hover. Imported figures say so. */
+export function RevenueTag({ basis, method, long }: { basis?: string | null; method?: string | null; long?: boolean }) {
+  if (!basis) return null;
+  const m = method ?? "";
+  const yr = m.match(/year to (?:\d{1,2} )?([A-Z][a-z]{2} \d{4})/)?.[1];
+  const imported = m.startsWith("Imported");
+  const label = basis === "filed" ? `Filed${yr ? ` · ${yr}` : ""}` : imported ? "Your file" : "Estimate";
+  const tone = basis === "filed" ? "filed" : imported ? "imported" : "est";
+  const title = basis === "filed" ? `Confirmed: ${m || "turnover as filed in the accounts"}`
+    : imported ? m : `Not filed. ${m || "Estimated from staff numbers"}`;
+  return (
+    <>
+      <span className={`revtag ${tone}`} title={title}>{basis === "filed" ? "✓ " : "≈ "}{label}</span>
+      {long && basis !== "filed" && m && <div className="revhow">{m.replace(/^Staff \(/, "From staff (")}</div>}
+    </>
+  );
+}

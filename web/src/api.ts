@@ -42,7 +42,7 @@ export interface Row {
   period_end: string | null;
   revenue_low: string | null;
   revenue_high: string | null;
-  revenue_basis: string | null;
+  revenue_basis: string | null; revenue_method?: string | null;
   ownership_type: string | null;
   oldest_birth_year: number | null;
   flags: string[] | null;

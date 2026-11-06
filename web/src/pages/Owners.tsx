@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, type Status } from "../api";
-import { ErrorLine, Score, StatusMark, useAsync } from "../components/bits";
+import { ErrorLine, RevenueTag, Score, StatusMark, useAsync } from "../components/bits";
 import { ageFrom, cap, date, int, isBadStatus, MONTHS, OWNERSHIP, range } from "../format";
 
 export default function Owners() {
@@ -143,7 +143,7 @@ function CompanyTable({ title, rows, dim }: { title: string; rows: Awaited<Retur
                   <div className="sub">{r.company_number}{r.postcode ? ` · ${r.postcode}` : ""}{r.region ? ` · ${r.region}` : ""}</div>
                 </td>
                 <td className="num">{int(r.employees)}</td>
-                <td className="num hide-sm">{range(r.revenue_low, r.revenue_high)}{r.revenue_basis === "estimated" && <div className="sub">estimate</div>}</td>
+                <td className="num hide-sm">{range(r.revenue_low, r.revenue_high)}{r.revenue_low != null && <div><RevenueTag basis={r.revenue_basis} method={(r as any).revenue_method} /></div>}</td>
                 <td className="hide-sm nowrap">{r.ownership_type ? OWNERSHIP[r.ownership_type] ?? r.ownership_type : <span className="faint">Not traced</span>}</td>
                 <td><Score value={r.score} />{r.box_name && <div className="boxtag">{r.box_name}</div>}</td>
                 <td><StatusMark s={r.status as Status} /></td>

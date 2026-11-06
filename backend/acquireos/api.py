@@ -396,7 +396,7 @@ def companies(
                    (c.status like 'active%%' and c.accounts_next_due < current_date) as accounts_overdue,
                    (c.status like 'active%%' and c.confirmation_next_due < current_date) as confirmation_overdue,
                    l.employees, l.net_assets, l.period_end, l.staff_trend,
-                   e.revenue_low, e.revenue_high, e.basis as revenue_basis,
+                   e.revenue_low, e.revenue_high, e.basis as revenue_basis, e.method as revenue_method,
                    o.ownership_type, o.oldest_birth_year, o.flags,
                    s.score, s.coverage, not ({sx}) as excluded, s.exclusion, s.value_low, s.value_high, s.value_basis,
                    s.box_name, s.boxes,
@@ -1602,7 +1602,7 @@ def owner(pid: int):
         rows = c.execute(
             """select c.company_number, c.name, c.status as company_status, c.postcode, c.region, c.sic_codes,
                       c.incorporation_date, cp.natures, cp.notified_on, cp.ceased_on,
-                      l.employees, o.ownership_type, e.revenue_low, e.revenue_high, e.basis as revenue_basis,
+                      l.employees, o.ownership_type, e.revenue_low, e.revenue_high, e.basis as revenue_basis, e.method as revenue_method,
                       cb.score, cb.box_name, coalesce(uc.status, 'new') as status
                from company_person cp join company c on c.company_number = cp.company_number
                left join company_latest l on l.company_number = c.company_number
@@ -2096,6 +2096,7 @@ _EXPORT_COLS = [
     ("Postcode", "postcode"), ("Region", "region"), ("SIC codes", "sic_codes"), ("Incorporated", "incorporation_date"),
     ("Accounts filed", "accounts_category"), ("Latest accounts to", "period_end"), ("Staff", "employees"),
     ("Revenue low", "revenue_low"), ("Revenue high", "revenue_high"), ("Revenue basis", "revenue_basis"),
+    ("Revenue method", "revenue_method"),
     ("Net assets", "net_assets"), ("Ownership", "ownership_type"), ("Oldest owner born", "oldest_birth_year"),
     ("Charges outstanding", "charges_outstanding"), ("Score", "score"), ("Buy box", "box_name"),
     ("Indicative value low", "value_low"), ("Indicative value high", "value_high"), ("Value basis", "value_basis"),
