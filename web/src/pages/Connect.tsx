@@ -18,21 +18,20 @@ function Copy({ text }: { text: string }) {
 
 export default function Connect() {
   const { data, error } = useAsync(() => api.connect(), []);
+  const [os, setOs] = useState<"windows" | "mac">(navigator.userAgent.includes("Windows") ? "windows" : "mac");
   const issues = useAsync(() => api.issues("open"), []);
   if (error) return <ErrorLine error={error} />;
   if (!data) return <div className="empty">Loading…</div>;
   const url = data.mcp_url;
   const tok = "YOUR_API_TOKEN";
 
-  const desktop = JSON.stringify({
-    mcpServers: {
-      acquireos: {
-        command: "npx",
-        args: ["-y", "mcp-remote", url, "--allow-http", "--header", "Authorization:${AUTH}"],
-        env: { AUTH: `Bearer ${tok}` },
-      },
-    },
-  }, null, 2);
+  // No token set: anyone on your home network can connect, so no header is needed.
+  const bridge = (windows: boolean) => {
+    const args = ["-y", "mcp-remote", url, "--allow-http", ...(data.token_set ? ["--header", "Authorization:${AUTH}"] : [])];
+    const entry: Record<string, unknown> = windows ? { command: "cmd", args: ["/c", "npx", ...args] } : { command: "npx", args };
+    if (data.token_set) entry.env = { AUTH: `Bearer ${tok}` };
+    return `"acquireos": ${JSON.stringify(entry, null, 2)}`;
+  };
 
   return (
     <>
@@ -48,38 +47,38 @@ export default function Connect() {
 
       <div className="kpis" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
         <div className="kpi"><span className="k"><i />MCP endpoint</span><span className="v" style={{ fontSize: 15, wordBreak: "break-all" }}>{url}</span><span className="s">Streamable HTTP</span></div>
-        <div className="kpi"><span className="k"><i style={{ background: data.token_set ? "#0e7c6b" : "#c8352b" }} />API token</span>
+        <div className="kpi"><span className="k"><i style={{ background: data.token_set ? "#0e7c6b" : "#8a919d" }} />API token</span>
           <span className="v" style={{ fontSize: 20 }}>{data.token_set ? "Set" : "Not set"}</span>
-          <span className="s">{data.token_set ? "Required on every call" : data.password_set ? "MCP is blocked until you set one" : "Anyone on your network can connect"}</span></div>
+          <span className="s">{data.token_set ? "Required on every call" : data.password_set ? "MCP is blocked until you set one" : "Not needed on your home network"}</span></div>
         <div className="kpi"><span className="k"><i style={{ background: "#2f62d8" }} />Companies enriched</span><span className="v">{int(data.enriched)}</span>
           <span className="s">{data.last_claude ? `Claude last saved ${dateTime(data.last_claude)}` : "Nothing from Claude yet"}</span></div>
         <div className="kpi"><span className="k"><i style={{ background: "#e0a245" }} />Open data issues</span><span className="v">{int(data.open_issues)}</span><span className="s">Raised while auditing</span></div>
       </div>
 
-      {!data.token_set && (
-        <div className="callout red">
-          <b>Set an API token first.</b> In your Portainer stack, add <code>API_TOKEN</code> under environment variables (any long random string,
-          or run <code>docker exec acquireos acquireos new-token</code>) and redeploy. Then replace <code>{tok}</code> below with it.
-        </div>
-      )}
-
       <section>
         <h2>Claude Desktop and Cowork</h2>
         <p className="muted" style={{ marginTop: 0, maxWidth: "80ch" }}>
           Your Pi is on your home network, so Claude reaches it through a small local bridge (<code>mcp-remote</code>, needs Node.js on your computer).
-          In Claude Desktop open <b>Settings → Developer → Edit Config</b>, add this to <code>claude_desktop_config.json</code>, put your token in,
-          save and restart Claude. Cowork uses the same tools.
+          In Claude Desktop open <b>Settings → Developer → Edit Config</b>. Inside <code>"mcpServers"</code>, add the entry below
+          (with a comma after the entry before it), save, then quit Claude completely and reopen it. Cowork uses the same tools.
         </p>
-        <Copy text={desktop} />
-        <p className="faint small">
-          “Settings → Connectors → Add custom connector” only works for servers reachable over HTTPS from the internet. Use it later if you
-          host AcquireOS publicly (behind HTTPS, with the token set).
-        </p>
+        <div className="seg" style={{ display: "inline-flex", marginBottom: 8 }}>
+          <button className={os === "windows" ? "on" : ""} onClick={() => setOs("windows")}>Windows</button>
+          <button className={os === "mac" ? "on" : ""} onClick={() => setOs("mac")}>Mac</button>
+        </div>
+        <Copy text={bridge(os === "windows")} />
+        {data.token_set
+          ? <p className="faint small">Replace <code>{tok}</code> with the API_TOKEN from your stack.</p>
+          : <p className="faint small">
+              No API token is set, so none is needed: anything on your home network can connect, which is fine while AcquireOS
+              is only reachable at home. If you ever open it to the internet, add <code>API_TOKEN</code> to the stack first
+              (any long random string); this page then shows the config with the token in.
+            </p>}
       </section>
 
       <section>
         <h2>Claude Code</h2>
-        <Copy text={`claude mcp add --transport http acquireos ${url} --header "Authorization: Bearer ${tok}"`} />
+        <Copy text={`claude mcp add --transport http acquireos ${url}${data.token_set ? ` --header "Authorization: Bearer ${tok}"` : ""}`} />
       </section>
 
       <section>
