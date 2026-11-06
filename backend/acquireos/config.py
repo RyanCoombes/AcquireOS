@@ -22,6 +22,8 @@ API_TOKEN = os.environ.get("API_TOKEN", "")
 # Optional free Companies House API key (developer.company-information.service.gov.uk):
 # unlocks charge details (who holds each loan) and filing history (share allotments).
 CH_API_KEY = os.environ.get("CH_API_KEY", "").strip()
+if CH_API_KEY.upper().startswith("PASTE"):  # the stack file's placeholder
+    CH_API_KEY = ""
 # Map tiles. The default is OpenStreetMap's own server, which is fine for
 # personal use; a hosted product should use a commercial tile provider.
 MAP_TILE_URL = os.environ.get("MAP_TILE_URL", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
