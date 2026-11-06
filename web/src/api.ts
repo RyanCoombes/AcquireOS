@@ -182,7 +182,10 @@ export interface CompanyDetail {
     enabled: boolean;
     fetched: { fetched_at: string; checked_at?: string | null; error: string | null; profile: Record<string, any>; insolvency: any[];
                psc_statements: { statement: string; notified_on: string | null; ceased_on: string | null }[];
-               shareholders_from: string | null } | null;
+               shareholders_from: string | null;
+               psc?: { name: string; kind: string; natures: string[]; notified_on: string | null; ceased_on: string | null;
+                       birth_year: number | null; birth_month: number | null; registration_number: string | null;
+                       country_registered: string | null }[] | null } | null;
     officers: { officer_key: string; name: string; role: string | null; appointed_on: string | null; resigned_on: string | null;
                 birth_year: number | null; birth_month: number | null; occupation: string | null; nationality: string | null;
                 other_current: number; other_total: number }[];

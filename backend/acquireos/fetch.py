@@ -199,6 +199,26 @@ def accounts_plan(conn, months: int, skip_loaded: bool = True, reread_old: bool 
     return out
 
 
+def _is_zip(path: Path) -> bool:
+    import zipfile
+
+    try:
+        return zipfile.is_zipfile(path)
+    except OSError:
+        return False
+
+
+def _describe(path: Path) -> str:
+    """What a bad download actually is: size, and whether it looks like a web page."""
+    try:
+        size = path.stat().st_size
+        head = path.open("rb").read(200).lstrip().lower()
+    except OSError:
+        return "unreadable"
+    kind = "a web page" if head.startswith((b"<!doctype", b"<html", b"<?xml")) else "not a zip"
+    return f"{kind}, {size / 1e6:.1f} MB"
+
+
 def fetch_accounts(conn, months: int = 1, keep: bool = False, skip_loaded: bool = True,
                    plan: list | None = None) -> list[dict]:
     """Load the newest `months` monthly accounts files, NEWEST FIRST.
@@ -224,15 +244,49 @@ def fetch_accounts(conn, months: int = 1, keep: bool = False, skip_loaded: bool 
         for k, (i, label, url) in enumerate(todo):
             if JOB is not None:
                 JOB.stage(label)
-            path = nxt.result()
+            try:
+                path = nxt.result()
+            except Exception as e:
+                path = None
+                err = f"download failed: {e}"
             # Start fetching the following month in the background (no progress
             # reporting from that thread, to keep this stage's bar meaningful).
             nxt = pool.submit(download, todo[k + 1][2], DATA_DIR, False) if k + 1 < len(todo) else None
+            if path is not None and not _is_zip(path):
+                log(f"{path.name} is not a valid zip ({_describe(path)}); downloading it again")
+                path.unlink(missing_ok=True)
+                try:
+                    path = download(url, DATA_DIR, True)
+                    err = None if _is_zip(path) else f"Companies House sent something that is not a zip ({_describe(path)})"
+                except Exception as e:
+                    err = f"download failed: {e}"
+                if err and path is not None:
+                    path.unlink(missing_ok=True)
+                    path = None
+            if path is None:
+                # One bad month must not stop the others.
+                log(f"Skipping {label}: {err}")
+                if JOB is not None:
+                    JOB.skip(label, "file unusable, skipped")
+                results.append({"file": url.rsplit("/", 1)[-1], "error": err})
+                continue
             name = path.name
             newest = i == 0
             log(f"Reading {name}")
-            r = accounts.run(conn, [path], record_changes=newest, progress=_scaled(0.15))
-            conn.commit()
+            try:
+                r = accounts.run(conn, [path], record_changes=newest, progress=_scaled(0.15))
+                conn.commit()
+            except Exception as e:
+                from .jobs import Cancelled
+
+                conn.rollback()
+                if isinstance(e, Cancelled):
+                    raise
+                log(f"Skipping {label}: could not read {name} ({e})")
+                if JOB is not None:
+                    JOB.skip(label, "could not be read, skipped")
+                results.append({"file": name, "error": str(e)})
+                continue
             results.append({"file": name, **{x: v for x, v in r.items() if x != "messages"}})
             log(f"{name}: {r['companies_matched']:,} filings, {r['periods']:,} figures, {r['changes']:,} changes")
             if not keep:  # kept if loading failed, so a re-run does not download it again

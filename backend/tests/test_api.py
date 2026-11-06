@@ -539,3 +539,39 @@ def test_enrichment_locations_facts_and_sources(loaded):
         assert {"location", "fact", "source", "summary", "contact"} <= kinds
         bad = cl.post("/api/companies/01000001/enrichment", json={"source_url": "manual", "locations": [{"kind": "castle", "address": "x"}]})
         assert bad.status_code == 400
+
+
+def test_api_owners_register_and_deeper_shareholder_search(loaded, monkeypatch):
+    from acquireos import chapi
+
+    loaded.commit()
+    monkeypatch.setattr(chapi.config, "CH_API_KEY", "x")
+    owners = [{"name": "Mrs Margaret Ann Vyse", "kind": "individual-person-with-significant-control",
+               "natures_of_control": ["ownership-of-shares-25-to-50-percent"], "notified_on": "2016-04-06"}]
+    docs = []
+
+    def fake(path):
+        if "persons-with-significant-control?" in path:
+            return {"items": owners}
+        if "/filing-history" in path:
+            return {"items": [
+                {"transaction_id": "a", "date": "2025-01-01", "type": "CS01", "description": "confirmation-statement-with-no-updates",
+                 "links": {"document_metadata": "/document/new"}},
+                {"transaction_id": "b", "date": "2015-03-01", "type": "AR01", "description": "annual-return-company-with-made-up-date-full-list-shareholders",
+                 "description_values": {"made_up_date": "2015-02-28"}, "links": {"document_metadata": "/document/ar"}}]}
+        if path == "/company/01000005":
+            return {"etag": "e"}
+        return {"items": []}
+    monkeypatch.setattr(chapi, "_get", fake)
+    monkeypatch.setattr(chapi, "_document", lambda url: docs.append(url) or b"x")
+    monkeypatch.setattr(chapi, "_pdf_text", lambda b: "Shareholding 1: 50 ORDINARY shares held as at the date of this return\nName: MARGARET VYSE\n")
+    with db.conn() as c:
+        chapi.fetch(c, "01000005")
+        f = c.execute("select psc, shareholders_from from ch_fetch where company_number = '01000005'").fetchone()
+        assert f["psc"][0]["kind"] == "individual" and f["psc"][0]["natures"] == ["ownership-of-shares-25-to-50-percent"]
+        assert docs == ["/document/ar"]  # the "no updates" statement is skipped
+        assert f["shareholders_from"] == "AR01 made up to 2015-02-28"
+        owners[0]["ceased_on"] = "2025-06-01"
+        r = chapi.fetch(c, "01000005")
+        assert r["changes"] >= 1
+        assert c.execute("select 1 from company_change where company_number = '01000005' and kind = 'owner' and field = 'Owner left'").fetchone()

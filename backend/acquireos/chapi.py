@@ -229,6 +229,9 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
 
     def get_filings():
         fh = _get(f"/company/{num}/filing-history?items_per_page=100") or {}
+        if (fh.get("total_count") or 0) > 100:  # older filings, for the shareholder list in old annual returns
+            more = _get(f"/company/{num}/filing-history?items_per_page=100&start_index=100&category=annual-return") or {}
+            fh["items"] = (fh.get("items") or []) + (more.get("items") or [])
         conn.execute("delete from filing where company_number = %s", (num,))
         for it in fh.get("items") or []:
             filings_raw.append(it)
@@ -280,6 +283,23 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
         if profile.get("has_insolvency_history") or profile.get("has_been_liquidated"):
             insolvency = (_get(f"/company/{num}/insolvency") or {}).get("cases") or []
 
+    psc: list = []
+
+    def get_psc():
+        nonlocal psc
+        res = _get(f"/company/{num}/persons-with-significant-control?items_per_page=100") or {}
+        for it in res.get("items") or []:
+            dob = it.get("date_of_birth") or {}
+            ident = it.get("identification") or {}
+            kind = it.get("kind") or ""
+            psc.append({"name": it.get("name") or "?", "natures": it.get("natures_of_control") or [],
+                        "notified_on": it.get("notified_on"), "ceased_on": it.get("ceased_on"),
+                        "kind": "individual" if kind.startswith("individual") else
+                                "corporate" if "corporate" in kind else "legal" if "legal" in kind else kind,
+                        "birth_year": dob.get("year"), "birth_month": dob.get("month"),
+                        "registration_number": ident.get("registration_number"),
+                        "country_registered": ident.get("country_registered")})
+
     def get_statements():
         nonlocal statements
         statements = [{"statement": x.get("statement"), "notified_on": x.get("notified_on"), "ceased_on": x.get("ceased_on")}
@@ -289,10 +309,12 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
         nonlocal shareholders_from
         if not people:
             return
-        # Newest confirmation statements (or the incorporation form) first;
-        # many say "no change", so look back a few for one that lists people.
+        # The newest filing that lists shareholders. Confirmation statements
+        # "with no updates" don't list them, so skip those and look further
+        # back (annual returns before 2016 always listed them), newest first.
         docs = [f for f in filings_raw if (f.get("type") or "").upper() in ("CS01", "AR01", "IN01")
-                and (f.get("links") or {}).get("document_metadata")][:4]
+                and (f.get("links") or {}).get("document_metadata")
+                and "no-updates" not in (f.get("description") or "")][:5]
         for f in docs:
             pdf = _document(f["links"]["document_metadata"])
             found = parse_shareholders(_pdf_text(pdf)) if pdf else []
@@ -311,24 +333,32 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
 
     before = _snapshot(conn, num)
     for name, fn in (("profile", get_profile), ("charges", get_charges), ("filings", get_filings),
-                     ("officers", get_officers), ("insolvency", get_insolvency), ("owner statements", get_statements),
+                     ("officers", get_officers), ("insolvency", get_insolvency), ("owners", get_psc),
+                     ("owner statements", get_statements),
                      ("shareholders", get_shareholders)):
         part(name, fn)
-    changes = _record_changes(conn, num, before, _snapshot(conn, num), profile) if before else 0
+    if before:
+        after = _snapshot(conn, num)
+        if not any(e.startswith("owners:") for e in errors):  # the owners just fetched (not saved yet)
+            after["psc"] = {(p["name"].upper(), p.get("notified_on")): p for p in psc}
+        changes = _record_changes(conn, num, before, after, profile)
+    else:
+        changes = 0
     keep = {k: profile.get(k) for k in ("has_charges", "has_insolvency_history", "has_been_liquidated", "can_file",
                                          "date_of_cessation", "jurisdiction", "type", "subtype", "accounts",
                                          "confirmation_statement", "registered_office_is_in_dispute",
                                          "undeliverable_registered_office_address") if k in profile}
     conn.execute(
         """insert into ch_fetch (company_number, fetched_at, checked_at, error, profile, insolvency, psc_statements,
-                                 shareholders_from, etag)
-           values (%s, now(), now(), %s, %s, %s, %s, %s, %s)
+                                 shareholders_from, etag, psc)
+           values (%s, now(), now(), %s, %s, %s, %s, %s, %s, %s)
            on conflict (company_number) do update set fetched_at = now(), checked_at = now(), error = excluded.error,
              profile = excluded.profile, insolvency = excluded.insolvency, psc_statements = excluded.psc_statements,
              shareholders_from = coalesce(excluded.shareholders_from, ch_fetch.shareholders_from),
-             etag = coalesce(excluded.etag, ch_fetch.etag)""",
+             etag = coalesce(excluded.etag, ch_fetch.etag),
+             psc = case when excluded.psc is null then ch_fetch.psc else excluded.psc end""",
         (num, "; ".join(errors) or None, json.dumps(keep), json.dumps(insolvency), json.dumps(statements), shareholders_from,
-         profile.get("etag")))
+         profile.get("etag"), None if any(e.startswith("owners:") for e in errors) else json.dumps(psc)))
     return {**counts, "changes": changes, "error": "; ".join(errors) or None}
 
 
@@ -372,6 +402,8 @@ def _snapshot(conn, num: str) -> dict | None:
             "select officer_key, role, name, resigned_on from officer where company_number = %s", (num,))},
         "shareholders": {(r["name"].upper(), r["share_class"]): float(r["shares"] or 0) for r in conn.execute(
             "select name, share_class, shares from shareholder where company_number = %s", (num,))},
+        "psc": {(p["name"].upper(), p.get("notified_on")): p for p in (conn.execute(
+            "select psc from ch_fetch where company_number = %s", (num,)).fetchone()["psc"] or [])},
     }
 
 
@@ -400,6 +432,13 @@ def _record_changes(conn, num: str, a: dict, b: dict, profile: dict) -> int:
         top = sorted(b["shareholders"].items(), key=lambda x: -x[1])[:4]
         rows.append(("shareholders", "Shareholders", None,
                      ", ".join(f"{k[0].title()} {round(100 * v / total)}%" for k, v in top)))
+    if a.get("psc"):  # owners register changes (skipped the first time owners are fetched)
+        for key, p in b.get("psc", {}).items():
+            was = a["psc"].get(key)
+            if not was and not p.get("ceased_on"):
+                rows.append(("owner", "Owner added", None, p["name"]))
+            elif was and not was.get("ceased_on") and p.get("ceased_on"):
+                rows.append(("owner", "Owner left", None, p["name"]))
     for flag, text in (("has_insolvency_history", "Insolvency case recorded"), ("has_been_liquidated", "Liquidated")):
         if profile.get(flag) and not a["profile"].get(flag):
             rows.append(("insolvency", flag, None, text))

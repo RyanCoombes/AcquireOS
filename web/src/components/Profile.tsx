@@ -316,12 +316,25 @@ const ownSentence = (t: string) => t
   .replace(/(\d+) individual owner\(s\)/, (_m, n) => (n === "1" ? "1 owner" : `${n} owners`))
   .replace(/^Classed as (.+) from the owner records\.$/, (_m, x: string) => x.charAt(0).toUpperCase() + x.slice(1) + ".");
 
+/** What control an owner has besides shares, e.g. "appoints directors". */
+function controlText(natures: string[]): string | null {
+  const bits: string[] = [];
+  if (natures.some((n) => n.startsWith("voting-rights"))) {
+    const v = natures.map((n) => n.match(/voting-rights-(\d+)-to-(\d+)-percent/)).find(Boolean);
+    if (v) bits.push(`${v[1]}–${v[2]}% of votes`);
+  }
+  if (natures.some((n) => n.startsWith("right-to-appoint-and-remove-directors"))) bits.push("appoints directors");
+  if (natures.some((n) => n.startsWith("significant-influence-or-control"))) bits.push("significant influence or control");
+  return bits.length ? bits.join(", ") : null;
+}
+
 const SEG_COLOURS = ["var(--teal)", "var(--orange)", "var(--blue)", "var(--purple)", "var(--amber)", "var(--green)"];
 
 type Who = {
   key: string; name: string; company: boolean; roles: Set<string>; pct: number | null; band: [number, number] | null;
   personId?: number; birthYear: number | null; since: string | null; boards: number; officerKey?: string; regNo?: string | null;
   ultimately: string[]; colour?: string; left?: string | null; note?: { warn: boolean; text: string };
+  control?: string | null; est?: number;
 };
 
 export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: React.ReactNode }) {
@@ -350,9 +363,16 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
     stmt.set(k, { name: s.name, pct: Math.round(((stmt.get(k)?.pct ?? 0) + (s.pct ?? 0)) * 10) / 10 });
   }
   const pk = (p: { name: string; kind: string }) => keyOf(p.name, p.kind !== "individual");
-  const current = data.people.filter((p) => !p.ceased_on);
-  const ceased = data.people.filter((p) => p.ceased_on);
-  const dates = data.people.flatMap((p) => [p.notified_on, p.ceased_on]).filter(Boolean).sort() as string[];
+  // The owners register from the API when fetched (fresher than the monthly
+  // file); links to the Owners page come from the matching bulk record.
+  const bulkIds = new Map(data.people.map((p) => [pk(p) + "|" + (p.notified_on ?? ""), p.person_id]));
+  const register: CompanyDetail["people"] = ch?.fetched?.psc
+    ? ch.fetched.psc.map((p) => ({ ...p, role: "psc", person_id: bulkIds.get(pk(p) + "|" + (p.notified_on ?? "")) ?? 0 }))
+    : data.people;
+  const fromApi = !!ch?.fetched?.psc;
+  const current = register.filter((p) => !p.ceased_on);
+  const ceased = register.filter((p) => p.ceased_on);
+  const dates = register.flatMap((p) => [p.notified_on, p.ceased_on]).filter(Boolean).sort() as string[];
   const lastChange = dates[dates.length - 1] ?? null;
   const joined = current.filter((p) => p.notified_on === lastChange);
   const leftOn = ceased.filter((p) => p.ceased_on === lastChange);
@@ -368,10 +388,11 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
     const w = get(p.name, p.kind !== "individual");
     w.roles.add("Owner");
     w.band = band(p.natures) ?? w.band;
-    w.personId = p.person_id;
+    w.personId = p.person_id || undefined;
     w.birthYear = w.birthYear ?? p.birth_year;
     w.regNo = p.registration_number;
     w.since = w.since ?? p.notified_on;
+    w.control = controlText(p.natures);
     const s = stmt.get(pk(p));
     if (useStatement && s) w.pct = s.pct;
     else if (s) w.note = { warn: false, text: `${stmtLabel.charAt(0).toUpperCase() + stmtLabel.slice(1)} showed ${s.pct}%` };
@@ -387,7 +408,7 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
     stillHolding.add(k);
     const gone = ceased.find((p) => pk(p) === k);
     if (gone) {
-      w.left = gone.ceased_on; w.personId = gone.person_id; w.birthYear = w.birthYear ?? gone.birth_year;
+      w.left = gone.ceased_on; w.personId = gone.person_id || undefined; w.birthYear = w.birthYear ?? gone.birth_year;
       w.note = { warn: false, text: `Off the owners register since ${date(gone.ceased_on)}: holdings of 25% or less aren't listed there` };
     } else if (!useStatement) {
       w.note = s.pct > 25.5
@@ -415,7 +436,14 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
   const owners = people.filter((w) => (useStatement ? w.pct : w.band?.[0]));
   owners.forEach((w, i) => { w.colour = SEG_COLOURS[i % SEG_COLOURS.length]; });
   people.filter((w) => !w.colour && (w.pct || w.band)).forEach((w, i) => { w.colour = SEG_COLOURS[(owners.length + i) % SEG_COLOURS.length]; });
-  const share = (w: Who) => (useStatement ? w.pct ?? 0 : w.band![0]);
+  // Register bands only: estimate each owner's share within their band so the
+  // named owners add up to 100% where the bands allow (two at 25–50% ≈ 50% each).
+  if (!useStatement && owners.length) {
+    const lo = owners.reduce((t, w) => t + w.band![0], 0), hi = owners.reduce((t, w) => t + w.band![1], 0);
+    const f = hi > lo ? Math.max(0, Math.min(1, (100 - lo) / (hi - lo))) : 0;
+    for (const w of owners) w.est = Math.round(w.band![0] + (w.band![1] - w.band![0]) * f);
+  }
+  const share = (w: Who) => (useStatement ? w.pct ?? 0 : w.est ?? w.band![0]);
   const shown = owners.reduce((t, w) => t + share(w), 0);
   const others = ch?.other_appointments ?? [];
   const prevOwners = ceased.filter((p) => !stillHolding.has(pk(p)) && !map.get(pk(p))?.roles.has("Owner"))
@@ -431,7 +459,10 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
   return (
     <section id="ownership">
       <Head icon="owners" tone="orange" title="Owners & directors" aside={flags} />
-      {own && own.ownership_type !== "unknown" && <p style={{ margin: "0 0 4px" }}><b>{ownSentence(own.explanation)}</b></p>}
+      {useStatement ? (
+        <p style={{ margin: "0 0 4px" }}><b>{stmt.size} {stmt.size === 1 ? "shareholder" : "shareholders"}
+          {owners[0] ? `; largest ${owners[0].name} with ${owners[0].pct}%` : ""}.</b></p>
+      ) : own && own.ownership_type !== "unknown" && <p style={{ margin: "0 0 4px" }}><b>{ownSentence(own.explanation)}</b></p>}
       {lastChange && (joined.length > 0 || leftOn.length > 0) && (
         <p className="small" style={{ margin: "0 0 10px" }}>
           <span className="chip">Ownership changed {date(lastChange)}</span>{" "}
@@ -446,14 +477,18 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
           <div className="ownbar" role="img" aria-label="Ownership split">
             {owners.map((w) => (
               <i key={w.key} style={{ width: `${share(w)}%`, background: w.colour }}
-                 title={`${w.name}: ${useStatement ? `${w.pct}%` : `${w.band![0]}–${w.band![1]}%`}`} />
+                 title={`${w.name}: ${useStatement ? `${w.pct}%` : `${w.band![0]}–${w.band![1]}%, about ${w.est}%`}`} />
             ))}
-            {shown < 99.5 && <i className="rest" style={{ width: `${100 - shown}%` }} title={useStatement ? "Others" : "Not stated"} />}
+            {shown < 99.5 && <i className="rest" style={{ width: `${100 - shown}%` }}
+                                title={useStatement ? "Not accounted for on the statement" : "Holders of 25% or less (not named on the register)"} />}
           </div>
           <div className="faint small" style={{ margin: "4px 0 12px" }}>
             {useStatement ? `Exact, from the confirmation statement of ${date(asAt)}.`
-              : <>Owners register bands (approximate).{shareholders.length > 0 && <> {stmtLabel.charAt(0).toUpperCase() + stmtLabel.slice(1)}
+              : <>Estimated from owners register bands ({fromApi ? `Companies House, ${date(ch!.fetched!.fetched_at)}` : "monthly file"});
+                exact figures need a confirmation statement that lists shareholders.
+                {shareholders.length > 0 && <> {stmtLabel.charAt(0).toUpperCase() + stmtLabel.slice(1)}
                   {registerNewer ? " is older than the last change" : " disagrees"}, so it's shown as notes. <a href={filingsUrl} target="_blank" rel="noreferrer">Filings ↗</a></>}</>}
+            {shown < 99.5 && <> Hatched: {useStatement ? `${Math.round(100 - shown)}% not accounted for on the statement` : `about ${Math.round(100 - shown)}% held by people with 25% or less, who aren't named`}.</>}
           </div>
         </>
       )}
@@ -465,7 +500,8 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
             const age = w.birthYear ? new Date().getFullYear() - w.birthYear : null;
             const yrs = yearsSince(w.since);
             const pctText = (useStatement || !w.band) && w.pct != null ? `${w.pct}%` : w.band ? `${w.band[0]}–${w.band[1]}%` : null;
-            const barW = (useStatement || !w.band) && w.pct != null ? w.pct : w.band?.[0] ?? 0;
+            const barW = (useStatement || !w.band) && w.pct != null ? w.pct : w.est ?? w.band?.[0] ?? 0;
+            const showAge = !w.company && (age || w.roles.has("Director") || w.roles.has("Secretary"));
             return (
               <div key={w.key} className="who">
                 <span className="dot" style={{ background: w.colour ?? "var(--grey-soft)" }} />
@@ -473,14 +509,16 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                   <div className="wname">
                     {w.personId ? <Link to={`/owners/${w.personId}`}>{w.name}</Link> : w.name}
                     {[...w.roles].filter((r) => r !== "Shareholder" || !w.roles.has("Owner")).map((r) =>
-                      <span key={r} className={`role ${r === "Shareholder" ? "owner" : r.toLowerCase()}`}>{r === "Shareholder" ? "Owner" : r}</span>)}
+                      <span key={r} className={`role ${r === "Shareholder" ? "owner" : r.toLowerCase()}`}>
+                        {r === "Shareholder" ? "Owner" : r === "Owner" && !w.band && w.pct == null && w.control ? "Controls" : r}</span>)}
                   </div>
                   <div className="wmeta">
                     {w.company ? <>Company{w.regNo ? <> · <Link to={`/c/${w.regNo}`}>{w.regNo}</Link></> : null}
                       {w.since ? ` · since ${date(w.since)}` : ""}{w.ultimately.length ? <> · owned by {w.ultimately.join(", ")}</> : null}</>
-                      : <>{age ? `Age ${age}` : "Age not known"}{yrs !== null ? ` · ${yrs} ${yrs === 1 ? "yr" : "yrs"}` : ""}
-                          {w.roles.has("Director") ? ` · ${w.boards} other ${w.boards === 1 ? "board" : "boards"}` : ""}</>}
+                      : showAge ? <>{age ? `Age ${age}` : "Age not known"}{yrs !== null ? ` · ${yrs} ${yrs === 1 ? "yr" : "yrs"}` : ""}
+                          {w.roles.has("Director") ? ` · ${w.boards} other ${w.boards === 1 ? "board" : "boards"}` : ""}</> : "Shareholder"}
                   </div>
+                  {w.control && (!w.band || w.pct == null) && <div className="wnote">Control: {w.control}</div>}
                   {w.note && <div className={`wnote ${w.note.warn ? "warn" : ""}`}>{w.note.text}</div>}
                   {theirs.length > 0 && (
                     <div className="wother">
@@ -490,7 +528,7 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                   )}
                 </div>
                 <div className="wpct">
-                  {pctText ? <><b>{pctText}</b><span className="mini"><i style={{ width: `${barW}%`, background: w.colour }} /></span></> : <span className="faint small">—</span>}
+                  {pctText ? <><b>{pctText}</b>{w.est != null && !(useStatement && w.pct != null) && w.band && w.band[0] !== w.band[1] && <div className="faint small">≈{w.est}%</div>}<span className="mini"><i style={{ width: `${barW}%`, background: w.colour }} /></span></> : <span className="faint small">—</span>}
                 </div>
               </div>
             );
@@ -513,7 +551,7 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                 const s = stmt.get(pk(p));
                 return (
                   <div key={p.person_id + String(p.ceased_on)} className="prow">
-                    <span className="pn"><Link to={`/owners/${p.person_id}`}>{niceName(p.name, p.kind !== "individual")}</Link>
+                    <span className="pn">{p.person_id ? <Link to={`/owners/${p.person_id}`}>{niceName(p.name, p.kind !== "individual")}</Link> : niceName(p.name, p.kind !== "individual")}
                       {s && <span className="faint"> · {stmtLabel} showed {s.pct}%</span>}</span>
                     <span className="pb">{b ? `${b[0]}–${b[1]}%` : ""}</span>
                     <span className="pd">{p.notified_on ? date(p.notified_on) : "?"} – {date(p.ceased_on)}</span>

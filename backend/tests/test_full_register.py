@@ -121,7 +121,11 @@ def test_fetch_accounts_newest_first(loaded, monkeypatch, tmp_path):
         ("2026-10", "https://x/Accounts_Monthly_Data-October2026.zip"),
         ("2026-09", "https://x/Accounts_Monthly_Data-September2026.zip"),
         ("2026-08", "https://x/Accounts_Monthly_Data-August2026.zip")])
-    monkeypatch.setattr(fetch, "download", lambda url, *a, **k: tmp_path / url.rsplit("/", 1)[-1])
+    def fake_download(url, *a, **k):
+        p = tmp_path / url.rsplit("/", 1)[-1]
+        _zip(p)
+        return p
+    monkeypatch.setattr(fetch, "download", fake_download)
     monkeypatch.setattr(accounts, "run", lambda conn, paths, record_changes=True, progress=None, **k:
                         calls.append((paths[0].name, record_changes)) or
                         {"companies_matched": 0, "changes": 0, "files_seen": 0, "periods": 0})
@@ -209,18 +213,24 @@ def test_fast_register_path_matches_careful_reader(c):
                                    {"name": "EXAMPLE HOLDINGS 2001 LTD", "until": "2001-02-01"}]
 
 
+def _zip(p):
+    import zipfile
+
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("a.html", "<html></html>")
+
+
 def test_failed_load_keeps_the_download_for_a_rerun(loaded, monkeypatch, tmp_path):
     f = tmp_path / "Accounts_Monthly_Data-October2026.zip"
-    f.write_bytes(b"x")
+    _zip(f)
     monkeypatch.setattr(fetch, "links", lambda kind, pages=None: [("2026-10", "https://x/" + f.name)])
     monkeypatch.setattr(fetch, "download", lambda url, *a, **k: f)
 
     def boom(*a, **k):
         raise RuntimeError("disk full")
     monkeypatch.setattr(accounts, "run", boom)
-    import pytest
-    with pytest.raises(RuntimeError):
-        fetch.fetch_accounts(loaded, months=1)
+    r = fetch.fetch_accounts(loaded, months=1)  # the month is skipped, not the whole run
+    assert "disk full" in r[0]["error"]
     assert f.exists()  # not deleted, so the next run reuses it
     loaded.rollback()
     assert fetch.accounts_plan(loaded, 1)[0][2] is False  # and the month is not marked as loaded
@@ -265,3 +275,27 @@ def test_own_import_does_not_overwrite_the_register(loaded):
     companies.run(c, FIX / "ranked_sample.csv")  # an older list of yours saying "Active"
     assert c.execute("select status from company where company_number = '01000006'").fetchone()["status"] == "dissolved"
     assert c.execute("select count(*) as n from company_change where company_number = '01000006'").fetchone()["n"] == n_changes
+
+
+def test_a_bad_accounts_file_is_fetched_again_then_skipped(loaded, monkeypatch, tmp_path):
+    monkeypatch.setattr(fetch, "links", lambda kind, pages=None: [
+        ("2022-04", "https://x/Accounts_Monthly_Data-April2022.zip"),
+        ("2022-03", "https://x/Accounts_Monthly_Data-March2022.zip")])
+    downloads = []
+
+    def fake_download(url, *a, **k):
+        downloads.append(url)
+        p = tmp_path / url.rsplit("/", 1)[-1]
+        if "April" in url:
+            p.write_bytes(b"<!DOCTYPE html><html>Not found</html>")
+        else:
+            _zip(p)
+        return p
+    monkeypatch.setattr(fetch, "download", fake_download)
+    read = []
+    monkeypatch.setattr(accounts, "run", lambda conn, paths, **k: read.append(paths[0].name) or
+                        {"companies_matched": 0, "changes": 0, "files_seen": 0, "periods": 0})
+    r = fetch.fetch_accounts(loaded, months=2, keep=True)
+    assert sum("April" in u for u in downloads) == 2  # tried again once
+    assert read == ["Accounts_Monthly_Data-March2022.zip"]  # the next month still loads
+    assert "web page" in r[0]["error"] and not (tmp_path / "Accounts_Monthly_Data-April2022.zip").exists()
