@@ -388,6 +388,7 @@ function ChSyncPanel() {
           <p className="small" style={{ margin: 0 }}>
             Last 24 hours: <b>{int(st.last_24h.fetched)}</b> fetched, <b>{int(st.last_24h.checked)}</b> checked
             {" · "}<Link to="/changes">{int(st.changes_7d)} changes found this week</Link>
+            {st.per_hour ? <> · {int(st.per_hour)} an hour</> : null}
             {st.days_to_cover ? <> · about {st.days_to_cover < 1 ? "a day" : `${Math.ceil(st.days_to_cover)} days`} to cover every target</> : null}
           </p>
           {st.running && st.state === "no API key" ? (

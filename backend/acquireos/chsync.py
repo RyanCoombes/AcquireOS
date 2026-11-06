@@ -100,14 +100,20 @@ def status(conn) -> dict:
     beat = conn.execute("select value, updated_at from app_setting where key = 'ch_sync_beat'").fetchone()
     alive = bool(beat and (datetime.now(beat["updated_at"].tzinfo) - beat["updated_at"]).total_seconds() < 20 * 60)
     remaining = (tgt["total"] - tgt["fetched"]) + (pipe["total"] - pipe["fetched"])
-    per_day = max(int(day["fetched"] or 0), 1)
+    # Rate over the time actually spent fetching in the last 6 hours (not
+    # "per 24 hours", which reads far too low when the sync has just started).
+    rate = conn.execute(
+        """select count(*) as n, extract(epoch from now() - min(fetched_at)) as secs
+           from ch_fetch where fetched_at > now() - interval '6 hours'""").fetchone()
+    per_hour = (rate["n"] / max(float(rate["secs"] or 0), 900) * 3600) if rate["n"] and rate["n"] >= 10 else None
     return {
         "enabled": chapi.enabled(), "paused": bool(get_setting(conn, "ch_sync_paused", False)),
         "running": alive, "state": (beat["value"] or {}).get("state") if beat else None,
         "last_beat": beat["updated_at"] if beat else None,
         "pipeline": dict(pipe), "targets": dict(tgt), "last_24h": dict(day), "changes_7d": found,
         "pipeline_days": PIPELINE_DAYS, "target_days": TARGET_DAYS,
-        "days_to_cover": round(remaining / per_day, 1) if remaining and day["fetched"] else None,
+        "per_hour": round(per_hour) if per_hour else None,
+        "days_to_cover": round(remaining / (per_hour * 24), 1) if remaining and per_hour else None,
     }
 
 

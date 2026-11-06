@@ -75,7 +75,7 @@ export interface ChSync {
   enabled: boolean; paused: boolean; running: boolean; state: string | null; last_beat: string | null;
   pipeline: { total: number; fetched: number; current: number }; targets: { total: number; fetched: number; current: number };
   last_24h: { fetched: number; checked: number }; changes_7d: number; pipeline_days: number; target_days: number;
-  days_to_cover: number | null;
+  days_to_cover: number | null; per_hour: number | null;
 }
 
 export interface Change {
