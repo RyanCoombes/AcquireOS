@@ -134,7 +134,7 @@ def _meta_data():
     with db.conn() as c:
         counts = c.execute(
             """select (select ao_rowcount('company')) as companies,
-                      (select count(*) from company_best) as in_scope,
+                      (select count(*) from company_best) as in_boxes,
                       (select ao_rowcount('company_person')) as owner_records,
                       (select max(finished_at) from import_run) as last_import,
                       (select count(distinct ch.company_number) from company_change ch
@@ -163,6 +163,10 @@ def _meta():
         counts = {**d["counts"], **c.execute(
             f"""select (select count(*) from user_company where user_id = %(uid)s
                          and status not in ('new', 'rejected', 'passed')) as tracked,
+                      -- targets still open: in a buy box, not ruled out or combined into another
+                      (select count(*) from company_best cb where not exists (
+                         select 1 from user_company uc where uc.company_number = cb.company_number and uc.user_id = %(uid)s
+                         and (uc.status in ('rejected', 'passed') or uc.merged_into is not null))) as in_scope,
                       (select count(*) from company_change ch
                          join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
                          where uc.status not in ('new', 'rejected', 'passed') and {UNREAD_SQL}
@@ -224,7 +228,7 @@ def companies(
     has_website: bool | None = None, bb: str = "all", in_box: bool | None = None,
     accounts_size: str | None = None, overdue: str | None = None, charges: str | None = None,
     numbers: str | None = None, count: bool = True, mine: str | None = None, sold: str | None = None,
-    signal: str | None = None,
+    signal: str | None = None, revenue: str | None = None,
 ):
     """All companies, with scores from one buy box (bb=<id>) or each company's
     best score across buy boxes (bb=all). in_box limits to companies inside
@@ -297,6 +301,11 @@ def companies(
             params["btype"] = business_type
         if has_website is not None:
             where.append(("" if has_website else "not ") + "exists (select 1 from enrichment en where en.company_number = c.company_number and en.website is not null)")
+        if revenue in ("filed", "estimated"):  # where the revenue figure comes from
+            where.append("exists (select 1 from estimate re where re.company_number = c.company_number and re.basis = %(rbasis)s)")
+            params["rbasis"] = revenue
+        elif revenue == "none":
+            where.append("not exists (select 1 from estimate re where re.company_number = c.company_number)")
         if sold in ("hide", "only"):  # recently sold to another company (register or research)
             where.append(("" if sold == "only" else "not ") +
                          "exists (select 1 from company_signal sg where sg.company_number = c.company_number and 'recently_sold' = any(sg.signals))")

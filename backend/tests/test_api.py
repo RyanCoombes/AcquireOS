@@ -793,3 +793,29 @@ def test_dormant_accounts_excluded_by_default():
     assert not scoring.score_company({**base, "accounts_category": "small"}, crit)["excluded"]
     micro = {**crit, "exclude": {**crit["exclude"], "accounts_types": ["micro"]}}
     assert scoring.score_company({**base, "accounts_category": "micro entity"}, micro)["excluded"]
+
+
+def test_revenue_basis_filter(loaded):
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        def nums(v):
+            return {r["company_number"] for r in cl.get("/api/companies", params={"revenue": v, "limit": 100}).json()["rows"]}
+        filed, est, none = nums("filed"), nums("estimated"), nums("none")
+        assert not (filed & est) and not (filed & none) and not (est & none)
+        with db.conn() as c:
+            assert filed == {r["company_number"] for r in c.execute("select company_number from estimate where basis = 'filed'")}
+
+
+def test_targets_count_drops_when_ruled_out(loaded):
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        before = cl.get("/api/meta").json()["counts"]["in_scope"]
+        with db.conn() as c:
+            num = c.execute("select company_number from company_best limit 1").fetchone()["company_number"]
+        cl.put(f"/api/companies/{num}/state", json={"status": "rejected"})
+        after = cl.get("/api/meta").json()["counts"]
+        assert after["in_scope"] == before - 1 and after["in_boxes"] >= after["in_scope"]
