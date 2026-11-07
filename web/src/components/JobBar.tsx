@@ -30,25 +30,53 @@ export function useJob() {
   return { job, refresh: () => setTick((x) => x + 1) };
 }
 
+const JOB_NAME: Record<string, string> = {
+  "website-check": "Website check", "ch-details": "Companies House details", scoring: "Scoring",
+  refresh: "Data refresh", scheduled: "Monthly data refresh",
+};
+
+/** One line on what a finished job did, from its result. */
+function jobBrief(job: Job): string | null {
+  const r = job.result ?? {};
+  const n = (v: unknown) => Number(v ?? 0).toLocaleString("en-GB");
+  if (job.kind === "website-check" && r.checked !== undefined)
+    return `${n(r.confirmed)} confirmed, ${n(r.possible)} possible, ${n(r.none)} with no site found (${n(r.checked)} checked)`;
+  if (job.kind === "ch-details" && r.companies !== undefined) return `${n(r.companies)} companies fetched`;
+  return null;
+}
+
+function dismissed(id?: number) {
+  try { return id !== undefined && localStorage.getItem("ao.jobbar.dismissed") === String(id); } catch { return false; }
+}
+
 export default function JobBar() {
   const { job } = useJob();
+  const [, setHide] = useState(0);
   if (!job) return null;
   const recent = job.finished_at && Date.now() - new Date(job.finished_at).getTime() < 10 * 60 * 1000;
-  if (!job.running && !recent) return null;
+  if (!job.running && (!recent || dismissed(job.id))) return null;
   const pct = Number(job.pct ?? 0);
   if (!job.running) {
     const ok = job.status === "done" && !job.error;
+    const name = JOB_NAME[job.kind ?? ""] ?? "Job";
+    const brief = jobBrief(job);
+    const link = job.kind === "website-check" ? "/targets?has_website=true" : "/import";
     return (
-      <Link to="/import" className={`jobbar ${ok ? "ok" : "bad"}`}>
-        {ok ? "Data refresh finished" : job.status === "cancelled" ? "Data refresh stopped" : "Data refresh finished with problems"}
-        <span className="faint">· details</span>
-      </Link>
+      <div className={`jobbar ${ok ? "ok" : "bad"}`}>
+        <Link to={link} style={{ color: "inherit", flex: 1 }}>
+          <b>{ok ? `${name} finished` : job.status === "cancelled" ? `${name} stopped` : `${name} finished with problems`}</b>
+          {brief && <>: {brief}</>}
+          <span className="faint"> · {job.kind === "website-check" ? "see websites found" : "details"}</span>
+        </Link>
+        <button className="jb-x" aria-label="Dismiss" title="Dismiss"
+                onClick={() => { try { localStorage.setItem("ao.jobbar.dismissed", String(job.id)); } catch { /* ignore */ } setHide((x) => x + 1); }}>×</button>
+      </div>
     );
   }
   return (
     <Link to="/import" className="jobbar" title={job.detail ?? ""}>
       <span className="jb-text">
-        <b>{job.stage ?? "Starting"}</b>
+        <b>{job.stage ?? "Starting"}</b>{job.kind === "website-check" && job.detail ? <span className="faint"> · {job.detail.split(" · ")[1] ?? ""}</span> : null}
         <span className="faint"> · step {(job.stage_index ?? 0) + 1} of {job.stage_total}</span>
       </span>
       <span className="jb-track"><i style={{ width: `${Math.max(pct, 2)}%` }} /></span>

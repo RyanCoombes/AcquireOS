@@ -426,6 +426,8 @@ function ChSyncPanel() {
 
 function WebsiteBatch() {
   const [msg, setMsg] = useState<string | null>(null);
+  const sum = useAsync(() => api.websiteSummary(), []);
+  useEffect(() => { const t = setInterval(() => sum.reload(), 30_000); return () => clearInterval(t); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const run = async (scope: string, limit: number) => {
     setMsg(null);
     try { await api.websiteCheck(scope, limit); setMsg("Started. Progress shows at the top."); } catch (e: any) { setMsg(e.message); }
@@ -433,6 +435,14 @@ function WebsiteBatch() {
   return (
     <section>
       <div className="sechead"><h2>Find websites</h2><span className="faint small">Companies without one yet</span></div>
+      {sum.data && sum.data.checked > 0 && (
+        <div className="factline" style={{ borderTop: 0, marginBottom: 8 }}>
+          <div><b>{int(sum.data.confirmed)}</b><span>Confirmed</span></div>
+          <div><b>{int(sum.data.possible)}</b><span>Possible, to check</span></div>
+          <div><b>{int(sum.data.none)}</b><span>No site found</span></div>
+          <div><b>{int(sum.data.with_website)}</b><span>Companies with a website <Link to="/targets?has_website=true">view</Link></span></div>
+        </div>
+      )}
       <p className="small" style={{ marginTop: 0 }}>
         Saved only when the site shows <b>both the company number and the registered name</b> (with Ltd or Limited).
         Office addresses on the site are saved too. Weaker matches are noted as "possible" on the company for you to check.

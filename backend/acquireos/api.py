@@ -1594,6 +1594,19 @@ def find_website(num: str, body: WebsiteCheckIn | None = None):
                         "No site could be confirmed. Ask Claude to search using the research brief, or enter one you know.")}
 
 
+@app.get("/api/website-check")
+def website_check_summary():
+    """Totals so far: companies checked, confirmed sites, possible ones, none found."""
+    with db.conn() as c:
+        r = c.execute("""select count(*) as checked,
+                                count(*) filter (where result = 'confirmed') as confirmed,
+                                count(*) filter (where result = 'possible') as possible,
+                                count(*) filter (where result = 'none') as none,
+                                max(checked_at) as last_at from website_check""").fetchone()
+        r["with_website"] = c.execute("select count(*) as n from enrichment where website is not null").fetchone()["n"]
+    return r
+
+
 @app.post("/api/website-check")
 def website_check_batch(scope: str = "targets", limit: int = 200):
     """Find and confirm websites for your pipeline or top targets, as a background job."""

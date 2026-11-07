@@ -271,6 +271,7 @@ export const api = {
     `/api/companies/${encodeURIComponent(n)}/ch-check`, { method: "POST" }),
   chSync: () => req<ChSync>("/api/ch-sync"),
   chSyncSet: (paused: boolean) => req<ChSync>("/api/ch-sync", { method: "PUT", body: JSON.stringify({ paused }) }),
+  websiteSummary: () => req<{ checked: number; confirmed: number; possible: number; none: number; last_at: string | null; with_website: number }>("/api/website-check"),
   websiteCheck: (scope: string, limit: number) =>
     req<{ started: boolean }>(`/api/website-check?scope=${scope}&limit=${limit}`, { method: "POST" }),
   chDetailsBatch: (scope: string, limit: number) =>
