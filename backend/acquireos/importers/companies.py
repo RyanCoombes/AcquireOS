@@ -446,7 +446,9 @@ def _upsert_period(conn, num, period, inferred, values, source, balance_date=Non
 
 def refresh_estimates(conn, from_table: str | None = None):
     """Revenue range for each company from its LATEST accounts: the filed
-    turnover if those accounts give one, otherwise staff × revenue per head.
+    turnover if those accounts give one; otherwise staff × the company's OWN
+    revenue per head from earlier accounts that gave turnover (±10%), or
+    failing that staff × a typical revenue per head.
     Recomputed whenever accounts change, so an estimate never sticks at an
     old staff count and an old turnover is not shown as the current one.
     An estimate imported from your own file is kept unless turnover is filed.
@@ -459,22 +461,44 @@ def refresh_estimates(conn, from_table: str | None = None):
             select distinct on (company_number) company_number, period_end, turnover, employees
             from financial_period where not period_inferred {scope}
             order by company_number, period_end desc
+        ), own as (
+            -- the company's own revenue per head, from its newest accounts that
+            -- gave both turnover and staff (within 8 years)
+            select distinct on (company_number) company_number, period_end as own_end,
+                   turnover / employees as rph, turnover as own_turnover
+            from financial_period where not period_inferred and turnover > 0 and employees > 0
+              and period_end > current_date - 2920 {scope}
+            order by company_number, period_end desc
         ), want as (
-            select company_number,
-                   case when turnover > 0 then turnover else employees::numeric * %(lo)s end as low,
-                   case when turnover > 0 then turnover else employees::numeric * %(hi)s end as high,
-                   case when turnover > 0 then 'filed' else 'estimated' end as basis,
-                   case when turnover > 0
-                        then 'Turnover as filed for the year to ' || to_char(period_end, 'FMDD Mon YYYY')
-                        else 'Staff (' || employees || ', accounts to ' || to_char(period_end, 'FMDD Mon YYYY')
+            select l.company_number,
+                   case when l.turnover > 0 then l.turnover
+                        when l.employees > 0 and o.rph is not null then round(l.employees * o.rph * 0.9)
+                        when o.rph is not null then o.own_turnover
+                        else l.employees::numeric * %(lo)s end as low,
+                   case when l.turnover > 0 then l.turnover
+                        when l.employees > 0 and o.rph is not null then round(l.employees * o.rph * 1.1)
+                        when o.rph is not null then o.own_turnover
+                        else l.employees::numeric * %(hi)s end as high,
+                   case when l.turnover > 0 then 'filed' else 'estimated' end as basis,
+                   case when l.turnover > 0
+                        then 'Turnover as filed for the year to ' || to_char(l.period_end, 'FMDD Mon YYYY')
+                        when l.employees > 0 and o.rph is not null
+                        then 'Staff (' || l.employees || ', accounts to ' || to_char(l.period_end, 'FMDD Mon YYYY')
+                             || ') × the company''s own revenue per head (£' || round(o.rph / 1000) || 'k, from its accounts to '
+                             || to_char(o.own_end, 'FMDD Mon YYYY') || '), ±10%%'
+                        when o.rph is not null
+                        then 'Last filed turnover (year to ' || to_char(o.own_end, 'FMDD Mon YYYY') || '); no staff figure since'
+                        else 'Staff (' || l.employees || ', accounts to ' || to_char(l.period_end, 'FMDD Mon YYYY')
                              || %(per_head)s end as method
-            from latest where turnover > 0 or employees > 0
+            from latest l left join own o on o.company_number = l.company_number
+            where l.turnover > 0 or l.employees > 0 or o.rph is not null
         )
         insert into estimate (company_number, revenue_low, revenue_high, basis, method)
         select company_number, low, high, basis, method from want
         on conflict (company_number) do update set revenue_low = excluded.revenue_low,
             revenue_high = excluded.revenue_high, basis = excluded.basis, method = excluded.method, updated_at = now()
-        where (estimate.method not like 'Imported%%' or excluded.basis = 'filed')
+        where (estimate.method not like 'Imported%%' or excluded.basis = 'filed'
+               or excluded.method like '%%own revenue per head%%')
           and (estimate.revenue_low, estimate.revenue_high, estimate.basis, estimate.method)
               is distinct from (excluded.revenue_low, excluded.revenue_high, excluded.basis, excluded.method)
         """,

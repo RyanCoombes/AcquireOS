@@ -67,6 +67,13 @@ export default function Company() {
   const pickBox = (id: number) => { const p = new URLSearchParams(params); p.set("bb", String(id)); setParams(p, { replace: true }); };
   const latest = [...fin].reverse().find((f) => !f.period_inferred);
   const age = ageFrom(own?.oldest_birth_year);
+  // Turnover with the missing years estimated from the company's own revenue per head (dashed).
+  const turnoverPoints = (data.fin_summary?.series ?? []).map((r: any) => ({
+    x: r.period_end, y: r.turnover ?? r.turnover_est ?? null, estimated: r.turnover == null && r.turnover_est != null,
+    note: r.turnover_est_from ? `staff × revenue per head from the ${String(r.turnover_est_from).slice(0, 4)} accounts` : undefined,
+  }));
+  const estByEnd = new Map((data.fin_summary?.series ?? []).filter((r: any) => r.turnover == null && r.turnover_est != null)
+    .map((r: any) => [String(r.period_end).slice(0, 10), r.turnover_est as number]));
   const series = (k: keyof (typeof fin)[number]) =>
     fin.map((f) => ({ x: f.period_end, y: toNum(f[k] as string | number | null), inferred: f.period_inferred }));
 
@@ -165,7 +172,7 @@ export default function Company() {
                   <SmallLine title="Net assets" points={series("net_assets")} format={(n) => money(n)} />
                   <SmallLine title="Cash" points={series("cash")} format={(n) => money(n)} />
                   <SmallLine title="Debtors" points={series("debtors")} format={(n) => money(n)} />
-                  {fin.some((f) => f.turnover) && <SmallLine title="Turnover" points={series("turnover")} format={(n) => money(n)} />}
+                  {fin.some((f) => f.turnover) && <SmallLine title="Turnover" points={turnoverPoints} format={(n) => money(n)} />}
                   {fin.some((f) => f.profit_loss) && <SmallLine title="Profit" points={series("profit_loss")} format={(n) => money(n)} />}
                 </div>
                 <details style={{ marginTop: 12 }}>
@@ -177,7 +184,8 @@ export default function Company() {
                       <tr key={f.period_end}>
                         <td>{date(f.period_end)}{f.period_inferred && <span className="faint small"> · date inferred</span>}</td>
                         <td className="num">{int(f.employees)}</td>
-                        <td className="num">{money(f.turnover, { precise: true })}</td>
+                        <td className="num">{f.turnover != null ? money(f.turnover, { precise: true })
+                          : estByEnd.has(String(f.period_end).slice(0, 10)) ? <span className="estval" title="Estimate: staff × the company's own revenue per head">≈{money(estByEnd.get(String(f.period_end).slice(0, 10))!)} est.</span> : "—"}</td>
                         <td className={`num ${Number(f.profit_loss) < 0 ? "neg" : ""}`}>{money(f.profit_loss, { precise: true })}</td>
                         <td className={`num ${Number(f.net_assets) < 0 ? "neg" : ""}`}>{money(f.net_assets, { precise: true })}</td>
                         <td className="num">{money(f.cash, { precise: true })}</td>

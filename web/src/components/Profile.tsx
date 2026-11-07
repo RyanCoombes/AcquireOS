@@ -84,7 +84,8 @@ export function FinancialOverview({ s }: { s: FinSummary }) {
             <tr key={r.key}>
               <td>{r.label}</td>
               <td>
-                <b>{fmtValue(r.key, r.value)}</b>
+                <b className={r.estimated ? "estval" : ""} title={r.estimated ? "Estimate: staff × the company's own revenue per head from its last accounts with turnover" : undefined}>
+                  {r.estimated ? "≈" : ""}{fmtValue(r.key, r.value)}{r.estimated ? " est." : ""}</b>
                 {r.change != null && r.change !== 0 && (
                   <div className={`chg ${r.good === true ? "pos" : r.good === false ? "neg" : ""}`}>
                     {r.change > 0 ? "▲" : "▼"} {fmtChange(r.key, r.change)}{r.change_pct != null ? ` (${r.change_pct > 0 ? "+" : ""}${r.change_pct}%)` : ""}
@@ -96,7 +97,7 @@ export function FinancialOverview({ s }: { s: FinSummary }) {
           ))}
         </tbody>
       </table>
-      <p className="faint small">Totals worked out from the filed accounts.</p>
+      <p className="faint small">Totals worked out from the filed accounts.{s.rows.some((r) => r.estimated) ? " Amber ≈ figures are estimates (staff × the company's own revenue per head); dashed on the charts." : ""}</p>
     </>
   );
 }

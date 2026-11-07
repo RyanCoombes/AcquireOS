@@ -658,3 +658,27 @@ def test_recently_sold_list_filter(loaded):
         assert only == ["01000002"] and "01000002" not in hide
         d = cl.get("/api/companies/01000002").json()
         assert d["sold"]["sold_to"] == "BIG GROUP PLC"
+
+
+def test_missing_turnover_years_estimated_from_own_revenue_per_head(loaded):
+    from acquireos import fintrends
+    from acquireos.importers.companies import refresh_estimates
+
+    rows = [{"period_end": "2021-03-31", "turnover": 3_200_000, "employees": 30},
+            {"period_end": "2022-03-31", "turnover": None, "employees": 33},
+            {"period_end": "2024-03-31", "turnover": None, "employees": 36}]
+    s = fintrends.series(rows)
+    assert s[0]["turnover_basis"] == "filed" and "turnover_est" not in s[0]
+    assert s[2]["turnover_basis"] == "estimated" and s[2]["turnover_est"] == 3_840_000
+    t = next(r for r in fintrends.summary(rows)["rows"] if r["key"] == "turnover")
+    assert t["estimated"] and t["value"] == 3_840_000
+    loaded.commit()
+    with db.conn() as c:
+        c.execute("delete from financial_period where company_number = '01000006'")
+        c.execute("""insert into financial_period (company_number, period_end, turnover, employees) values
+                     ('01000006', current_date - 1100, 3200000, 30), ('01000006', current_date - 30, null, 36)""")
+        c.execute("delete from estimate where company_number = '01000006'")
+        refresh_estimates(c)
+        e = c.execute("select * from estimate where company_number = '01000006'").fetchone()
+        assert e["basis"] == "estimated" and "own revenue per head" in e["method"]
+        assert round(float(e["revenue_low"])) == round(36 * 3200000 / 30 * 0.9)

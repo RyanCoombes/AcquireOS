@@ -2,7 +2,7 @@
    direct value labels, no legends. */
 import { toNum } from "../format";
 
-export interface Point { x: string; y: number | null; inferred?: boolean }
+export interface Point { x: string; y: number | null; inferred?: boolean; estimated?: boolean; note?: string }
 
 function Defs() {
   return (
@@ -17,7 +17,7 @@ function Defs() {
 
 /** Growth per year between first and last point, as a percentage. */
 export function cagr(points: Point[]): number | null {
-  const pts = points.filter((p) => p.y !== null && !p.inferred) as (Point & { y: number })[];
+  const pts = points.filter((p) => p.y !== null && !p.inferred && !p.estimated) as (Point & { y: number })[];
   if (pts.length < 2) return null;
   const a = pts[0], b = pts[pts.length - 1];
   const yrs = (new Date(b.x).getTime() - new Date(a.x).getTime()) / (365.25 * 864e5);
@@ -42,7 +42,7 @@ export function AreaChart({
         <div className="faint small" style={{ height: height + 28, display: "grid", placeItems: "center" }}>Not filed</div>
       ) : (
         <>
-          <div className="big">{format(last.y)}</div>
+          <div className="big">{last.estimated ? "≈ " : ""}{format(last.y)}{last.estimated && <span className="estnote"> est.</span>}</div>
           {(() => {
             const ys = pts.map((p) => p.y);
             let lo = Math.min(...ys, 0), hi = Math.max(...ys, 0);
@@ -58,10 +58,15 @@ export function AreaChart({
                 {[0.33, 0.66].map((f) => <line key={f} className="grid" x1={0} x2={w} y1={padT + f * (height - padT - padB)} y2={padT + f * (height - padT - padB)} />)}
                 {lo < 0 && <line className="zero" x1={0} x2={w} y1={Y(0)} y2={Y(0)} />}
                 {pts.length > 1 && <path className="area" d={area} />}
-                {pts.length > 1 && <path className="line" d={line} />}
+                {pts.length > 1 && pts.slice(1).map((p, i) => {
+                  // A segment touching an estimated year is dashed.
+                  const est = p.estimated || pts[i].estimated;
+                  return <path key={`s${p.x}`} className={`line ${est ? "est" : ""}`}
+                               d={`M${X(i).toFixed(1)},${Y(pts[i].y).toFixed(1)} L${X(i + 1).toFixed(1)},${Y(p.y).toFixed(1)}`} />;
+                })}
                 {pts.map((p, i) => (
-                  <circle key={p.x} className={`dot ${p.inferred ? "inferred" : ""}`} cx={X(i)} cy={Y(p.y)} r={3.2}>
-                    <title>{`${p.x.slice(0, 10)}: ${format(p.y)}${p.inferred ? " (prior year, date inferred)" : ""}`}</title>
+                  <circle key={p.x} className={`dot ${p.inferred ? "inferred" : ""} ${p.estimated ? "est" : ""}`} cx={X(i)} cy={Y(p.y)} r={3.2}>
+                    <title>{`${p.x.slice(0, 10)}: ${p.estimated ? "≈ " : ""}${format(p.y)}${p.inferred ? " (prior year, date inferred)" : ""}${p.estimated ? ` (estimate${p.note ? `: ${p.note}` : ""})` : ""}`}</title>
                   </circle>
                 ))}
                 {pts.map((p, i) => (pts.length <= 6 || i % Math.ceil(pts.length / 6) === 0 || i === pts.length - 1) && (

@@ -908,3 +908,8 @@ details.sources li { margin: 3px 0; }
 .closeout .reasons { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
 .chipbtn { font-size: 12.5px; border: 1px solid var(--line); background: var(--panel, #fff); border-radius: 99px; padding: 3px 10px; cursor: pointer; }
 .chipbtn:hover { border-color: var(--teal); color: var(--teal); }
+/* Estimated years: dashed, amber */
+.chart path.line.est { stroke-dasharray: 4 4; stroke: var(--amber); opacity: .85; }
+.chart circle.dot.est { fill: var(--panel, #fff); stroke: var(--amber); stroke-width: 1.5; }
+.estnote, .estval { color: #8a5a00; }
+.estnote { font-size: 12px; font-weight: 600; }

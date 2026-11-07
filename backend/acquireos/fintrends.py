@@ -60,7 +60,25 @@ def series(financials: list[dict]) -> list[dict]:
         row.update(derive(f))
         out.append(row)
     out.sort(key=lambda r: str(r["period_end"]))
+    _estimate_turnover(out)
     return out
+
+
+def _estimate_turnover(rows: list[dict]):
+    """Years with staff but no filed turnover: staff × the company's own
+    revenue per head from the nearest year that filed both (earlier years
+    preferred). Marked as estimates; filed years are left as they are."""
+    filed = [(i, r["turnover"] / r["employees"]) for i, r in enumerate(rows)
+             if r.get("turnover") and r.get("employees")]
+    for i, r in enumerate(rows):
+        r["turnover_basis"] = "filed" if r.get("turnover") else None
+        if r.get("turnover") or not r.get("employees") or not filed:
+            continue
+        before = [f for f in filed if f[0] < i]
+        j, rph = (before[-1] if before else min(filed, key=lambda f: abs(f[0] - i)))
+        r["turnover_est"] = round(r["employees"] * rph)
+        r["turnover_basis"] = "estimated"
+        r["turnover_est_from"] = rows[j]["period_end"]
 
 
 def _trend(values: list[float], higher_good: bool) -> str:
@@ -108,14 +126,20 @@ def summary(financials: list[dict]) -> dict:
     rows = []
     for key, (label, higher_good) in METRICS.items():
         v = latest.get(key)
+        est = False
+        if v is None and key == "turnover" and latest.get("turnover_est") is not None:
+            v, est = latest["turnover_est"], True
         if v is None:
             continue
         p = prev.get(key) if prev else None
+        if key == "turnover" and prev and p is None and prev.get("turnover_est") is not None:
+            p = prev["turnover_est"]
         change = (v - p) if p is not None else None
         pct = round(100 * change / abs(p), 1) if change is not None and p else None
         good = None if change in (None, 0) else (change > 0) == higher_good
+        vals = [r.get(key) if r.get(key) is not None else (r.get("turnover_est") if key == "turnover" else None) for r in s]
         rows.append({"key": key, "label": label, "value": v, "change": change, "change_pct": pct, "good": good,
-                     "trend": _trend([r.get(key) for r in s], higher_good)})
+                     "trend": _trend(vals, higher_good), "estimated": est})
     months = None
     if prev:
         try:

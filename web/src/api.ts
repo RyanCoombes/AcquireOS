@@ -185,9 +185,10 @@ export interface CompanyDetail {
   notes: Note[];
   fin_summary?: {
     period_end: string | null; previous_end?: string | null; months?: number | null;
-    rows: { key: string; label: string; value: number; change: number | null; change_pct: number | null; good: boolean | null; trend: string }[];
+    rows: { key: string; label: string; value: number; change: number | null; change_pct: number | null; good: boolean | null; trend: string; estimated?: boolean }[];
     series: { period_end: string; total_assets: number | null; total_liabilities: number | null; net_assets: number | null;
-              debt_ratio: number | null; cash: number | null; turnover: number | null; employees: number | null }[];
+              debt_ratio: number | null; cash: number | null; turnover: number | null; employees: number | null;
+              turnover_est?: number | null; turnover_basis?: string | null; turnover_est_from?: string | null }[];
   };
   ch?: {
     enabled: boolean;
