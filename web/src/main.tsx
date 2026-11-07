@@ -12,6 +12,7 @@ import Connections from "./pages/Connections";
 import BuyBox from "./pages/BuyBox";
 import Import from "./pages/Import";
 import Changes from "./pages/Changes";
+import Watching from "./pages/Watching";
 import MapPage from "./pages/MapPage";
 import Connect from "./pages/Connect";
 import JobBar from "./components/JobBar";
@@ -24,6 +25,7 @@ const ICONS: Record<string, string> = {
   targets: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01",
   pipeline: "M4 5h16M4 12h10M4 19h6",
   changes: "M3 12h4l3-8 4 16 3-8h4",
+  watch: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z",
   connections: "M6 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM7.7 6.9l8.6 9.2M8 6h8",
   reports: "M4 20V10M10 20V4M16 20v-7M22 20H2",
   buybox: "M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M16 4v4M10 10v4M18 16v4",
@@ -65,6 +67,7 @@ function Side({ meta }: { meta: Meta | null }) {
       {item("/review", "review", "Review")}
       {item("/pipeline", "pipeline", "Pipeline", c?.tracked)}
       {item(c?.pipeline_new ? "/changes?tracked=1&unread=1" : "/changes", "changes", "Changes", c?.pipeline_new, false, true)}
+      {item("/watch", "watch", "Watching")}
       <div className="group">Analyse</div>
       {item("/map", "map", "Map")}
       {item("/owners", "owners", "Owners")}
@@ -145,6 +148,7 @@ function App() {
             <Route path="/c/:num" element={<Company />} />
             <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/changes" element={<Changes />} />
+            <Route path="/watch" element={<Watching />} />
             <Route path="/connections" element={<Connections />} />
             <Route path="/connections/:num" element={<Connections />} />
             <Route path="/owners" element={<Owners />} />

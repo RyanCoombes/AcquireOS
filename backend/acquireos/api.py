@@ -168,8 +168,10 @@ def _meta():
                          select 1 from user_company uc where uc.company_number = cb.company_number and uc.user_id = %(uid)s
                          and (uc.status in ('rejected', 'passed')))) as in_scope,
                       (select count(*) from company_change ch
-                         join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
-                         where uc.status not in ('new', 'rejected', 'passed') and {UNREAD_SQL}
+                         where {UNREAD_SQL} and (ch.kind = 'watch'
+                           or exists (select 1 from user_company uc where uc.company_number = ch.company_number
+                                      and uc.user_id = %(uid)s and uc.status not in ('new', 'rejected', 'passed'))
+                           or exists (select 1 from watch w where w.kind = 'company' and w.ref = ch.company_number))
                       ) as pipeline_new""",
             {"uid": UID}).fetchone()}
         boxes = [dict(r) for r in c.execute(
@@ -705,6 +707,9 @@ def company(num: str, bb: str | None = None):
         sc = next((x for x in scores if x["buy_box_id"] == bb["id"]), None)
     return {
         "deal": deal, "manual": manual, "buy_box": {"id": bb["id"], "name": bb["name"]}, "scores": scores,
+        "watching": bool(c.execute("select 1 from watch where kind = 'company' and ref = %s", (num,)).fetchone()),
+        "watched_officers": [r["ref"] for r in c.execute("select ref from watch where kind = 'director'")],
+        "watched_owners": [r["ref"] for r in c.execute("select ref from watch where kind = 'owner'")],
         "signals": signals, "sold": sold, "same_business": same_business,
         "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
         "changes": changes, "valuation": val, "fin_summary": fintrends.summary(fin), "ch": ch_details,
@@ -1200,6 +1205,9 @@ def refresh_stats(c, data: bool = True):
     data=False after scoring only: skips what depends on the data, not scores."""
     if data:
         c.execute("select ao_refresh_company_signals()")  # recently sold, possible buyers
+        from . import watch
+
+        watch.check(c)  # watched owners: new companies since the last load
     todo = [("sic_counts", compute_sic_counts), ("dashboard:all", lambda cc: compute_dashboard_stats(cc, "all"))]
     if data:
         todo += [("coverage", _coverage_compute), ("meta_lists", compute_meta_lists)]
@@ -1335,8 +1343,9 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
             where.append(UNREAD_SQL)
         if kind:
             where.append("ch.kind = %(kind)s"); params["kind"] = kind
-        if tracked:
-            where.append("coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed')")
+        if tracked:  # your pipeline and everything you watch
+            where.append("""(coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed') or ch.kind = 'watch'
+                             or exists (select 1 from watch w where w.kind = 'company' and w.ref = ch.company_number))""")
         elif scope == "buy_box":
             where.append("(exists (select 1 from company_best cb where cb.company_number = ch.company_number) "
                          "or coalesce(uc.status, 'new') <> 'new')")
@@ -1358,7 +1367,7 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
             f"""select ch.kind, count(*) as n from company_change ch
                 left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
                 where ch.detected_at > now() - make_interval(days => %(days)s) {"and " + UNREAD_SQL if unread else ""}
-                {"and coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed')" if tracked else
+                {"and (coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed') or ch.kind = 'watch' or exists (select 1 from watch w where w.kind = 'company' and w.ref = ch.company_number))" if tracked else
                  "and (exists (select 1 from company_best cb where cb.company_number = ch.company_number) or coalesce(uc.status, 'new') <> 'new')" if scope == "buy_box" else ""}
                 group by 1 order by 2 desc""",
             params,
@@ -1665,6 +1674,40 @@ def ch_sync_set(body: SyncIn):
         return chsync.status(c)
 
 
+# ---------------------------------------------------------------- watching
+
+class WatchIn(BaseModel):
+    kind: str
+    ref: str
+    label: str | None = None
+
+
+@app.get("/api/watch")
+def watch_list():
+    from . import watch
+
+    with db.conn() as c:
+        return {"rows": watch.listing(c)}
+
+
+@app.post("/api/watch")
+def watch_add(body: WatchIn):
+    from . import watch
+
+    with db.conn() as c:
+        try:
+            return watch.add(c, body.kind, body.ref, body.label)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+
+@app.delete("/api/watch")
+def watch_remove(kind: str, ref: str):
+    with db.conn() as c:
+        c.execute("delete from watch where kind = %s and ref = %s", (kind, ref.strip().upper() if kind == "company" else ref.strip()))
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------- owners
 
 @app.get("/api/owners")
@@ -1725,7 +1768,8 @@ def owner(pid: int):
                left join user_company uc on uc.company_number = h.company_number and uc.user_id = %s
                order by cb.score desc nulls last limit 200""", (json.dumps([{"person_id": pid}]), pid, UID)).fetchall()
         outside = c.execute("select count(*) as n from parent_psc where person_id = %s and ceased_on is null", (pid,)).fetchone()["n"]
-    return {"owner": p, "companies": rows, "indirect": indirect, "outside_register": outside}
+        watching = bool(c.execute("select 1 from watch where kind = 'owner' and ref = %s", (str(pid),)).fetchone())
+        return {"watching": watching, "owner": p, "companies": rows, "indirect": indirect, "outside_register": outside}
 
 
 @app.get("/api/links/{num}")

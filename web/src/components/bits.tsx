@@ -109,3 +109,24 @@ export function Signals({ s }: { s?: string[] | null }) {
   return <>{s.filter((k) => SIGNALS[k]).map((k) => (
     <span key={k} className={`sig ${SIGNALS[k][1]}`} title={SIGNALS[k][2]}>{SIGNALS[k][0]}</span>))}</>;
 }
+
+/** ☆ Watch / ★ Watching toggle for a company, owner or director. */
+export function WatchButton({ kind, refId, on, label, onChange, small }: { kind: string; refId: string; on: boolean; label?: string; onChange?: () => void; small?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [state, setState] = useState(on);
+  useEffect(() => setState(on), [on]);
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      const { api } = await import("../api");
+      if (state) await api.unwatch(kind, refId); else await api.watch(kind, refId, label);
+      setState(!state); onChange?.();
+    } finally { setBusy(false); }
+  };
+  return (
+    <button className={`${small ? "watchsm" : "btn quiet"} ${state ? "watching" : ""}`} disabled={busy} onClick={toggle}
+            title={state ? "Stop watching" : `Watch: alerts when ${kind === "company" ? "it changes" : "they take on or leave a company"}`}>
+      {state ? "★ Watching" : "☆ Watch"}
+    </button>
+  );
+}

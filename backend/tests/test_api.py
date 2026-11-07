@@ -868,3 +868,31 @@ def test_money_filters(loaded):
             na = {x["company_number"] for x in c.execute("select company_number from company_latest where net_assets >= 500000")}
         assert {r["company_number"] for r in rows(min_profit=100_000)} == want
         assert {r["company_number"] for r in rows(min_net_assets=500_000)} == na
+
+
+def test_watching_companies_and_owners(loaded):
+    from acquireos import watch
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        assert cl.post("/api/watch", json={"kind": "company", "ref": "01000003"}).status_code == 200
+        assert cl.get("/api/companies/01000003").json()["watching"] is True
+        pid = cl.get("/api/owners", params={"q": "alex example"}).json()["rows"][0]["id"]
+        assert cl.post("/api/watch", json={"kind": "owner", "ref": str(pid)}).status_code == 200
+        assert cl.get(f"/api/owners/{pid}").json()["watching"] is True
+        with db.conn() as c:
+            # the watched owner takes control of another company
+            other = c.execute("""select company_number from company where company_number not in
+                                 (select company_number from company_person where person_id = %s) limit 1""", (pid,)).fetchone()["company_number"]
+            c.execute("""insert into company_person (row_key, company_number, person_id, role, natures, notified_on)
+                         values ('w-new', %s, %s, 'psc', '{ownership-of-shares-75-to-100-percent}', current_date)""", (other, pid))
+            assert watch.check(c) == 1
+            ch = c.execute("select field, new_value from company_change where company_number = %s and kind = 'watch'", (other,)).fetchone()
+            assert ch["new_value"] == "Became an owner" and "Watched owner" in ch["field"]
+        rows = cl.get("/api/watch").json()["rows"]
+        assert {r["kind"] for r in rows} == {"company", "owner"}
+        assert cl.get("/api/meta").json()["counts"]["pipeline_new"] >= 1  # the alert badge
+        assert other in {r["company_number"] for r in cl.get("/api/changes", params={"days": 7, "tracked": "true"}).json()["rows"]}
+        cl.delete("/api/watch", params={"kind": "company", "ref": "01000003"})
+        assert cl.get("/api/companies/01000003").json()["watching"] is False

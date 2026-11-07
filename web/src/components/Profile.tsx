@@ -4,6 +4,7 @@ import type React from "react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
+import { WatchButton } from "./bits";
 import { date, money, filingLabel } from "../format";
 
 type FinSummary = NonNullable<CompanyDetail["fin_summary"]>;
@@ -518,6 +519,10 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                 <div className="wmain">
                   <div className="wname">
                     {w.personId ? <Link to={`/owners/${w.personId}`}>{w.name}</Link> : w.name}
+                    {w.officerKey ? <WatchButton small kind="director" refId={w.officerKey} label={w.name}
+                                                 on={(data.watched_officers ?? []).includes(w.officerKey)} />
+                      : w.personId ? <WatchButton small kind="owner" refId={String(w.personId)} label={w.name}
+                                                       on={(data.watched_owners ?? []).includes(String(w.personId))} /> : null}
                     {[...w.roles].filter((r) => r !== "Shareholder" || !w.roles.has("Owner")).map((r) =>
                       <span key={r} className={`role ${r === "Shareholder" ? "owner" : r.toLowerCase()}`}>
                         {r === "Shareholder" ? "Owner" : r === "Owner" && !w.band && w.pct == null && w.control ? "Controls" : r}</span>)}

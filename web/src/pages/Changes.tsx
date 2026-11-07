@@ -72,7 +72,7 @@ export default function Changes() {
         </div>
         <label className="check">
           <input type="checkbox" checked={tracked} onChange={(e) => set("tracked", e.target.checked ? "1" : null)} />
-          Only companies in my pipeline
+          Only my pipeline and watched
         </label>
         <label className="check">
           <input type="checkbox" checked={unreadOnly} onChange={(e) => set("unread", e.target.checked ? "1" : null)} />

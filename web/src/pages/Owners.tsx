@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, type Status } from "../api";
-import { ErrorLine, RevenueTag, Score, StatusMark, useAsync } from "../components/bits";
+import { ErrorLine, RevenueTag, Score, StatusMark, useAsync, WatchButton } from "../components/bits";
 import { ageFrom, cap, date, int, isBadStatus, MONTHS, OWNERSHIP, range } from "../format";
 
 export default function Owners() {
@@ -95,9 +95,10 @@ function OwnerPage({ pid }: { pid: number }) {
             {data.outside_register ? <>, {int(data.outside_register)} not on the live register</> : null}.
           </div>
         </div>
-        {o.kind !== "individual" && o.registration_number && (
-          <div className="right"><Link className="btn" to={`/c/${o.registration_number}`}>Open as a company</Link></div>
-        )}
+        <div className="right">
+          <WatchButton kind="owner" refId={String(pid)} on={!!(data as any).watching} label={o.name} />
+          {o.kind !== "individual" && o.registration_number && <Link className="btn" to={`/c/${o.registration_number}`}>Open as a company</Link>}
+        </div>
       </div>
 
       <CompanyTable title="Controls directly" rows={current} />

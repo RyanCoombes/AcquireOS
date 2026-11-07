@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
-import { ErrorLine, Flags, RevenueTag, Score, Signals, Toast, useAsync } from "../components/bits";
+import { ErrorLine, Flags, RevenueTag, Score, Signals, Toast, useAsync, WatchButton } from "../components/bits";
 import { AreaChart as SmallLine } from "../components/charts";
 import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
@@ -106,6 +106,7 @@ export default function Company() {
           </div>
         </div>
         <div className="right">
+          <WatchButton kind="company" refId={c.company_number} on={!!data.watching} label={c.name} onChange={reload} />
           <a className="btn quiet" href={chUrl(c.company_number)} target="_blank" rel="noreferrer">Companies House ↗</a>
           <Link className="btn" to={`/connections/${c.company_number}`}>Connection map</Link>
         </div>

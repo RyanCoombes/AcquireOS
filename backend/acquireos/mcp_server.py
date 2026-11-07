@@ -111,6 +111,30 @@ def mark_changes_read(ids: list[int] | None = None, all: bool = False) -> str:
 
 
 @server.tool(description=(
+    "What the user is watching: companies (with their latest change) and owners or directors (with their "
+    "current companies). Changes to watched companies, and new companies a watched owner or director takes "
+    "on or leaves, appear in list_changes with pipeline_only=true and in daily_briefing."))
+def list_watching() -> str:
+    from . import watch
+
+    with db.conn() as c:
+        return _j({"rows": watch.listing(c)})
+
+
+@server.tool(description=(
+    "Watch (or stop watching, with stop=true) a company (ref: company number), an owner (ref: owner id from "
+    "search_owners) or a director (ref: Companies House officer id, officer_key in get_company). Only when the user asks."))
+def watch_item(kind: str, ref: str, label: str | None = None, stop: bool = False) -> str:
+    from . import watch
+
+    with db.conn() as c:
+        if stop:
+            c.execute("delete from watch where kind = %s and ref = %s", (kind, ref.strip().upper() if kind == "company" else ref.strip()))
+            return _j({"ok": True, "watching": False})
+        return _j(watch.add(c, kind, ref, label))
+
+
+@server.tool(description=(
     "Start the background website check: finds sites for companies without one and saves a site only when it shows "
     "both the company number and the registered name (Ltd/Limited); office addresses on it are saved too. "
     "scope: pipeline|targets. Takes a few seconds per company. Only when the user asks."))

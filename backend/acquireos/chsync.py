@@ -23,8 +23,10 @@ from . import chapi, db
 
 PIPELINE_DAYS = int(os.environ.get("CH_SYNC_PIPELINE_DAYS", "7"))
 TARGET_DAYS = int(os.environ.get("CH_SYNC_TARGET_DAYS", "30"))
+# The pipeline and watched companies: fetched first and checked weekly.
 PIPELINE_SQL = """select company_number from user_company where user_id = 1
-                  and status not in ('new', 'passed', 'rejected')"""
+                  and status not in ('new', 'passed', 'rejected')
+                  union select ref from watch where kind = 'company'"""
 TARGET_SQL = """select cb.company_number, cb.score from company_best cb
                 where not exists (select 1 from user_company uc where uc.company_number = cb.company_number
                                   and uc.user_id = 1 and uc.status in ('passed', 'rejected'))"""
@@ -168,6 +170,21 @@ def run_forever():
                     _beat(c, "waiting for a data load")
                     time.sleep(300)
                     continue
+                # Watched directors: their appointments from Companies House, weekly.
+                for w in c.execute("""select id, ref from watch where kind = 'director'
+                                      and (fetched_at is null or fetched_at < now() - interval '7 days')""").fetchall():
+                    try:
+                        chapi.fetch_appointments(c, w["ref"])
+                        c.execute("update watch set fetched_at = now() where id = %s", (w["id"],))
+                        from . import watch as watch_mod
+
+                        watch_mod.check(c)
+                        c.commit()
+                    except chapi.NoKey:
+                        raise
+                    except Exception as e:
+                        c.rollback()
+                        log(f"watched director {w['ref']}: {e}")
                 batch = next_batch(c)
                 if not batch:
                     _beat(c, "up to date")

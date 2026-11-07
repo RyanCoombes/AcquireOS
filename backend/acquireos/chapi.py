@@ -282,18 +282,7 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
                 current.append(okey)
         if people:
             for okey in current[:6]:  # each current director's other companies
-                ap = _get(f"/officers/{okey}/appointments?items_per_page=50") or {}
-                conn.execute("delete from officer_appointment where officer_key = %s", (okey,))
-                for a in ap.get("items") or []:
-                    to = a.get("appointed_to") or {}
-                    if not to.get("company_number"):
-                        continue
-                    conn.execute(
-                        """insert into officer_appointment (officer_key, company_number, company_name, company_status, role,
-                                                            appointed_on, resigned_on)
-                           values (%s, %s, %s, %s, %s, %s, %s) on conflict do nothing""",
-                        (okey, to["company_number"].upper(), to.get("company_name"), to.get("company_status"),
-                         a.get("officer_role"), _d(a.get("appointed_on")), _d(a.get("resigned_on"))))
+                fetch_appointments(conn, okey)
 
     def get_insolvency():
         nonlocal insolvency
@@ -676,3 +665,23 @@ def accounts_pdf_text(conn, company_number: str, made_up: str | None = None) -> 
         return {"made_up_to": made, "pages": pages, "text": None, "scanned": True, "filing_history": link,
                 "note": "This is a scanned paper filing with no text layer. Open it from the filing history and read the figures from the images."}
     return {"made_up_to": made, "pages": pages, "scanned": False, "text": text[:80_000], "filing_history": link}
+
+
+def fetch_appointments(conn, officer_key: str) -> int:
+    """Every company a director (Companies House officer id) is or was
+    appointed to, stored in officer_appointment. Returns how many."""
+    ap = _get(f"/officers/{officer_key}/appointments?items_per_page=50") or {}
+    conn.execute("delete from officer_appointment where officer_key = %s", (officer_key,))
+    n = 0
+    for a in ap.get("items") or []:
+        to = a.get("appointed_to") or {}
+        if not to.get("company_number"):
+            continue
+        conn.execute(
+            """insert into officer_appointment (officer_key, company_number, company_name, company_status, role,
+                                                appointed_on, resigned_on)
+               values (%s, %s, %s, %s, %s, %s, %s) on conflict do nothing""",
+            (officer_key, to["company_number"].upper(), to.get("company_name"), to.get("company_status"),
+             a.get("officer_role"), _d(a.get("appointed_on")), _d(a.get("resigned_on"))))
+        n += 1
+    return n

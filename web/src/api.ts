@@ -73,6 +73,12 @@ export interface Row {
   confirmation_overdue?: boolean | null;
 }
 
+export interface WatchRow {
+  id: number; kind: "company" | "owner" | "director"; ref: string; label: string | null; since: string;
+  name?: string; status?: string | null; my_status?: string | null; last_change?: string | null; changes_since?: number;
+  companies?: { company_number: string; name: string; status: string | null }[]; checked_at?: string | null;
+}
+
 export interface ChSync {
   enabled: boolean; paused: boolean; running: boolean; state: string | null; last_beat: string | null;
   pipeline: { total: number; fetched: number; current: number }; targets: { total: number; fetched: number; current: number };
@@ -164,6 +170,7 @@ export interface CompanyDetail {
   valuation: Valuation;
   deal: Deal;
   signals?: string[];
+  watching?: boolean; watched_officers?: string[]; watched_owners?: string[];
   sold?: { sold_on: string | null; sold_to: string | null } | null;
   same_business?: { company_number: string; name: string; postcode: string | null; employees: number | null;
                     revenue_low: string | null; revenue_high: string | null; revenue_basis: string | null }[];
@@ -267,6 +274,11 @@ export const api = {
     `/api/companies/${encodeURIComponent(n)}/ch-check`, { method: "POST" }),
   chSync: () => req<ChSync>("/api/ch-sync"),
   chSyncSet: (paused: boolean) => req<ChSync>("/api/ch-sync", { method: "PUT", body: JSON.stringify({ paused }) }),
+  watchList: () => req<{ rows: WatchRow[] }>("/api/watch"),
+  watch: (kind: string, ref: string, label?: string) =>
+    req<{ id: number }>("/api/watch", { method: "POST", body: JSON.stringify({ kind, ref, label }) }),
+  unwatch: (kind: string, ref: string) =>
+    req<{ ok: boolean }>(`/api/watch?kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(ref)}`, { method: "DELETE" }),
   websiteSummary: () => req<{ checked: number; confirmed: number; possible: number; none: number; last_at: string | null; with_website: number }>("/api/website-check"),
   websiteCheck: (scope: string, limit: number) =>
     req<{ started: boolean }>(`/api/website-check?scope=${scope}&limit=${limit}`, { method: "POST" }),

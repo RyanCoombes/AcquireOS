@@ -95,6 +95,7 @@ export default function Connect() {
               ["audit_queue", "Companies missing a website, research, owners, filed turnover or a field-service check; or with a SIC code that doesn't match the name. Pipeline first, then by score."],
               ["save_enrichment", "Saves website, business type, offices, key facts, contacts, a summary and ownership found by research (e.g. sold to a group). A source link is required; the company is rescored straight away."],
               ["read_accounts_pdf, save_financials", "Reads accounts Companies House holds only as PDF and saves the figures printed in them, marked as from the PDF."],
+              ["list_watching, watch_item", "What you watch, and watching or unwatching companies, owners and directors when you ask."],
               ["daily_briefing", "Unread changes to your pipeline, next actions due this week, pipeline companies sold or buying others, and sync progress."],
               ["start_website_check, mark_changes_read", "Run the strict website check, mark changes read. Only when you ask."],
               ["flag_data_issue, list_data_issues, resolve_data_issue", "Records problems for you to review, such as a wrong SIC code or a suspect owner link."],
