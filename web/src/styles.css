@@ -915,3 +915,4 @@ details.sources li { margin: 3px 0; }
 .estnote { font-size: 12px; font-weight: 600; }
 .jb-x { border: 0; background: none; font-size: 18px; line-height: 1; cursor: pointer; color: inherit; opacity: .6; padding: 0 4px; margin-left: 8px; }
 .jb-x:hover { opacity: 1; }
+.sig.green { background: var(--green-soft); color: var(--green); }

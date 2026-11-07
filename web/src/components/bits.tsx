@@ -99,6 +99,9 @@ export const SIGNALS: Record<string, [string, string, string]> = {
   recently_sold: ["Recently sold", "red", "A company became the owner as the previous owners left, in the last 3 years"],
   possible_buyer: ["Possible buyer", "blue", "Has taken control of established companies in the last 3 years: may be buying, not selling"],
   many_shareholders: ["Many shareholders", "amber", "10 or more shareholders on its latest statement: usually investor or employee-owned"],
+  wales_office: ["Office in Wales", "green", "An office or site in Wales, from research or the company's own website"],
+  wales_funding: ["Welsh funding", "green", "Lending or investment from Welsh public funders (DBW, Finance Wales), who only fund businesses in Wales"],
+  wales_director: ["Director in Wales", "grey", "A current director gives Wales as their country (a hint, not proof of an office)"],
 };
 
 export function Signals({ s }: { s?: string[] | null }) {

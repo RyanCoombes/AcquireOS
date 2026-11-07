@@ -50,6 +50,9 @@ def missing_postcodes(conn, limit: int | None = None) -> list[str]:
                      where l->>'postcode' is not null) x
            left join postcode_geo g on g.postcode = x.pc
            where g.postcode is null or (g.precision = 'none' and g.looked_up_at < now() - interval '90 days')
+              -- border areas looked up before the country was kept: once more for it
+              or (g.country is null and g.precision = 'postcode'
+                  and substring(g.postcode from '^([A-Z]{1,2})[0-9]') in ('CH', 'SY', 'HR', 'GL'))
            order by 1""" + (f" limit {int(limit)}" if limit else "")
     ).fetchall()
     return [r["pc"] for r in rows]
@@ -70,7 +73,7 @@ def geocode(conn, limit: int | None = None, post=None, get=None) -> dict:
         for item in res:
             pc, r = item.get("query"), item.get("result")
             if r and r.get("latitude") is not None:
-                _store(conn, pc, r["latitude"], r["longitude"], "postcode")
+                _store(conn, pc, r["latitude"], r["longitude"], "postcode", r.get("country"))
                 exact += 1
                 continue
             out = pc.split(" ")[0] if pc else None
@@ -89,13 +92,25 @@ def geocode(conn, limit: int | None = None, post=None, get=None) -> dict:
                 none += 1
         conn.commit()
         time.sleep(0.2)  # be polite to a free service
-    return {"exact": exact, "outcode": outcode, "not_found": none, "remaining": 0}
+    return {"exact": exact, "outcode": outcode, "not_found": none, "remaining": 0, "regions_fixed": apply_countries(conn)}
 
 
-def _store(conn, pc, lat, lon, precision):
+def _store(conn, pc, lat, lon, precision, country=None):
     conn.execute(
-        """insert into postcode_geo (postcode, lat, lon, precision) values (%s, %s, %s, %s)
+        """insert into postcode_geo (postcode, lat, lon, precision, country) values (%s, %s, %s, %s, %s)
            on conflict (postcode) do update set lat = excluded.lat, lon = excluded.lon,
-             precision = excluded.precision, looked_up_at = now()""",
-        (pc, lat, lon, precision),
+             precision = excluded.precision, country = coalesce(excluded.country, postcode_geo.country),
+             looked_up_at = now()""",
+        (pc, lat, lon, precision, country),
     )
+
+
+def apply_countries(conn) -> int:
+    """Postcodes that straddle the Wales-England border (CH, SY, HR, GL areas):
+    set each company's region from the exact country the lookup returned."""
+    return conn.execute(
+        """update company c set region = g.country
+           from postcode_geo g
+           where g.postcode = c.postcode and g.country in ('Wales', 'England')
+             and substring(g.postcode from '^([A-Z]{1,2})[0-9]') in ('CH', 'SY', 'HR', 'GL', 'LD', 'NP', 'LL')
+             and c.region is distinct from g.country""").rowcount

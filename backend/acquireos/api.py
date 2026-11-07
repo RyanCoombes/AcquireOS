@@ -228,7 +228,7 @@ def companies(
     has_website: bool | None = None, bb: str = "all", in_box: bool | None = None,
     accounts_size: str | None = None, overdue: str | None = None, charges: str | None = None,
     numbers: str | None = None, count: bool = True, mine: str | None = None, sold: str | None = None,
-    signal: str | None = None, revenue: str | None = None,
+    signal: str | None = None, revenue: str | None = None, wales: str | None = None,
 ):
     """All companies, with scores from one buy box (bb=<id>) or each company's
     best score across buy boxes (bb=all). in_box limits to companies inside
@@ -306,6 +306,18 @@ def companies(
             params["rbasis"] = revenue
         elif revenue == "none":
             where.append("not exists (select 1 from estimate re where re.company_number = c.company_number)")
+        if wales:  # presence in Wales, from the register, research, websites and funders
+            sig = "exists (select 1 from company_signal sg where sg.company_number = c.company_number and sg.signals && %(wsig)s)"
+            if wales == "registered":
+                where.append("c.region = 'Wales'")
+            elif wales == "office":
+                where.append("coalesce(c.region, '') <> 'Wales' and " + sig); params["wsig"] = ["wales_office"]
+            elif wales == "funding":
+                where.append(sig); params["wsig"] = ["wales_funding"]
+            elif wales == "director":
+                where.append(sig); params["wsig"] = ["wales_director"]
+            elif wales == "any":
+                where.append(f"(c.region = 'Wales' or {sig})"); params["wsig"] = ["wales_office", "wales_funding"]
         if sold in ("hide", "only"):  # recently sold to another company (register or research)
             where.append(("" if sold == "only" else "not ") +
                          "exists (select 1 from company_signal sg where sg.company_number = c.company_number and 'recently_sold' = any(sg.signals))")

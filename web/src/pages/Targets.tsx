@@ -51,9 +51,9 @@ const DEFAULTS: Record<Mode, Record<string, string>> = {
   directory: { sort: "name", dir: "asc" },
   targets: { sort: "score", dir: "desc", in_box: "true", mine: "hide_closed" },
 };
-const FILTER_KEYS = ["revenue", "sold", "signal", "mine", "accounts_size", "overdue", "charges", "bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
+const FILTER_KEYS = ["wales", "revenue", "sold", "signal", "mine", "accounts_size", "overdue", "charges", "bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
   "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
-const MORE_KEYS = ["revenue", "sold", "signal", "overdue", "charges", "business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
+const MORE_KEYS = ["wales", "revenue", "sold", "signal", "overdue", "charges", "business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
 
 export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const base = mode === "directory" ? "/companies" : "/targets";
@@ -325,6 +325,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                 {mode === "directory" ? <>{fitSelect}{score}{ownership}{ownerAge}{myStatus}</>
                   : <>{companyStatus}{industryWide}{yearsTrading}{accountsSize}</>}
                 {overdueSel}{chargesSel}
+                <Select label="Presence in Wales" k="wales" query={query} set={set} options={[["any", "Any presence (registered, office or Welsh funding)"], ["registered", "Registered office in Wales"], ["office", "Office in Wales, registered elsewhere"], ["funding", "Welsh public funding (DBW, Finance Wales)"], ["director", "A director lives in Wales (hint only)"]]} />
                 <Select label="Revenue" k="revenue" query={query} set={set} options={[["filed", "Filed (confirmed in the accounts)"], ["estimated", "Estimate"], ["none", "No revenue figure"]]} />
                 <Select label="Recently sold" k="sold" query={query} set={set}
                         options={[["hide", "Hide companies sold in the last 3 years"], ["only", "Only companies sold in the last 3 years"]]} />

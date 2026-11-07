@@ -170,6 +170,10 @@ def region_for(pc: str | None) -> str | None:
         return None
     if area in WALES_AREAS:
         return "Wales"
+    # Welsh districts in the mostly-English SY and CH areas (Newtown, Welshpool,
+    # Aberystwyth; Deeside, Flint, Mold, Holywell). Same rule as ao_region in SQL.
+    if re.match(r"^(CH[5-8]|SY(1[5-9]|2[0-5]))(\s|$)", pc.strip().upper()):
+        return "Wales"
     if area in SCOTLAND_AREAS:
         return "Scotland"
     if area in NI_AREAS:

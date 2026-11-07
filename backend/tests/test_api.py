@@ -824,3 +824,29 @@ def test_stored_and_live_signals_agree(loaded):
                            where coalesce(sg.signals, '{}') is distinct from ao_signals(c.company_number)""").fetchall()
         assert bad == []
         assert "recently_sold" in c.execute("select ao_signals('01000001') as s").fetchone()["s"]
+
+
+def test_presence_in_wales(loaded):
+    from acquireos import enrich
+    from acquireos.api import app
+    from acquireos.normalise import region_for
+
+    assert region_for("SY23 1AA") == "Wales" and region_for("SY3 8AB") == "England" and region_for("CH7 1AB") == "Wales"
+    assert region_for("CH1 1AA") == "England" and region_for("CF10 1AA") == "Wales"
+    loaded.commit()
+    with db.conn() as c:
+        assert c.execute("select ao_region('SY16 1AA') as r").fetchone()["r"] == "Wales"
+        # an English-registered company with a researched office in Cardiff
+        eng = c.execute("select company_number from company where region = 'England' limit 1").fetchone()["company_number"]
+        enrich.save_enrichment(c, eng, source_url="https://example.com/contact",
+                               locations=[{"kind": "office", "address": "1 Bute St, Cardiff CF10 5AA"}])
+        c.execute("select ao_refresh_company_signals()")
+        assert "wales_office" in c.execute("select ao_signals(%s) as s", (eng,)).fetchone()["s"]
+        bad = c.execute("""select c.company_number from company c left join company_signal sg using (company_number)
+                           where coalesce(sg.signals, '{}') is distinct from ao_signals(c.company_number)""").fetchall()
+        assert bad == []
+    with TestClient(app) as cl:
+        office = {r["company_number"] for r in cl.get("/api/companies", params={"wales": "office", "limit": 100}).json()["rows"]}
+        anyw = {r["company_number"] for r in cl.get("/api/companies", params={"wales": "any", "limit": 100}).json()["rows"]}
+        reg = {r["company_number"] for r in cl.get("/api/companies", params={"wales": "registered", "limit": 100}).json()["rows"]}
+        assert office == {eng} and eng in anyw and reg <= anyw and eng not in reg

@@ -59,19 +59,21 @@ def dataset_overview() -> str:
     "sic: code prefix such as 620. changed_days: only companies with changes in the last N days. "
     "sold: hide|only (sold to another company in the last 3 years). signal: possible_buyer|many_shareholders. "
     "mine: hide_closed|pipeline|untouched. has_website: true|false. "
-    "revenue: filed (confirmed in the accounts)|estimated|none."))
+    "revenue: filed (confirmed in the accounts)|estimated|none. "
+    "wales: presence in Wales: registered (registered office)|office (an office there, registered elsewhere)|"
+    "funding (Welsh public funders such as DBW)|director (a director living in Wales; a hint)|any (registered, office or funding)."))
 def search_companies(query: str | None = None, region: str | None = None, min_score: float | None = None,
                      ownership: str | None = None, status: str | None = None, min_staff: int | None = None,
                      max_staff: int | None = None, min_owner_age: int | None = None, sic: str | None = None,
                      changed_days: int | None = None, include_excluded: bool = False, sort: str | None = None,
                      limit: int = 25, sold: str | None = None, signal: str | None = None, mine: str | None = None,
-                     has_website: bool | None = None, revenue: str | None = None) -> str:
+                     has_website: bool | None = None, revenue: str | None = None, wales: str | None = None) -> str:
     r = _api().companies(q=query, region=region, min_score=min_score, ownership=ownership, status=status,
                          min_staff=min_staff, max_staff=max_staff, min_owner_age=min_owner_age, sic=sic,
                          changed_days=changed_days, include_excluded=include_excluded,
                          sort=sort or ("relevance" if query else "score"),
                          limit=max(1, min(limit, 200)), sold=sold, signal=signal, mine=mine, has_website=has_website,
-                         revenue=revenue)
+                         revenue=revenue, wales=wales)
     keep = ("company_number", "name", "region", "trading_region", "postcode", "sic_codes", "employees", "revenue_low",
             "revenue_high", "revenue_basis", "revenue_method", "value_low", "value_high", "value_basis", "ownership_type",
             "oldest_birth_year", "flags", "signals", "sold_on", "sold_to", "same_business", "score",

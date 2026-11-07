@@ -30,7 +30,7 @@ export default function MapPage() {
   const m = meta.data;
   const saved = useAsync(() => api.searches(), []);
   const [more, setMore] = useState(false);
-  const MORE = ["revenue", "sold", "sic", "company_status", "status", "min_years", "accounts_size", "overdue", "charges", "min_value", "max_value", "changed_days", "flag"];
+  const MORE = ["wales", "revenue", "sold", "sic", "company_status", "status", "min_years", "accounts_size", "overdue", "charges", "min_value", "max_value", "changed_days", "flag"];
   const moreActive = MORE.filter((k) => query[k]).length;
   const active = Object.keys(query).length;
   // A saved search from the lists: its filters, on the map (all companies unless it was a targets search).
@@ -123,6 +123,7 @@ export default function MapPage() {
                             aria-label="Indicative value maximum" onChange={(v) => set("max_value", v === null ? null : String(v))} />
               </div>
             </div>
+            <Select label="Presence in Wales" k="wales" query={query} set={set} options={[["any", "Any presence (registered, office or Welsh funding)"], ["registered", "Registered office in Wales"], ["office", "Office in Wales, registered elsewhere"], ["funding", "Welsh public funding (DBW, Finance Wales)"], ["director", "A director lives in Wales (hint only)"]]} />
             <Select label="Revenue" k="revenue" query={query} set={set} options={[["filed", "Filed (confirmed in the accounts)"], ["estimated", "Estimate"], ["none", "No revenue figure"]]} />
             <Select label="Recently sold" k="sold" query={query} set={set}
                     options={[["hide", "Hide companies sold in the last 3 years"], ["only", "Only companies sold in the last 3 years"]]} />
