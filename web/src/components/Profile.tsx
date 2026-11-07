@@ -182,6 +182,17 @@ export function WebsiteFinder({ num, onSaved }: { num: string; onSaved: () => vo
     try { const r = await api.findWebsite(num, u); setRes(r); if (r.saved) onSaved(); } catch (e: any) { setErr(e.message); }
     setBusy(false);
   };
+  // You found it yourself: save it as the website without the check.
+  const [manual, setManual] = useState<string | null>(null);
+  const saveManual = async (u: string) => {
+    setBusy(true); setErr(null);
+    try {
+      const site = /^https?:\/\//.test(u) ? u : `https://${u.replace(/^\/+/, "")}`;
+      await api.saveEnrichment(num, { website: site, source_url: site, confidence: "high", source_label: "Added by me (not checked)" });
+      setManual(site); setRes(null); onSaved();
+    } catch (e: any) { setErr(e.message); }
+    setBusy(false);
+  };
   return (
     <div className="webfind">
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -190,11 +201,15 @@ export function WebsiteFinder({ num, onSaved }: { num: string; onSaved: () => vo
         <input type="text" value={url} placeholder="example.co.uk" style={{ width: 200 }} onChange={(e) => setUrl(e.target.value)}
                onKeyDown={(e) => { if (e.key === "Enter" && url.trim()) go(url.trim()); }} />
         <button className="btn quiet" disabled={busy || !url.trim()} onClick={() => go(url.trim())}>Check</button>
+        <button className="btn quiet" disabled={busy || !url.trim()} onClick={() => saveManual(url.trim())}
+                title="Save it as the website without checking it">Save without checking</button>
       </div>
+      {manual && <div className="pos" style={{ marginTop: 8 }}>Saved {manual.replace(/^https?:\/\/(www\.)?/, "")} as the website (added by you).</div>}
       {err && <div className="callout red">{err}</div>}
       {res && (
         <div style={{ marginTop: 8 }}>
-          <div className={res.saved ? "pos" : "muted"}>{res.message}</div>
+          <div className={res.saved ? "pos" : "muted"}>{res.message}
+            {!res.saved && url.trim() && <> <button className="btn quiet" disabled={busy} onClick={() => saveManual(url.trim())}>Save {url.trim()} anyway</button></>}</div>
           {res.results.length > 0 && (
             <ul className="small" style={{ margin: "6px 0 0", paddingLeft: 18 }}>
               {res.results.map((r, i) => (
@@ -206,7 +221,7 @@ export function WebsiteFinder({ num, onSaved }: { num: string; onSaved: () => vo
           )}
         </div>
       )}
-      <p className="faint small" style={{ marginTop: 6 }}>Saves a site only if it shows the company number or postcode.</p>
+      <p className="faint small" style={{ marginTop: 6 }}>The check saves a site only if it shows the company number or postcode. If you know the site, "Save without checking" saves it as yours.</p>
     </div>
   );
 }

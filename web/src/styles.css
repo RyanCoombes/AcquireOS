@@ -961,3 +961,5 @@ details.sources li { margin: 3px 0; }
 .fillopt.on { color: var(--teal); font-weight: 650; }
 tr.filler td { background: var(--teal-soft, #e6f2ef); }
 .filled { display: inline-block; min-width: 110px; text-align: right; color: var(--teal); }
+
+.tag.amber { background: var(--amber-soft); color: var(--amber); }

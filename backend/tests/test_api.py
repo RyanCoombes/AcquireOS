@@ -896,3 +896,92 @@ def test_watching_companies_and_owners(loaded):
         assert other in {r["company_number"] for r in cl.get("/api/changes", params={"days": 7, "tracked": "true"}).json()["rows"]}
         cl.delete("/api/watch", params={"kind": "company", "ref": "01000003"})
         assert cl.get("/api/companies/01000003").json()["watching"] is False
+
+
+def test_pdf_accounts_figures_are_read_and_checked():
+    from acquireos import pdfaccounts
+
+    from .conftest import FIX
+    text = (FIX / "pdf_accounts.txt").read_text()
+    ex = pdfaccounts.extract(text)
+    f = ex["figures"]
+    assert f["turnover"] == [4_123_456, 3_812_004]  # the note number "3" is not a figure
+    assert f["operating_profit"] == [80_356, 111_504]
+    assert f["profit_loss"] == [56_517, 87_078]
+    assert f["net_assets"][0] == 2_100_000 and f["cash"][0] == 414_071 and f["debtors"][0] == 900_500
+    assert ex["employees"] == 34 and not ex["dropped"]
+    # contradictions are dropped, not guessed
+    bad = text.replace("Total equity 2,100,000", "Total equity 9,999,999")
+    assert "net_assets" not in pdfaccounts.extract(bad)["figures"]
+    # £'000 accounts, and losses in brackets
+    k = pdfaccounts.extract("£'000 £'000\nTurnover 12,500 11,000\nOperating loss (320) (150)\n")["figures"]
+    assert k["turnover"][0] == 12_500_000 and k["operating_profit"][0] == -320_000
+
+
+def test_pdf_accounts_ocr_on_a_scanned_page():
+    import io
+
+    import pytest
+    from PIL import Image, ImageDraw, ImageFont
+
+    from acquireos import pdfaccounts
+
+    from .conftest import FIX
+    if not pdfaccounts.ocr_available():
+        pytest.skip("Tesseract not installed here")
+    lines = (FIX / "pdf_accounts.txt").read_text().splitlines()
+    img = Image.new("L", (1700, 60 + 44 * len(lines)), 255)
+    d = ImageDraw.Draw(img)
+    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
+    for i, line in enumerate(lines):
+        d.text((80, 30 + 44 * i), line, fill=0, font=font)
+    buf = io.BytesIO()
+    img.save(buf, "PDF", resolution=200)
+    text, method = pdfaccounts.pdf_text(buf.getvalue())
+    assert method == "ocr"
+    f = pdfaccounts.extract(text)["figures"]
+    assert f["turnover"][0] == 4_123_456 and f["net_assets"][0] == 2_100_000
+
+
+def test_pdf_queue_newest_years_first(loaded):
+    from acquireos import pdfaccounts
+
+    loaded.commit()
+    with db.conn() as c:
+        c.execute("""insert into ch_fetch (company_number, checked_at, accounts_pdf) values
+                     ('01000001', now(), '["2025-03-31", "2024-03-31", "2015-03-31"]'),
+                     ('01000002', now(), '["2025-12-31", "2023-12-31"]')
+                     on conflict (company_number) do update set accounts_pdf = excluded.accounts_pdf""")
+        q = [(r["company_number"], str(r["made_up"])) for r in c.execute(pdfaccounts.QUEUE_SQL, (10,))]
+        # each company's latest year before anyone's older ones; nothing over 5 years old
+        assert {x[1] for x in q[:2]} == {"2025-03-31", "2025-12-31"}
+        assert ("01000001", "2015-03-31") not in q and len(q) == 4
+        assert pdfaccounts.queue_size(c) == 4
+
+
+def test_pdf_read_and_save(loaded, monkeypatch):
+    import json as _j
+
+    from acquireos import chapi, pdfaccounts
+    from acquireos.api import app
+
+    from .conftest import FIX
+    loaded.commit()
+    monkeypatch.setattr(chapi, "_document", lambda link, limit=0, accept="": b"%PDF")
+    monkeypatch.setattr(pdfaccounts, "pdf_text", lambda pdf, ocr_pages=20: ((FIX / "pdf_accounts.txt").read_text(), "ocr"))
+    with db.conn() as c:
+        c.execute("delete from financial_period where company_number = '01000003'")
+        c.execute("""insert into filing (company_number, transaction_id, filed_on, type, category, description, detail)
+                     values ('01000003', 'aa25', '2025-12-01', 'AA', 'accounts', 'accounts-with-accounts-type-full',
+                             %s)""", (_j.dumps({"made_up_date": "2025-03-31", "document": "/document/zz"}),))
+        r = pdfaccounts.read_and_save(c, "01000003", "2025-03-31")
+        assert r["status"] == "done" and r["method"] == "ocr"
+        rows = {str(x["period_end"]): x for x in c.execute(
+            "select period_end, turnover, source from financial_period where company_number = '01000003'")}
+        assert float(rows["2025-03-31"]["turnover"]) == 4_123_456 and rows["2025-03-31"]["source"] == "pdf:ocr"
+        assert float(rows["2024-03-31"]["turnover"]) == 3_812_004  # the prior-year column fills the year before
+        assert c.execute("select status from pdf_read where company_number = '01000003'").fetchone()["status"] == "done"
+    with TestClient(app) as cl:
+        d = cl.get("/api/companies/01000003").json()
+        assert d["pdf_reads"][0]["method"] == "ocr" and d["estimate"]["basis"] == "filed"
+        assert cl.get("/api/pdf-read").json()["done"] == 1

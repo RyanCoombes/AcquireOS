@@ -1,0 +1,25 @@
+EXAMPLE SYSTEMS LIMITED
+PROFIT AND LOSS ACCOUNT FOR THE YEAR ENDED 31 MARCH 2025
+Note 2025 2024
+£ £
+Turnover 3 4,123,456 3,812,004
+Cost of sales (2,500,100) (2,300,000)
+Gross profit 1,623,356 1,512,004
+Administrative expenses (1,543,000) (1,400,500)
+Operating profit 4 80,356 111,504
+Interest payable (5,000) (4,000)
+Profit before taxation 75,356 107,504
+Tax on profit (18,839) (20,426)
+Profit for the financial year 56,517 87,078
+BALANCE SHEET AS AT 31 MARCH 2025
+Fixed assets
+Tangible assets 6 120,000 98,000
+Current assets
+Debtors 7 900,500 850,200
+Cash at bank and in hand 414,071 837,500
+Net assets 2,100,000 2,043,483
+Capital and reserves
+Called up share capital 100 100
+Profit and loss account 2,099,900 2,043,383
+Total equity 2,100,000 2,043,483
+The average monthly number of employees (including directors) during the year was 34 (2024: 31).

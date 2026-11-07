@@ -2,7 +2,7 @@ import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { duration, elapsed, useJob } from "../components/JobBar";
 import { Link } from "react-router-dom";
-import { api, type ChSync, type Preview } from "../api";
+import { api, type ChSync, type PdfRead, type Preview } from "../api";
 import { ErrorLine, useAsync } from "../components/bits";
 import { dateTime, int } from "../format";
 
@@ -169,6 +169,7 @@ export default function Import() {
 
       <ChFeed onDone={history.reload} />
       <ChSyncPanel />
+      <PdfReadPanel />
       <WebsiteBatch />
 
       <section>
@@ -359,6 +360,38 @@ function StreamLine({ s }: { s: ChSync["stream"] }) {
       {" "}{int(events)} events, {int(s.status_changes ?? 0)} status changes, {int(s.waiting)} companies waiting for a re-fetch
       {err && <span className="neg"> · {err}</span>}
     </p>
+  );
+}
+
+function PdfReadPanel() {
+  const [st, setSt] = useState<PdfRead | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () => api.pdfRead().then((d) => { if (live) { setSt(d); setErr(null); } }).catch((e) => live && setErr(e.message));
+    load();
+    const t = setInterval(load, 60_000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
+  const toggle = async () => {
+    if (!st) return;
+    try { setSt(await api.pdfReadSet(!st.paused)); } catch (e: any) { setErr(e.message); }
+  };
+  if (!st) return err ? <ErrorLine error={err} /> : null;
+  const state = st.paused ? ["Paused", ""] : st.queue ? ["Reading", "green"] : ["Up to date", "green"];
+  return (
+    <section>
+      <div className="sechead"><h2>PDF accounts</h2>
+        <span className={`chip ${state[1]}`}>{state[0]}</span>
+        <button className="btn quiet" style={{ marginLeft: "auto" }} onClick={toggle}>{st.paused ? "Resume" : "Pause"}</button></div>
+      <p className="small" style={{ margin: 0 }}>
+        <b>{int(st.done)}</b> read{st.by_ocr ? <> ({int(st.by_ocr)} by OCR)</> : null}
+        {" · "}<b>{int(st.nothing_found + st.failed)}</b> couldn't be read
+        {" · "}<b>{int(st.queue)}</b> waiting{st.last_at ? <> · last {dateTime(st.last_at)}</> : null}
+      </p>
+      {!st.ocr && <div className="callout amber" style={{ marginTop: 8 }}>OCR isn't installed here, so only PDFs with a text layer can be read. Update the stack to get the new image.</div>}
+      <p className="faint small">Accounts filed only as PDF, found by the Companies House sync. Newest year first, then back up to 5 years; your pipeline before other targets. Figures are marked “from PDF” or “read by OCR” on the company page.</p>
+    </section>
   );
 }
 

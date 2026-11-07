@@ -707,6 +707,8 @@ def company(num: str, bb: str | None = None):
         sc = next((x for x in scores if x["buy_box_id"] == bb["id"]), None)
     return {
         "deal": deal, "manual": manual, "buy_box": {"id": bb["id"], "name": bb["name"]}, "scores": scores,
+        "pdf_reads": c.execute("select made_up, status, method, note, read_at from pdf_read where company_number = %s order by made_up desc",
+                               (num,)).fetchall(),
         "watching": bool(c.execute("select 1 from watch where kind = 'company' and ref = %s", (num,)).fetchone()),
         "watched_officers": [r["ref"] for r in c.execute("select ref from watch where kind = 'director'")],
         "watched_owners": [r["ref"] for r in c.execute("select ref from watch where kind = 'owner'")],
@@ -1665,6 +1667,23 @@ def ch_sync_status():
 
 class SyncIn(BaseModel):
     paused: bool
+
+
+@app.get("/api/pdf-read")
+def pdf_read_status():
+    from . import pdfaccounts
+
+    with db.conn() as c:
+        return pdfaccounts.status(c)
+
+
+@app.put("/api/pdf-read")
+def pdf_read_pause(body: SyncIn):
+    from . import chsync, pdfaccounts
+
+    with db.conn() as c:
+        chsync.set_setting(c, "pdf_paused", body.paused)
+        return pdfaccounts.status(c)
 
 
 @app.put("/api/ch-sync")

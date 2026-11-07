@@ -454,6 +454,13 @@ def scheduler():
 
         # Companies House API sync in the background (does nothing without CH_API_KEY).
         threading.Thread(target=chsync.run_forever, daemon=True, name="ch-sync").start()
+    if os.environ.get("PDF_READER", "on").lower() not in ("off", "0", "false", "no"):
+        import threading
+
+        from . import pdfaccounts
+
+        # Accounts only filed as PDF: read them in the background (text layer or OCR).
+        threading.Thread(target=pdfaccounts.run_forever, daemon=True, name="pdf-accounts").start()
     if os.environ.get("CH_STREAM", "on").lower() not in ("off", "0", "false", "no"):
         from . import chstream
 

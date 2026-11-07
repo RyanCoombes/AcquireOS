@@ -153,6 +153,7 @@ export interface CompanyDetail {
     net_current_assets?: string | null; total_assets_less_cl?: string | null; gross_profit?: string | null;
     director_pay?: string | null; staff_costs?: string | null;
   }[];
+  pdf_reads?: { made_up: string; status: "done" | "nothing_found" | "failed"; method: string | null; note: string | null; read_at: string }[];
   estimate: { revenue_low: string; revenue_high: string; basis: string; method: string } | null;
   ownership: {
     ownership_type: string; flags: string[]; owner_count: number; oldest_birth_year: number | null;
@@ -273,6 +274,8 @@ export const api = {
       { method: "POST", body: JSON.stringify({ url: url ?? null }) }),
   chCheck: (n: string) => req<NonNullable<CompanyDetail["ch"]> & { changed: boolean; changes: number }>(
     `/api/companies/${encodeURIComponent(n)}/ch-check`, { method: "POST" }),
+  pdfRead: () => req<PdfRead>("/api/pdf-read"),
+  pdfReadSet: (paused: boolean) => req<PdfRead>("/api/pdf-read", { method: "PUT", body: JSON.stringify({ paused }) }),
   chSync: () => req<ChSync>("/api/ch-sync"),
   chSyncSet: (paused: boolean) => req<ChSync>("/api/ch-sync", { method: "PUT", body: JSON.stringify({ paused }) }),
   watchList: () => req<{ rows: WatchRow[] }>("/api/watch"),
@@ -379,3 +382,6 @@ export interface OwnerDetail {
   indirect: { company_number: string; name: string; company_status: string | null; score: string | null; status: string; via: string | null }[];
   outside_register: number;
 }
+
+export type PdfRead = { done: number; by_ocr: number; nothing_found: number; failed: number; last_at: string | null;
+  queue: number; ocr: boolean; paused: boolean };

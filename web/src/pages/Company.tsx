@@ -190,7 +190,9 @@ export default function Company() {
                   <tbody>
                     {[...fin].reverse().map((f) => (
                       <tr key={f.period_end}>
-                        <td>{date(f.period_end)}{f.period_inferred && <span className="faint small"> · date inferred</span>}</td>
+                        <td>{date(f.period_end)}{f.period_inferred && <span className="faint small"> · date inferred</span>}
+                          {f.source?.startsWith("pdf:") && <span className="tag amber small" style={{ marginLeft: 6 }}
+                            title="Read automatically from the PDF filing: check against the filing">{f.source === "pdf:ocr" ? "read by OCR" : "from PDF"}</span>}</td>
                         <td className="num">{int(f.employees)}</td>
                         <td className="num">{f.turnover != null ? money(f.turnover, { precise: true })
                           : estByEnd.has(String(f.period_end).slice(0, 10)) ? <span className="estval" title="Estimate: staff × the company's own revenue per head">≈{money(estByEnd.get(String(f.period_end).slice(0, 10))!)} est.</span> : "—"}</td>
@@ -685,10 +687,19 @@ function AccountsGap({ data }: { data: CompanyDetail }) {
   const behind = c.last_accounts_date && (!latest || new Date(c.last_accounts_date).getTime() - new Date(latest).getTime() > 45 * 864e5);
   const url = `https://find-and-update.company-information.service.gov.uk/company/${c.company_number}/filing-history`;
   if (pdf?.length) {
+    // Read automatically in the background (text layer, or OCR for scans), newest first.
+    const reads = new Map((data.pdf_reads ?? []).map((r) => [String(r.made_up).slice(0, 10), r]));
+    const st = pdf.map((d) => ({ d, r: reads.get(String(d).slice(0, 10)) }));
+    const waiting = st.filter((x) => !x.r);
+    const read = st.filter((x) => x.r?.status === "done");
+    const failed = st.filter((x) => x.r && x.r.status !== "done");
     return (
-      <div className="callout amber" style={{ marginBottom: 10 }}>
-        <b>Accounts to {pdf.map((d) => date(d)).join(", ")} are filed only as PDF</b>, so their figures aren't loaded automatically.{" "}
-        Ask Claude: <i>“Read the accounts PDFs for {c.name} in AcquireOS and save the figures.”</i>{" "}
+      <div className={`callout ${failed.length ? "amber" : ""}`} style={{ marginBottom: 10 }}>
+        Accounts to {pdf.map((d) => date(d)).join(", ")} are filed only as PDF.{" "}
+        {read.length > 0 && <>{read.map((x) => date(x.d)).join(", ")}: <b>read from the PDF{read.some((x) => x.r?.method === "ocr") ? " (some by OCR)" : ""}</b>, worth checking against the filing. </>}
+        {waiting.length > 0 && <>{waiting.map((x) => date(x.d)).join(", ")}: waiting to be read automatically. </>}
+        {failed.length > 0 && <>{failed.map((x) => `${date(x.d)}${x.r?.note ? ` (${x.r.note})` : ""}`).join(", ")}: <b>couldn't be read</b>.
+          Ask Claude: <i>“Read the accounts PDFs for {c.name} in AcquireOS and save the figures.”</i> </>}
         <a href={url} target="_blank" rel="noreferrer">Filings ↗</a>
       </div>
     );
