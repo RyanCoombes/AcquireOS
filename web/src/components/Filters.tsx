@@ -71,3 +71,44 @@ export function MoneyRange({ label, lo, hi, query, set, hint }: { label: string;
     </div>
   );
 }
+
+const LABELS: Record<string, string> = {
+  q: "Search", bb: "Buy box", mine: "Show", min_staff: "Staff ≥", max_staff: "Staff ≤", min_owner_age: "Owner aged ≥",
+  ownership: "Ownership", region: "Region", status: "My status", min_score: "Score ≥", company_status: "Company status",
+  sic: "Industry", min_years: "Years trading ≥", accounts_size: "Accounts", overdue: "Overdue", charges: "Charges",
+  business_type: "Business type", has_website: "Website", tier: "Tier", changed_days: "Changed in (days)",
+  change_kind: "Change", flag: "Flag", sold: "Recently sold", signal: "Signal", revenue: "Revenue source",
+  wales: "Wales", min_revenue: "Revenue ≥", max_revenue: "Revenue ≤", min_profit: "Profit ≥", max_profit: "Profit ≤",
+  min_net_assets: "Net assets ≥", min_cash: "Cash ≥", min_value: "Value ≥", max_value: "Value ≤",
+};
+const MONEY = new Set(["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "min_value", "max_value"]);
+const VALUE_LABELS: Record<string, string> = {
+  hide_closed: "hide not suitable / not now", pipeline: "my pipeline", untouched: "not looked at", all: "everything",
+  any: "any presence", registered: "registered there", office: "office there", funding: "Welsh funding", director: "director there",
+  filed: "filed", estimated: "estimate", none: "none", hide: "hide", only: "only", true: "yes", false: "no",
+};
+
+function money(v: string) {
+  const n = Number(v);
+  if (!isFinite(n)) return v;
+  return n >= 1e6 ? `£${(n / 1e6).toFixed(n % 1e6 ? 1 : 0)}m` : n >= 1e3 ? `£${Math.round(n / 1e3)}k` : `£${n}`;
+}
+
+/** The filters that are set, as small removable chips (shown when the filters are folded away). */
+export function ActiveChips({ query, keys, set, meta }: { query: Record<string, string>; keys: string[]; set: SetFn; meta?: any }) {
+  const on = keys.filter((k) => query[k]);
+  if (!on.length) return <span className="faint small">No filters set</span>;
+  const boxName = (id: string) => meta?.buy_boxes?.find((b: any) => String(b.id) === id)?.name ?? id;
+  return (
+    <span className="chiprow">
+      {on.map((k) => {
+        const v = query[k];
+        const shown = k === "bb" ? boxName(v) : MONEY.has(k) ? money(v) : k === "sic" ? v.split(",").join(", ") : VALUE_LABELS[v] ?? v;
+        return (
+          <span key={k} className="fchip">{LABELS[k] ?? k}{LABELS[k]?.endsWith("≥") || LABELS[k]?.endsWith("≤") ? " " : ": "}{shown}
+            <button aria-label={`Remove ${LABELS[k] ?? k}`} onClick={() => set(k, null)}>×</button></span>
+        );
+      })}
+    </span>
+  );
+}

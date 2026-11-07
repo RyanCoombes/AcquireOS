@@ -105,6 +105,7 @@ export interface Funding {
   investor_rate: number; investor_years: number; vendor_loan: number; vendor_rate: number; vendor_years: number;
   bank_rate: number; bank_years: number;
   addback_owner_pay: number; addback_other: number; new_salaries: number; new_oncost: number;
+  bank_amount: number; balance_src: number;
 }
 export interface Assumptions { margin_low: number; margin_high: number; multiple_low: number; multiple_high: number }
 

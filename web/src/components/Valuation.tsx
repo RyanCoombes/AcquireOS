@@ -135,6 +135,7 @@ function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave, directorPay, payYear, mu
   const start: Funding = {
     price: mid, your_cash: 0, investor_equity: 0, investor_stake: 30, investor_loan: 0, investor_rate: 10, investor_years: 5,
     vendor_loan: Math.round(mid * 0.3 / 10000) * 10000, vendor_rate: 0, vendor_years: 3, bank_rate: 9, bank_years: 5,
+    bank_amount: 0, balance_src: 4,
     addback_owner_pay: directorPay && directorPay > 0 ? Math.round(directorPay / 1000) * 1000 : 0, addback_other: 0,
     new_salaries: 0, new_oncost: 15,
     ...saved,
@@ -154,13 +155,20 @@ function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave, directorPay, payYear, mu
   };
 
   // Sources of funds. The bank (or other lender) provides whatever is left.
-  const named = f.your_cash + f.investor_equity + f.investor_loan + f.vendor_loan;
-  const bank = Math.max(0, f.price - named);
+  // One source fills whatever the others leave (the bank by default; you choose).
+  const SOURCES = ["your_cash", "investor_equity", "investor_loan", "vendor_loan", "bank_amount"] as const;
+  type Src = typeof SOURCES[number];
+  const filler: Src = SOURCES[Math.max(0, Math.min(4, Math.round(f.balance_src ?? 4)))];
+  const typed = (k: Src) => Number((f as any)[k] ?? 0);
+  const named = SOURCES.filter((k) => k !== filler).reduce((t, k) => t + typed(k), 0);
+  const gap = Math.max(0, f.price - named);
+  const amt = (k: Src) => (k === filler ? gap : typed(k));
+  const bank = amt("bank_amount");
   const over = named - f.price;
   const pct = (v: number) => (f.price > 0 ? `${Math.round((100 * v) / f.price)}%` : "—");
   const yearly = {
-    investor: annuity(f.investor_loan, f.investor_rate, f.investor_years),
-    vendor: annuity(f.vendor_loan, f.vendor_rate, f.vendor_years),
+    investor: annuity(amt("investor_loan"), f.investor_rate, f.investor_years),
+    vendor: annuity(amt("vendor_loan"), f.vendor_rate, f.vendor_years),
     bank: annuity(bank, f.bank_rate, f.bank_years),
   };
   const service = yearly.investor + yearly.vendor + yearly.bank;
@@ -173,7 +181,7 @@ function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave, directorPay, payYear, mu
   const cover = (profit: number) => (service > 0 ? profit / service : null);
   const verdict = (c: number | null) => c === null ? "No debt" : c >= 2 ? "Comfortable" : c >= 1.5 ? "Workable" : c >= 1.2 ? "Tight" : "Does not cover";
   const coverCls = (c: number | null) => (c !== null && c < 1.2 ? "neg" : c !== null && c >= 1.5 ? "pos" : "");
-  const yours = f.investor_equity > 0 ? 100 - f.investor_stake : 100;
+  const yours = amt("investor_equity") > 0 ? 100 - f.investor_stake : 100;
   const left = (profit: number) => profit - service;
 
   const money_ = (k: keyof Funding, w = 120) => (
@@ -184,6 +192,16 @@ function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave, directorPay, payYear, mu
            onChange={(e) => set({ [k]: Number(e.target.value) } as Partial<Funding>)} />
   );
   const yr = (v: number) => (v > 0 ? money(v) : "—");
+  // The filler's amount is worked out; the others are typed.
+  const amount = (k: Src) => (k === filler
+    ? <span className="filled" title="Worked out: the price less the other sources"><b>{money(gap)}</b></span>
+    : money_(k as keyof Funding));
+  const fill = (k: Src) => (
+    <label className={`fillopt ${k === filler ? "on" : ""}`}>
+      <input type="radio" name="dc-filler" checked={k === filler} onChange={() => set({ balance_src: SOURCES.indexOf(k) } as Partial<Funding>)} />
+      {k === filler ? "fills the gap" : "make this fill the gap"}
+    </label>
+  );
 
   return (
     <details className="dealcheck" open={Object.keys(saved).length > 0}>
@@ -198,25 +216,26 @@ function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave, directorPay, payYear, mu
       <table className="dc-table dc-sources">
         <thead><tr><th>Source</th><th className="num">Amount</th><th className="num">Of price</th><th className="num">Rate</th><th className="num">Years</th><th className="num">Repaid a year</th></tr></thead>
         <tbody>
-          <tr><td>Your cash<div className="sub">{f.your_cash === 0 ? "None: your equity is sweat" : "Equity: not repaid"}</div></td>
-            <td className="num">{money_("your_cash")}</td><td className="num">{pct(f.your_cash)}</td><td /><td /><td className="num faint">—</td></tr>
-          <tr><td>Investor equity<div className="sub">e.g. DBW: cash in return for a share of the company. Not repaid.</div></td>
-            <td className="num">{money_("investor_equity")}</td><td className="num">{pct(f.investor_equity)}</td>
+          <tr className={filler === "your_cash" ? "filler" : ""}><td>Your cash<div className="sub">{amt("your_cash") === 0 ? "None: your equity is sweat" : "Equity: not repaid"}</div>{fill("your_cash")}</td>
+            <td className="num">{amount("your_cash")}</td><td className="num">{pct(amt("your_cash"))}</td><td /><td /><td className="num faint">—</td></tr>
+          <tr className={filler === "investor_equity" ? "filler" : ""}><td>Investor equity<div className="sub">e.g. DBW: cash in return for a share of the company. Not repaid.</div>{fill("investor_equity")}</td>
+            <td className="num">{amount("investor_equity")}</td><td className="num">{pct(amt("investor_equity"))}</td>
             <td className="num" colSpan={2}><span className="faint small">their stake </span>{num("investor_stake")}%</td><td className="num faint">—</td></tr>
-          <tr><td>Investor loan<div className="sub">The same investor's debt alongside the equity</div></td>
-            <td className="num">{money_("investor_loan")}</td><td className="num">{pct(f.investor_loan)}</td>
+          <tr className={filler === "investor_loan" ? "filler" : ""}><td>Investor loan<div className="sub">The same investor's debt alongside the equity</div>{fill("investor_loan")}</td>
+            <td className="num">{amount("investor_loan")}</td><td className="num">{pct(amt("investor_loan"))}</td>
             <td className="num">{num("investor_rate", 0.25)}%</td><td className="num">{num("investor_years")}</td><td className="num">{yr(yearly.investor)}</td></tr>
-          <tr><td>Vendor loan<div className="sub">Part of the price paid to the seller over time</div></td>
-            <td className="num">{money_("vendor_loan")}</td><td className="num">{pct(f.vendor_loan)}</td>
+          <tr className={filler === "vendor_loan" ? "filler" : ""}><td>Vendor loan<div className="sub">Part of the price paid to the seller over time</div>{fill("vendor_loan")}</td>
+            <td className="num">{amount("vendor_loan")}</td><td className="num">{pct(amt("vendor_loan"))}</td>
             <td className="num">{num("vendor_rate", 0.25)}%</td><td className="num">{num("vendor_years")}</td><td className="num">{yr(yearly.vendor)}</td></tr>
-          <tr><td>Bank or other lender<div className="sub">Whatever is left (worked out)</div></td>
-            <td className="num"><b>{money(bank)}</b></td><td className="num">{pct(bank)}</td>
+          <tr className={filler === "bank_amount" ? "filler" : ""}><td>Bank or other lender<div className="sub">Senior debt</div>{fill("bank_amount")}</td>
+            <td className="num">{amount("bank_amount")}</td><td className="num">{pct(bank)}</td>
             <td className="num">{num("bank_rate", 0.25)}%</td><td className="num">{num("bank_years")}</td><td className="num">{yr(yearly.bank)}</td></tr>
           <tr className="total"><td>Total</td><td className="num"><b>{money(Math.max(f.price, named))}</b></td><td className="num">{over > 0 ? pct(named) : "100%"}</td>
             <td /><td /><td className="num"><b>{money(service)}</b></td></tr>
         </tbody>
       </table>
-      {over > 0 && <div className="callout red">These add up to {money(named)}, which is {money(over)} more than the price. Lower one of them.</div>}
+      {over > 0 ? <div className="callout red">These add up to {money(named)}, which is {money(over)} more than the price. Lower one of them.</div>
+        : <p className="faint small" style={{ margin: "4px 0 0" }}>The row marked <b>fills the gap</b> takes whatever the others leave: {money(gap)} now. Pick another row to make it the one that adjusts.</p>}
 
       <h4 className="dc-h">2. Adjusted profit (EBITDA)</h4>
       <table className="dc-table dc-walk">
@@ -249,7 +268,7 @@ function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave, directorPay, payYear, mu
             <td className="num">{money(service)}</td><td className="num">{money(service)}</td><td className="num">{money(service)}</td></tr>
           <tr className="total"><td>= Left after repayments</td>
             {[aLo, eMid, aHi].map((e, i) => <td key={i} className={`num ${left(e) < 0 ? "neg" : ""}`}><b>{money(left(e))}</b></td>)}</tr>
-          <tr><td>Your share ({yours}%){f.investor_equity > 0 ? <span className="faint small"> · the investor's {f.investor_stake}% is theirs</span> : null}</td>
+          <tr><td>Your share ({yours}%){amt("investor_equity") > 0 ? <span className="faint small"> · the investor's {f.investor_stake}% is theirs</span> : null}</td>
             {[aLo, eMid, aHi].map((e, i) => <td key={i} className={`num ${left(e) < 0 ? "neg" : ""}`}>{money((left(e) * yours) / 100)}</td>)}</tr>
           <tr><td>Debt cover <span className="faint small">profit ÷ repayments; lenders usually want 1.5× or more</span></td>
             {[aLo, eMid, aHi].map((e, i) => { const c = cover(e); return (

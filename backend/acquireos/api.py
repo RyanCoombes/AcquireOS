@@ -852,6 +852,8 @@ FUNDING_KEYS = {"price", "your_cash", "investor_equity", "investor_stake", "inve
                 "vendor_loan", "vendor_rate", "vendor_years", "bank_rate", "bank_years",
                 # EBITDA adjustments: costs leaving with the seller, costs of the new team
                 "addback_owner_pay", "addback_other", "new_salaries", "new_oncost",
+                # which source fills whatever the others leave (0-4; 4 = bank), and the bank's typed amount
+                "balance_src", "bank_amount",
                 # older names, still read
                 "investor_cash", "vendor_pct"}
 

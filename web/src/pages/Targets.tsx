@@ -4,7 +4,7 @@ import { api, type Row } from "../api";
 import { ErrorLine, Flags, RevenueTag, Score, Signals, StatusMark, Toast, useAsync } from "../components/bits";
 import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
-import { FilterGroup, MoneyRange, NumField, NumRange, Select } from "../components/Filters";
+import { ActiveChips, FilterGroup, MoneyRange, NumField, NumRange, Select } from "../components/Filters";
 import { ageFrom, cap, CHANGE_KIND, date, int, isBadStatus, OWNERSHIP, range, relDays, years } from "../format";
 
 const PAGE = 100;
@@ -79,9 +79,16 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const [sics, setSics] = useState<SicOption[]>([]);
   useEffect(() => { if (mode === "directory") loadSic().then(setSics); }, [mode]);
   const [cursor, setCursor] = useState(0);
-  const [more, setMore] = useState(() => MORE_KEYS.some((k) => params.has(k)));
-  // On phones the filters start folded away so results come first (desktop always shows them).
-  const [showFilters, setShowFilters] = useState(() => typeof window === "undefined" || window.innerWidth > 860);
+  // Remembered: whether the filters are shown, and whether "More filters" is open.
+  // Phones start folded away so results come first.
+  const remembered = (key: string, dflt: boolean) => {
+    try { const v = localStorage.getItem(key); return v === null ? dflt : v === "1"; } catch { return dflt; }
+  };
+  const remember = (key: string, v: boolean) => { try { localStorage.setItem(key, v ? "1" : "0"); } catch { /* ignore */ } };
+  const [more, setMoreState] = useState(() => remembered("ao.filters.more", false));
+  const setMore = (v: boolean) => { setMoreState(v); remember("ao.filters.more", v); };
+  const [showFilters, setShowState] = useState(() => remembered("ao.filters.shown", typeof window === "undefined" || window.innerWidth > 860));
+  const setShowFilters = (v: boolean) => { setShowState(v); remember("ao.filters.shown", v); };
   const [toast, setToast] = useState<string | null>(null);
   // Ticked companies, kept while you page through or change filters.
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -305,15 +312,26 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
             )}
           </div>
 
-          <div className={`band ${showFilters ? "" : "collapsed"}`}>
-            <button className="btn filters-toggle show-sm" onClick={() => setShowFilters(!showFilters)} aria-expanded={showFilters}>
-              {showFilters ? "Hide filters" : `Filters${activeFilters ? ` (${activeFilters})` : ""}`}
-            </button>
+          {!showFilters && (
+            <div className="filterbar">
+              <button className="btn" onClick={() => setShowFilters(true)} aria-expanded={false}>
+                ▸ Filters{activeFilters ? ` (${activeFilters})` : ""}</button>
+              <ActiveChips query={query} keys={FILTER_KEYS} set={set} meta={m} />
+              <span className="band-actions">
+                {activeFilters > 0 && <button className="btn quiet" onClick={() => setParams(new URLSearchParams(VIEWS[mode].find((v) => v.key === view)?.params ?? {}), { replace: true })}>Clear</button>}
+                <button className="btn" onClick={saveCurrent}>{currentSaved ? "Update saved search" : "Save search"}</button>
+              </span>
+            </div>
+          )}
+          <div className={`band ${showFilters ? "" : "hidden"}`}>
+            <button className="btn quiet filters-hide" onClick={() => setShowFilters(false)} aria-expanded title="Fold the filters away to one line">
+              ▾ Hide filters</button>
             {mode === "targets" && boxSelect}
             {search}
             {mode === "directory" ? <>{companyStatus}{industry}{region}{staff}{yearsTrading}{accountsSize}{show}</>
               : <>{show}{staff}{ownerAge}{ownership}{region}{myStatus}{score}</>}
-            <button className="btn quiet" onClick={() => setMore(!more)} aria-expanded={more}>{more ? "Fewer filters" : "More filters"}</button>
+            <button className="btn quiet" onClick={() => setMore(!more)} aria-expanded={more}>
+              {more ? "Fewer filters" : `More filters${MORE_KEYS.filter((k) => params.has(k)).length ? ` (${MORE_KEYS.filter((k) => params.has(k)).length} set)` : ""}`}</button>
             <div className="band-actions">
               {activeFilters > 0 && <button className="btn quiet" onClick={() => setParams(new URLSearchParams(VIEWS[mode].find((v) => v.key === view)?.params ?? {}), { replace: true })}>Clear</button>}
               <button className="btn" onClick={saveCurrent}>{currentSaved ? "Update saved search" : "Save search"}</button>
