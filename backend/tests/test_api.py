@@ -922,6 +922,7 @@ def test_pdf_accounts_ocr_on_a_scanned_page():
     import io
 
     import pytest
+    pytest.importorskip("PIL")
     from PIL import Image, ImageDraw, ImageFont
 
     from acquireos import pdfaccounts
