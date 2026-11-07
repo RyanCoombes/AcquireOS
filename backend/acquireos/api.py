@@ -1594,6 +1594,20 @@ def find_website(num: str, body: WebsiteCheckIn | None = None):
                         "No site could be confirmed. Ask Claude to search using the research brief, or enter one you know.")}
 
 
+@app.post("/api/website-check")
+def website_check_batch(scope: str = "targets", limit: int = 200):
+    """Find and confirm websites for your pipeline or top targets, as a background job."""
+    from . import jobs
+
+    with db.conn() as c:
+        cur = jobs.current(c)
+        if cur and cur["status"] == "running":
+            raise HTTPException(409, "Another job is running; try again when it finishes")
+    _run_detached(["website-check", "--scope", "pipeline" if scope == "pipeline" else "targets",
+                   "--limit", str(max(1, min(limit, 5000)))], after=clear_cache)
+    return {"started": True}
+
+
 @app.post("/api/ch-details")
 def ch_details_batch(scope: str = "pipeline", limit: int = 200):
     """Fetch Companies House API details for your pipeline or top targets, as a background job."""

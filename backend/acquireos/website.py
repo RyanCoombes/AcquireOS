@@ -97,6 +97,25 @@ def evidence(text: str, company_number: str, postcode: str | None, names: list[s
     return None, ""
 
 
+def _number_re(company_number: str):
+    num = company_number.upper()
+    digits = num.lstrip("0") if num.isdigit() else num
+    return re.compile(r"(?<![0-9])0*" + re.escape(digits) + r"(?![0-9])") if num.isdigit() else re.compile(re.escape(num), re.I)
+
+
+def registered_name_found(text: str, name: str) -> bool:
+    """The registered name with its LIMITED/LTD (or PLC/LLP) ending, as UK
+    companies must show it, e.g. "Example Systems Ltd" for EXAMPLE SYSTEMS LIMITED."""
+    t = " ".join(text.split())
+    m = re.match(r"^(.*?)[\s,.]*\b(LIMITED|LTD|PLC|LLP)\.?$", (name or "").strip(), re.I)
+    if not m or len(m.group(1)) < 2:
+        return False
+    words = m.group(1).replace("&", " & ").replace(".", " ").split()
+    core = r"[\s.]+".join("(?:&|and)" if w.upper() in ("&", "AND") else re.escape(w) for w in words)
+    end = {"LIMITED": "(?:limited|ltd)", "LTD": "(?:limited|ltd)", "PLC": "plc", "LLP": "llp"}[m.group(2).upper()]
+    return bool(re.search(r"\b" + core + r",?\s+" + end + r"\b\.?", t, re.I))
+
+
 _PC_RE = re.compile(r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b")
 
 
@@ -128,8 +147,14 @@ def check(url: str, company_number: str, postcode: str | None, names: list[str])
     if not got:
         return {"url": url, "reachable": False, "confidence": None, "evidence": "site did not answer"}
     final, html = got
-    conf, why = evidence(_text(html), company_number, postcode, names)
+    home_text = _text(html)
+    conf, why = evidence(home_text, company_number, postcode, names)
     page = final
+    # Strict confirmation: the company number AND the registered name (with
+    # Ltd/Limited) somewhere on the site's pages we read.
+    num_re = _number_re(company_number)
+    reg_name = names[0] if names else ""
+    has_number, has_name = bool(num_re.search(home_text)), registered_name_found(home_text, reg_name)
     found = [{**a, "page": final} for a in addresses(_text(html))]
     links = re.findall(r'href="([^"#]+)"', html, re.I)
     host = urllib.parse.urlparse(final).netloc
@@ -141,12 +166,14 @@ def check(url: str, company_number: str, postcode: str | None, names: list[str])
         if urllib.parse.urlparse(link).netloc != host:
             continue
         is_contact = link in contact
-        if conf == "high" and not is_contact:
+        if has_number and has_name and not is_contact:
             continue
         sub = _fetch(link)
         if not sub:
             continue
         sub_text = _text(sub[1])
+        has_number = has_number or bool(num_re.search(sub_text))
+        has_name = has_name or registered_name_found(sub_text, reg_name)
         if is_contact:
             found += [{**a, "page": sub[0]} for a in addresses(sub_text) if a["postcode"] not in {f["postcode"] for f in found}]
         c2, w2 = evidence(sub_text, company_number, postcode, names)
@@ -154,12 +181,18 @@ def check(url: str, company_number: str, postcode: str | None, names: list[str])
         if rank[c2] > rank[conf]:
             conf, why, page = c2, w2, sub[0]
     title = re.search(r"(?is)<title[^>]*>(.*?)</title>", html)
+    strict = has_number and has_name
+    if strict:
+        why = f"company number {company_number.upper()} and the registered name are both on the site"
     return {"url": final, "reachable": True, "confidence": conf, "evidence": why, "page": page, "addresses": found,
+            "strict": strict, "has_number": has_number, "has_name": has_name,
             "title": " ".join(htmlmod.unescape(title.group(1)).split())[:120] if title else None}
 
 
-def find(names: list[str], company_number: str, postcode: str | None, max_checks: int = 12) -> list[dict]:
-    """Try likely domains; return checked sites, best first."""
+def find(names: list[str], company_number: str, postcode: str | None, max_checks: int = 12,
+         strict: bool = False) -> list[dict]:
+    """Try likely domains; return checked sites, best first. With strict,
+    keep going until a site shows both the number and the registered name."""
     out = []
     for d in candidates(names):
         if len(out) >= max_checks:
@@ -169,11 +202,62 @@ def find(names: list[str], company_number: str, postcode: str | None, max_checks
         r = check("https://" + d, company_number, postcode, names)
         if r["reachable"]:
             out.append(r)
-        if r.get("confidence") == "high":
+        if r.get("strict") or (not strict and r.get("confidence") == "high"):
             break
     rank = {"high": 3, "medium": 2, "low": 1, None: 0}
-    out.sort(key=lambda r: rank[r["confidence"]], reverse=True)
+    out.sort(key=lambda r: (bool(r.get("strict")), rank[r["confidence"]]), reverse=True)
     return out
+
+
+def bulk_check(conn, numbers: list[str], progress=None, cancel=None) -> dict:
+    """Find and confirm websites for many companies. A site is saved only when
+    it shows both the company number and the registered name (Ltd/Limited),
+    with any office addresses listed on it. Weaker matches are kept as
+    "possible, not confirmed" research notes for you to check."""
+    from . import enrich
+
+    stats = {"checked": 0, "confirmed": 0, "possible": 0, "none": 0}
+    for i, num in enumerate(numbers):
+        if cancel:
+            cancel()
+        b = brief(conn, num)
+        if not b:
+            continue
+        names = [b["name"], *b["previous_names"], *b["parent_companies"], *b["subsidiaries"]]
+        try:
+            results = find(names, b["company_number"], b["postcode"], max_checks=8, strict=True)
+        except Exception:
+            results = []
+        best = next((r for r in results if r.get("strict")), None)
+        if best:
+            enrich.save_enrichment(conn, num, source_url=best.get("page") or best["url"], website=best["url"], confidence="high",
+                                   source_label="Website check: company number and registered name on the site", by="website check")
+            cur = conn.execute("select locations from enrichment where company_number = %s", (num,)).fetchone()
+            locs = list((cur or {}).get("locations") or [])
+            have = {l.get("postcode") for l in locs} | {b["postcode"]}
+            new = [a for a in best.get("addresses") or [] if a["postcode"] not in have]
+            if new:
+                locs += [{"kind": "office", "name": None, "address": a["address"], "postcode": a["postcode"]} for a in new]
+                enrich.save_enrichment(conn, num, source_url=new[0]["page"], locations=locs, confidence="high",
+                                       source_label="Offices listed on the company's website", by="website check")
+            stats["confirmed"] += 1
+        else:
+            maybe = next((r for r in results if r.get("confidence") in ("high", "medium")), None)
+            if maybe:
+                conn.execute(
+                    """insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)
+                       values (%s, 'website', %s, %s, 'Website check', 'website check', 'low')""",
+                    (num, f"Possible website, not confirmed: {maybe['url']} ({maybe['evidence']}). "
+                          "Saved only once the company number and registered name are both found.", maybe["url"]))
+                stats["possible"] += 1
+            else:
+                stats["none"] += 1
+        stats["checked"] += 1
+        conn.commit()
+        if progress:
+            progress((i + 1) / max(len(numbers), 1),
+                     f"{i + 1:,} of {len(numbers):,} · {stats['confirmed']:,} confirmed, {stats['possible']:,} possible")
+    return stats
 
 
 def brief(conn, company_number: str) -> dict:

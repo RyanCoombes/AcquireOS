@@ -54,21 +54,26 @@ def dataset_overview() -> str:
 @server.tool(description=(
     "Search and filter companies. All filters optional. sort: score|name|staff|revenue|value|age|years|changed. "
     "ownership: owner_held|group_owned|investor_backed|eot|trust|foreign_owned|unknown. "
-    "status (the user's pipeline): new|watching|researching|approach|contacted|in_talks|passed|rejected. "
-    "sic: code prefix such as 620. changed_days: only companies with changes in the last N days."))
+    "status (the user's pipeline): new|watching|researching|approach (shortlisted)|contacted|in_talks|"
+    "passed (not now)|rejected (not suitable). "
+    "sic: code prefix such as 620. changed_days: only companies with changes in the last N days. "
+    "sold: hide|only (sold to another company in the last 3 years). signal: possible_buyer|many_shareholders. "
+    "mine: hide_closed|pipeline|untouched. has_website: true|false."))
 def search_companies(query: str | None = None, region: str | None = None, min_score: float | None = None,
                      ownership: str | None = None, status: str | None = None, min_staff: int | None = None,
                      max_staff: int | None = None, min_owner_age: int | None = None, sic: str | None = None,
                      changed_days: int | None = None, include_excluded: bool = False, sort: str | None = None,
-                     limit: int = 25) -> str:
+                     limit: int = 25, sold: str | None = None, signal: str | None = None, mine: str | None = None,
+                     has_website: bool | None = None) -> str:
     r = _api().companies(q=query, region=region, min_score=min_score, ownership=ownership, status=status,
                          min_staff=min_staff, max_staff=max_staff, min_owner_age=min_owner_age, sic=sic,
                          changed_days=changed_days, include_excluded=include_excluded,
                          sort=sort or ("relevance" if query else "score"),
-                         limit=max(1, min(limit, 200)))
-    keep = ("company_number", "name", "region", "postcode", "sic_codes", "employees", "revenue_low", "revenue_high",
-            "revenue_basis", "value_low", "value_high", "ownership_type", "oldest_birth_year", "flags", "score",
-            "excluded", "exclusion", "status", "rating", "company_status", "last_change")
+                         limit=max(1, min(limit, 200)), sold=sold, signal=signal, mine=mine, has_website=has_website)
+    keep = ("company_number", "name", "region", "trading_region", "postcode", "sic_codes", "employees", "revenue_low",
+            "revenue_high", "revenue_basis", "revenue_method", "value_low", "value_high", "value_basis", "ownership_type",
+            "oldest_birth_year", "flags", "signals", "sold_on", "sold_to", "same_business", "merged_into", "score",
+            "excluded", "exclusion", "status", "rating", "company_status", "last_change", "website")
     return _j({"total": r["total"], "companies": [{k: row.get(k) for k in keep} for row in r["rows"]]})
 
 
@@ -84,8 +89,58 @@ def get_company(company_number: str) -> str:
     "What changed: from the monthly bulk files (status|accounts|staff|name|address|sic|owner|new_company) and from "
     "Companies House API checks (filing|director|charge|shareholders|insolvency; source 'api'). "
     "pipeline_only for companies you are pursuing."))
-def list_changes(days: int = 30, kind: str | None = None, pipeline_only: bool = False) -> str:
-    return _j(_api().changes(days=days, kind=kind, tracked=pipeline_only, limit=300))
+def list_changes(days: int = 30, kind: str | None = None, pipeline_only: bool = False, unread_only: bool = False) -> str:
+    return _j(_api().changes(days=days, kind=kind, tracked=pipeline_only, limit=300, unread=unread_only))
+
+
+@server.tool(description="Mark changes as read (ids from list_changes), or all of them with all=true. Only when the user asks.")
+def mark_changes_read(ids: list[int] | None = None, all: bool = False) -> str:
+    a = _api()
+    if all:
+        return _j(a.changes_seen())
+    return _j(a.changes_read(a.ReadIn(ids=ids or [])))
+
+
+@server.tool(description=(
+    "Treat one company as part of another (the same business, e.g. same director and office): it then shows only "
+    "under `into` in the user's lists. into=null separates them again. Only when the user asks."))
+def combine_companies(company_number: str, into: str | None) -> str:
+    a = _api()
+    return _j(a.merge_company(company_number, a.MergeIn(into=into)))
+
+
+@server.tool(description=(
+    "Start the background website check: finds sites for companies without one and saves a site only when it shows "
+    "both the company number and the registered name (Ltd/Limited); office addresses on it are saved too. "
+    "scope: pipeline|targets. Takes a few seconds per company. Only when the user asks."))
+def start_website_check(scope: str = "targets", limit: int = 200) -> str:
+    return _j(_api().website_check_batch(scope=scope, limit=limit))
+
+
+@server.tool(description=(
+    "A briefing for today: unread changes to pipeline companies, next actions due in the next 7 days, "
+    "pipeline companies recently sold or buying others, and how far the Companies House sync has got."))
+def daily_briefing() -> str:
+    a = _api()
+    from . import chsync
+
+    changes = a.changes(days=30, tracked=True, limit=100, unread=True)["rows"]
+    with db.conn() as c:
+        due = c.execute(
+            """select uc.company_number, c.name, uc.status, uc.next_action, uc.next_action_on from user_company uc
+               join company c on c.company_number = uc.company_number
+               where uc.user_id = 1 and uc.next_action is not null and uc.next_action_on <= current_date + 7
+                 and uc.status not in ('passed', 'rejected')
+               order by uc.next_action_on""").fetchall()
+        flagged = c.execute(
+            """select uc.company_number, c.name, uc.status, sg.signals, sg.sold_on, sg.sold_to from user_company uc
+               join company c on c.company_number = uc.company_number
+               join company_signal sg on sg.company_number = uc.company_number
+               where uc.user_id = 1 and uc.status not in ('new', 'passed', 'rejected')
+                 and (sg.signals && array['recently_sold', 'possible_buyer'])""").fetchall()
+        sync = chsync.status(c)
+    return _j({"unread_pipeline_changes": changes, "next_actions_due": due, "pipeline_sold_or_buying": flagged,
+               "sync": {k: sync.get(k) for k in ("running", "pipeline", "targets", "per_hour", "days_to_cover")}})
 
 
 @server.tool(description=(

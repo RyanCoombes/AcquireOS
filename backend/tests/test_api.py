@@ -693,3 +693,43 @@ def test_confirmation_statement_changes_are_spelled_out():
     assert "Alex Smith 60% → 50%" in t and "new: Dbw Investments (10) Limited 35%" in t and "left: Sam Jones (was 25%)" in t
     assert "Pat Lee" not in t  # unchanged
     assert chapi._shareholder_diff(a, a) is None
+
+
+def test_bulk_website_check_saves_only_strict_matches(loaded, monkeypatch):
+    from acquireos import website
+
+    loaded.commit()
+    pages = {"https://examplesystems.co.uk": "<footer>Example Systems Ltd · Registered in England 01000001 · "
+                                              "Unit 4, Chester Business Park, Chester, CH4 9QZ</footer>",
+             "https://sampledata.co.uk": "<footer>Sample Data · Swansea SA1 1AA</footer>"}
+    monkeypatch.setattr(website, "candidates", lambda names, limit=16: [
+        "examplesystems.co.uk" if "EXAMPLE" in names[0] else "sampledata.co.uk"])
+    monkeypatch.setattr(website, "_resolves", lambda d: True)
+    monkeypatch.setattr(website, "_fetch", lambda url, limit=600_000: (url, pages[url]) if url in pages else None)
+    with db.conn() as c:
+        pc = c.execute("select postcode from company where company_number = '01000002'").fetchone()["postcode"]
+        pages["https://sampledata.co.uk"] = f"<footer>Sample Data · {pc}</footer>"  # postcode only: not confirmed
+        r = website.bulk_check(c, ["01000001", "01000002"])
+        assert r["confirmed"] == 1 and r["possible"] == 1
+        e1 = c.execute("select website, locations from enrichment where company_number = '01000001'").fetchone()
+        assert e1["website"] == "https://examplesystems.co.uk" and e1["locations"][0]["postcode"] == "CH4 9QZ"
+        assert not c.execute("select 1 from enrichment where company_number = '01000002' and website is not null").fetchone()
+        assert c.execute("select 1 from research where company_number = '01000002' and content like 'Possible website%%'").fetchone()
+
+
+def test_new_mcp_tools(loaded):
+    import json as _j
+
+    from acquireos import mcp_server as m
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app):
+        r = _j.loads(m.search_companies(sold="hide", mine="hide_closed", limit=5))
+        assert "companies" in r and all("signals" in x for x in r["companies"])
+        assert _j.loads(m.combine_companies("01000002", "01000001"))["merged_into"] == "01000001"
+        assert _j.loads(m.combine_companies("01000002", None))["merged_into"] is None
+        assert "rows" in _j.loads(m.list_changes(days=30, unread_only=True))
+        assert _j.loads(m.mark_changes_read(all=True))["ok"]
+        b = _j.loads(m.daily_briefing())
+        assert {"unread_pipeline_changes", "next_actions_due", "pipeline_sold_or_buying", "sync"} <= set(b)

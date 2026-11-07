@@ -169,6 +169,7 @@ export default function Import() {
 
       <ChFeed onDone={history.reload} />
       <ChSyncPanel />
+      <WebsiteBatch />
 
       <section>
         <h2>History</h2>
@@ -418,6 +419,30 @@ function ChSyncPanel() {
           <p className="faint small">Pipeline checked weekly, targets every {st.target_days} days, profiles when you open them.</p>
         </>
       )}
+    </section>
+  );
+}
+
+
+function WebsiteBatch() {
+  const [msg, setMsg] = useState<string | null>(null);
+  const run = async (scope: string, limit: number) => {
+    setMsg(null);
+    try { await api.websiteCheck(scope, limit); setMsg("Started. Progress shows at the top."); } catch (e: any) { setMsg(e.message); }
+  };
+  return (
+    <section>
+      <div className="sechead"><h2>Find websites</h2><span className="faint small">Companies without one yet</span></div>
+      <p className="small" style={{ marginTop: 0 }}>
+        Saved only when the site shows <b>both the company number and the registered name</b> (with Ltd or Limited).
+        Office addresses on the site are saved too. Weaker matches are noted as "possible" on the company for you to check.
+      </p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="btn" onClick={() => run("pipeline", 500)}>My pipeline</button>
+        <button className="btn" onClick={() => run("targets", 200)}>Top 200 targets</button>
+        <button className="btn quiet" onClick={() => run("targets", 1000)}>Top 1,000 (a few hours)</button>
+      </div>
+      {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
     </section>
   );
 }

@@ -55,6 +55,9 @@ def main(argv=None):
     sub.add_parser("demo", help="Load a fictional demo dataset (for trying the app out)")
     sub.add_parser("rescore", help="Recompute scores against the active buy box")
     sub.add_parser("score-pending", help="Score buy boxes marked as needing it (used by the web app)")
+    p = sub.add_parser("website-check", help="Find and confirm websites (company number and registered name on the site)")
+    p.add_argument("--scope", choices=["pipeline", "targets"], default="targets")
+    p.add_argument("--limit", type=int, default=200)
     p = sub.add_parser("ch-details", help="Fetch Companies House API details (needs CH_API_KEY) for your pipeline or top targets")
     p.add_argument("--scope", choices=["pipeline", "targets"], default="pipeline")
     p.add_argument("--limit", type=int, default=200)
@@ -69,6 +72,36 @@ def main(argv=None):
         from .fetch import scheduler
 
         scheduler()
+        return
+    if a.cmd == "website-check":
+        from . import jobs, website
+
+        with db.conn(dedicated=True) as c:
+            # Companies without a website yet: pipeline first, or best-scoring targets.
+            if a.scope == "pipeline":
+                sql = """select uc.company_number from user_company uc where uc.user_id = 1
+                         and uc.status not in ('new', 'passed', 'rejected')
+                         and not exists (select 1 from enrichment e where e.company_number = uc.company_number and e.website is not null)
+                         order by uc.updated_at desc limit %s"""
+            else:
+                sql = """select cb.company_number from company_best cb
+                         where not exists (select 1 from enrichment e where e.company_number = cb.company_number and e.website is not null)
+                           and not exists (select 1 from user_company uc where uc.company_number = cb.company_number
+                                           and uc.status in ('passed', 'rejected'))
+                           and not exists (select 1 from research r where r.company_number = cb.company_number
+                                           and r.created_by = 'website check' and r.retrieved_at > now() - interval '60 days')
+                         order by cb.score desc limit %s"""
+            nums = [r["company_number"] for r in c.execute(sql, (a.limit,))]
+            job = jobs.Job("website-check", ["Website check"])
+            job.stage("Website check")
+            try:
+                r = website.bulk_check(c, nums, progress=lambda f, d: job.progress(f, d), cancel=job.check_cancel)
+                job.finish(r)
+            except jobs.Cancelled:
+                job.finish({}, status="cancelled")
+            except Exception as e:
+                job.finish({}, status="failed", error=str(e))
+                raise
         return
     if a.cmd == "ch-details":
         from . import chapi, jobs
