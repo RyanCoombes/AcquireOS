@@ -1603,8 +1603,8 @@ def website_check_batch(scope: str = "targets", limit: int = 200):
         cur = jobs.current(c)
         if cur and cur["status"] == "running":
             raise HTTPException(409, "Another job is running; try again when it finishes")
-    _run_detached(["website-check", "--scope", "pipeline" if scope == "pipeline" else "targets",
-                   "--limit", str(max(1, min(limit, 5000)))], after=clear_cache)
+    _run_detached(["website-check", "--scope", scope if scope in ("pipeline", "targets", "active") else "targets",
+                   "--limit", str(max(0, limit))], after=clear_cache)
     return {"started": True}
 
 

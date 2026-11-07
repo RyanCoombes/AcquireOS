@@ -438,10 +438,17 @@ function WebsiteBatch() {
         Office addresses on the site are saved too. Weaker matches are noted as "possible" on the company for you to check.
       </p>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button className="btn" onClick={() => run("pipeline", 500)}>My pipeline</button>
+        <button className="btn" onClick={() => run("pipeline", 0)}>My pipeline</button>
         <button className="btn" onClick={() => run("targets", 200)}>Top 200 targets</button>
-        <button className="btn quiet" onClick={() => run("targets", 1000)}>Top 1,000 (a few hours)</button>
       </div>
+      <h3 className="subh" style={{ marginTop: 14 }}>One-off setup</h3>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="btn primary" onClick={() => confirm("Check every buy-box target without a website? It runs in the background, 8 at a time, for roughly a day. You can stop it and it carries on later.") && run("targets", 0)}>
+          All buy-box targets (about a day)</button>
+        <button className="btn quiet" onClick={() => confirm("Check every active company with 10 or more staff? This can take several days. You can stop it and it carries on later.") && run("active", 0)}>
+          All active companies with 10+ staff (several days)</button>
+      </div>
+      <p className="faint small">Stop it from the progress bar at the top; running it again carries on where it stopped. Companies checked in the last six months are skipped.</p>
       {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
     </section>
   );

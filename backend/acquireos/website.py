@@ -209,25 +209,27 @@ def find(names: list[str], company_number: str, postcode: str | None, max_checks
     return out
 
 
-def bulk_check(conn, numbers: list[str], progress=None, cancel=None) -> dict:
-    """Find and confirm websites for many companies. A site is saved only when
-    it shows both the company number and the registered name (Ltd/Limited),
-    with any office addresses listed on it. Weaker matches are kept as
-    "possible, not confirmed" research notes for you to check."""
+def bulk_check(conn, numbers: list[str], progress=None, cancel=None, workers: int = 8) -> dict:
+    """Find and confirm websites for many companies, several at a time. A site
+    is saved only when it shows both the company number and the registered
+    name (Ltd/Limited), with any office addresses listed on it. Weaker matches
+    are kept as "possible, not confirmed" research notes for you to check.
+    Each company tried is recorded (website_check), so a stopped run carries on."""
+    from concurrent.futures import ThreadPoolExecutor
+
     from . import enrich
 
     stats = {"checked": 0, "confirmed": 0, "possible": 0, "none": 0}
-    for i, num in enumerate(numbers):
-        if cancel:
-            cancel()
-        b = brief(conn, num)
-        if not b:
-            continue
+
+    def look(b):
         names = [b["name"], *b["previous_names"], *b["parent_companies"], *b["subsidiaries"]]
         try:
-            results = find(names, b["company_number"], b["postcode"], max_checks=8, strict=True)
+            return b, find(names, b["company_number"], b["postcode"], max_checks=8, strict=True)
         except Exception:
-            results = []
+            return b, []
+
+    def save(b, results):
+        num = b["company_number"]
         best = next((r for r in results if r.get("strict")), None)
         if best:
             enrich.save_enrichment(conn, num, source_url=best.get("page") or best["url"], website=best["url"], confidence="high",
@@ -240,7 +242,7 @@ def bulk_check(conn, numbers: list[str], progress=None, cancel=None) -> dict:
                 locs += [{"kind": "office", "name": None, "address": a["address"], "postcode": a["postcode"]} for a in new]
                 enrich.save_enrichment(conn, num, source_url=new[0]["page"], locations=locs, confidence="high",
                                        source_label="Offices listed on the company's website", by="website check")
-            stats["confirmed"] += 1
+            result = "confirmed"
         else:
             maybe = next((r for r in results if r.get("confidence") in ("high", "medium")), None)
             if maybe:
@@ -249,14 +251,29 @@ def bulk_check(conn, numbers: list[str], progress=None, cancel=None) -> dict:
                        values (%s, 'website', %s, %s, 'Website check', 'website check', 'low')""",
                     (num, f"Possible website, not confirmed: {maybe['url']} ({maybe['evidence']}). "
                           "Saved only once the company number and registered name are both found.", maybe["url"]))
-                stats["possible"] += 1
+                result = "possible"
             else:
-                stats["none"] += 1
+                result = "none"
+        conn.execute("""insert into website_check (company_number, result) values (%s, %s)
+                        on conflict (company_number) do update set result = excluded.result, checked_at = now()""",
+                     (num, result))
+        stats[result] += 1
         stats["checked"] += 1
-        conn.commit()
-        if progress:
-            progress((i + 1) / max(len(numbers), 1),
-                     f"{i + 1:,} of {len(numbers):,} · {stats['confirmed']:,} confirmed, {stats['possible']:,} possible")
+
+    total = max(len(numbers), 1)
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        # Feed the pool a chunk at a time; the database work stays on this thread.
+        for start in range(0, len(numbers), workers * 4):
+            if cancel:
+                cancel()
+            briefs = [b for b in (brief(conn, n) for n in numbers[start:start + workers * 4]) if b]
+            for b, results in pool.map(look, briefs):
+                save(b, results)
+            conn.commit()
+            if progress:
+                progress(stats["checked"] / total,
+                         f"{stats['checked']:,} of {len(numbers):,} · {stats['confirmed']:,} confirmed, "
+                         f"{stats['possible']:,} possible")
     return stats
 
 

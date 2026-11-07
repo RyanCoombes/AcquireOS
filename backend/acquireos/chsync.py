@@ -48,7 +48,7 @@ def set_setting(conn, key: str, value):
 def busy(conn) -> bool:
     """A bulk load or scoring is running: leave the database to it."""
     return bool(conn.execute(
-        """select 1 from job where status = 'running' and kind <> 'ch-details'
+        """select 1 from job where status = 'running' and kind not in ('ch-details', 'website-check')
            and updated_at > now() - interval '5 minutes' limit 1""").fetchone())
 
 

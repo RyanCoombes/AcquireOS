@@ -56,8 +56,8 @@ def main(argv=None):
     sub.add_parser("rescore", help="Recompute scores against the active buy box")
     sub.add_parser("score-pending", help="Score buy boxes marked as needing it (used by the web app)")
     p = sub.add_parser("website-check", help="Find and confirm websites (company number and registered name on the site)")
-    p.add_argument("--scope", choices=["pipeline", "targets"], default="targets")
-    p.add_argument("--limit", type=int, default=200)
+    p.add_argument("--scope", choices=["pipeline", "targets", "active"], default="targets")
+    p.add_argument("--limit", type=int, default=200, help="0 for no limit (a one-off pass over everything in scope)")
     p = sub.add_parser("ch-details", help="Fetch Companies House API details (needs CH_API_KEY) for your pipeline or top targets")
     p.add_argument("--scope", choices=["pipeline", "targets"], default="pipeline")
     p.add_argument("--limit", type=int, default=200)
@@ -78,20 +78,27 @@ def main(argv=None):
 
         with db.conn(dedicated=True) as c:
             # Companies without a website yet: pipeline first, or best-scoring targets.
+            # Not already with a website, and not tried in the last six months.
+            fresh = """not exists (select 1 from enrichment e where e.company_number = x.company_number and e.website is not null)
+                       and not exists (select 1 from website_check w where w.company_number = x.company_number
+                                       and w.checked_at > now() - interval '180 days')"""
             if a.scope == "pipeline":
-                sql = """select uc.company_number from user_company uc where uc.user_id = 1
-                         and uc.status not in ('new', 'passed', 'rejected')
-                         and not exists (select 1 from enrichment e where e.company_number = uc.company_number and e.website is not null)
-                         order by uc.updated_at desc limit %s"""
+                sql = f"""select x.company_number from user_company x where x.user_id = 1
+                          and x.status not in ('new', 'passed', 'rejected') and {fresh}
+                          order by x.updated_at desc"""
+            elif a.scope == "active":
+                # Active trading companies with 10 or more staff, largest first.
+                sql = f"""select x.company_number from company_latest x join company c using (company_number)
+                          where c.status = 'active' and x.employees >= 10 and {fresh}
+                          order by x.employees desc"""
             else:
-                sql = """select cb.company_number from company_best cb
-                         where not exists (select 1 from enrichment e where e.company_number = cb.company_number and e.website is not null)
-                           and not exists (select 1 from user_company uc where uc.company_number = cb.company_number
-                                           and uc.status in ('passed', 'rejected'))
-                           and not exists (select 1 from research r where r.company_number = cb.company_number
-                                           and r.created_by = 'website check' and r.retrieved_at > now() - interval '60 days')
-                         order by cb.score desc limit %s"""
-            nums = [r["company_number"] for r in c.execute(sql, (a.limit,))]
+                sql = f"""select x.company_number from company_best x
+                          where not exists (select 1 from user_company uc where uc.company_number = x.company_number
+                                            and uc.status in ('passed', 'rejected')) and {fresh}
+                          order by x.score desc"""
+            if a.limit:
+                sql += f" limit {int(a.limit)}"
+            nums = [r["company_number"] for r in c.execute(sql)]
             job = jobs.Job("website-check", ["Website check"])
             job.stage("Website check")
             try:
