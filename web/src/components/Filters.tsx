@@ -47,10 +47,10 @@ export function NumRange({ label, lo, hi, query, set, wide }: { label: string; l
 export function FilterGroup({ title, icon, query, keys, children }: { title: string; icon: string; query: Record<string, string>; keys: string[]; children: React.ReactNode }) {
   const n = keys.filter((k) => query[k]).length;
   return (
-    <fieldset className="fgroup">
-      <legend><span className="fg-ico" aria-hidden>{icon}</span>{title}{n ? <span className="fg-n">{n}</span> : null}</legend>
+    <div className="fgroup" role="group" aria-label={title}>
+      <div className="fg-title"><span className="fg-ico" aria-hidden>{icon}</span>{title}{n ? <span className="fg-n">{n}</span> : null}</div>
       <div className="fg-body">{children}</div>
-    </fieldset>
+    </div>
   );
 }
 

@@ -205,7 +205,6 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                onChange={(v) => set("sic", v.join(","))} />
   );
   const industry = <div className="field" style={{ minWidth: 300, flex: "1 1 300px" }}><label>Industry</label>{industryPicker("100%")}</div>;
-  const industryWide = <div className="field" style={{ flexBasis: "100%" }}><label>Industry (SIC)</label>{industryPicker("100%")}</div>;
   const region = <Select label="Region" k="region" query={query} set={set} options={(m?.regions ?? []).map((r) => [r, r])} />;
   const companyStatus = <Select label="Company status" k="company_status" query={query} set={set}
                                 options={(m?.status_groups ?? []).map((g) => [g.value, g.label] as [string, string])} />;
@@ -356,7 +355,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                   ]} />
                   <Select label="Website" k="has_website" query={query} set={set} options={[["true", "Found"], ["false", "Not found yet"]]} />
                   <Select label="Review tier" k="tier" query={query} set={set} options={(m?.tiers ?? []).map((t) => [t, t])} />
-                  {mode === "targets" && industryWide}
+                  {mode === "targets" && industry}
                 </FilterGroup>
                 <FilterGroup title={mode === "directory" ? "Fit and your work" : "Changes"} icon="↻" query={query}
                              keys={["changed_days", "change_kind", ...(mode === "directory" ? ["bb", "min_score", "status"] : [])]}>
