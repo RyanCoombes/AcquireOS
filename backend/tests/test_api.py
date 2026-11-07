@@ -781,3 +781,15 @@ def test_save_financials_from_pdf(loaded):
             assert fp["source"] == "pdf:claude" and float(fp["turnover"]) == 12_500_000
         d = cl.get("/api/companies/01000003").json()
         assert d["estimate"]["basis"] == "filed"
+
+
+def test_dormant_accounts_excluded_by_default():
+    from acquireos import scoring
+
+    crit = scoring.merged({})
+    base = {"company_number": "X", "name": "X LTD", "status": "active", "employees": 30}
+    r = scoring.score_company({**base, "accounts_category": "dormant"}, crit)
+    assert r["excluded"] and "dormant" in r["exclusion"]
+    assert not scoring.score_company({**base, "accounts_category": "small"}, crit)["excluded"]
+    micro = {**crit, "exclude": {**crit["exclude"], "accounts_types": ["micro"]}}
+    assert scoring.score_company({**base, "accounts_category": "micro entity"}, micro)["excluded"]

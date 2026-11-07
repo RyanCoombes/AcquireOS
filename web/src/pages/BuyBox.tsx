@@ -64,6 +64,7 @@ export default function BuyBox() {
     ...(ex.ownership ?? []).map((k: string) => OWNERSHIP[k] ?? k),
     ...(ex.address_flags ?? []).map((k: string) => meta.data?.address_flags?.[k] ?? k),
     ...(ex.tiers ?? []).map((t: string) => `tier ${t}`),
+    ...(ex.accounts_types ?? []).map((k: string) => `${(meta.data?.account_sizes ?? []).find((a) => a.value === k)?.label ?? k} accounts`),
     ...(ex.recently_sold !== false ? ["recently sold"] : []),
     ...(ex.possible_buyer ? ["possible buyers"] : []),
   ];
@@ -224,6 +225,9 @@ export default function BuyBox() {
             {!meta.data?.regions.length && <span className="faint">No regions in the data yet.</span>}</dd>
           <dt>Exclude ownership types</dt>
           <dd>{xchecks(Object.entries(OWNERSHIP), ["exclude", "ownership"])}</dd>
+          <dt>Exclude accounts types</dt>
+          <dd>{xchecks((meta.data?.account_sizes ?? []).map((a) => [a.value, a.label] as [string, string]), ["exclude", "accounts_types"])}
+            <div className="faint small">As filed at Companies House. Dormant is excluded by default.</div></dd>
           <dt>Exclude registered addresses</dt>
           <dd>{xchecks(Object.entries(meta.data?.address_flags ?? {}), ["exclude", "address_flags"])}</dd>
           <dt>Exclude review tiers</dt>

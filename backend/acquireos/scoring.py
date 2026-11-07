@@ -64,6 +64,8 @@ DEFAULT_CRITERIA = {
         "keywords": ["electrical", "plumbing", "heating", "cctv", "fire alarm", "scaffold", "roofing", "cleaning"],
         "address_flags": [],
         "regions": [],  # regions to leave out
+        # Accounts types to leave out, as filed at Companies House (see ACCOUNT_TYPES).
+        "accounts_types": ["dormant"],
         "recently_sold": True,    # a company became the owner as the previous owners left
         "possible_buyer": False,  # has been buying other companies itself
         # Exclude companies that research has found to be field-service or
@@ -174,6 +176,20 @@ def _money(v):
     return f"£{v:.0f}"
 
 
+# Accounts types filed at Companies House, grouped by what they say about the
+# company (also used for the lists' "Accounts filed" filter).
+ACCOUNT_TYPES = {
+    "micro": ("Micro", ["micro entity"]),
+    "small": ("Small", ["small", "total exemption full", "total exemption small", "unaudited abridged",
+                        "partial exemption", "audited abridged"]),
+    "medium": ("Medium", ["medium"]),
+    "full": ("Full (large)", ["full"]),
+    "group": ("Group (has subsidiaries)", ["group"]),
+    "subsidiary": ("Subsidiary exemption (owned by a group)", ["audit exemption subsidiary", "filing exemption subsidiary"]),
+    "dormant": ("Dormant", ["dormant"]),
+    "none": ("None filed yet", ["no accounts filed", "accounts type not available", "initial"]),
+}
+
 UNKNOWN_SHARE = 0.5
 # Bump when the scoring rules change, so every company is scored again.
 SCORING_VERSION = 2
@@ -243,6 +259,10 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
     out_regions = ex.get("regions") or []
     if not exclusion and region and region in out_regions:
         exclusion = f"Region excluded: {region}" + (" (where it trades)" if c.get("trading_region") else "")
+    acc = (c.get("accounts_category") or "").lower()
+    for key in ex.get("accounts_types") or []:
+        if not exclusion and key in ACCOUNT_TYPES and acc in ACCOUNT_TYPES[key][1]:
+            exclusion = f"Accounts filed as {ACCOUNT_TYPES[key][0].lower()}"
     if not exclusion and ex.get("recently_sold", True) and "recently_sold" in signals and not c.get("research_ownership") == "owner_held":
         exclusion = "Recently sold: a company became the owner as the previous owners left"
     if not exclusion and ex.get("possible_buyer") and "possible_buyer" in signals:
@@ -376,7 +396,7 @@ with research_text as (
     select company_number, string_agg(content, ' ') as txt from research {rwhere} group by company_number
 )
 select c.company_number, c.name, c.status, c.review_tier, c.incorporation_date, c.sic_codes,
-       c.nature_of_business, c.region, c.address_flag, c.postcode,
+       c.nature_of_business, c.region, c.address_flag, c.postcode, c.accounts_category,
        l.employees, l.net_assets, l.operating_profit, l.cash, l.net_assets_prev,
        e.revenue_low, e.revenue_high, e.basis as revenue_basis,
        o.ownership_type, o.flags as ownership_flags, o.oldest_birth_year,

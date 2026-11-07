@@ -190,17 +190,7 @@ def _meta():
 
 
 # Accounts categories from the register, grouped by what they say about size.
-ACCOUNT_SIZES = {
-    "micro": ("Micro", ["micro entity"]),
-    "small": ("Small", ["small", "total exemption full", "total exemption small", "unaudited abridged",
-                        "partial exemption", "audited abridged"]),
-    "medium": ("Medium", ["medium"]),
-    "full": ("Full (large)", ["full"]),
-    "group": ("Group (has subsidiaries)", ["group"]),
-    "subsidiary": ("Subsidiary exemption (owned by a group)", ["audit exemption subsidiary", "filing exemption subsidiary"]),
-    "dormant": ("Dormant", ["dormant"]),
-    "none": ("None filed yet", ["no accounts filed", "accounts type not available", "initial"]),
-}
+ACCOUNT_SIZES = scoring.ACCOUNT_TYPES
 
 # Company status groups for filtering. Companies House statuses are lower-cased
 # on load; "removed from register" is ours, for companies that left the file.
