@@ -97,6 +97,28 @@ def evidence(text: str, company_number: str, postcode: str | None, names: list[s
     return None, ""
 
 
+_PC_RE = re.compile(r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b")
+
+
+def addresses(text: str) -> list[dict]:
+    """UK postcodes on a page, each with the address text just before it
+    (offices listed on a contact or about page). [{postcode, address}]"""
+    t = " ".join(text.split())
+    out, seen = [], set()
+    for m in _PC_RE.finditer(t):
+        pc = f"{m.group(1)} {m.group(2)}"
+        if pc in seen:
+            continue
+        seen.add(pc)
+        before = t[max(0, m.start() - 110):m.start()]
+        # Keep the end of the text before the postcode: the street and town.
+        before = re.split(r"(?:\.\s|\||:|©|Tel\b|Phone\b|Email\b|Address\b)", before)[-1]
+        parts = [p.strip(" ,") for p in before.split(",") if p.strip(" ,")]
+        addr = ", ".join(parts[-4:])
+        out.append({"postcode": pc, "address": f"{addr}, {pc}" if addr else pc})
+    return out[:8]
+
+
 def check(url: str, company_number: str, postcode: str | None, names: list[str]) -> dict:
     """Fetch a site's home page (and its contact/about/legal pages if needed)
     and say how sure we are it belongs to the company."""
@@ -108,25 +130,31 @@ def check(url: str, company_number: str, postcode: str | None, names: list[str])
     final, html = got
     conf, why = evidence(_text(html), company_number, postcode, names)
     page = final
-    if conf != "high":
-        links = re.findall(r'href="([^"#]+)"', html, re.I)
-        extra = [urllib.parse.urljoin(final, h) for h in links
-                 if re.search(r"(contact|about|privacy|terms|legal|cookie|imprint)", h, re.I)]
-        host = urllib.parse.urlparse(final).netloc
-        for link in list(dict.fromkeys(extra))[:4]:
-            if urllib.parse.urlparse(link).netloc != host:
-                continue
-            sub = _fetch(link)
-            if not sub:
-                continue
-            c2, w2 = evidence(_text(sub[1]), company_number, postcode, names)
-            rank = {"high": 3, "medium": 2, "low": 1, None: 0}
-            if rank[c2] > rank[conf]:
-                conf, why, page = c2, w2, sub[0]
-            if conf == "high":
-                break
+    found = [{**a, "page": final} for a in addresses(_text(html))]
+    links = re.findall(r'href="([^"#]+)"', html, re.I)
+    host = urllib.parse.urlparse(final).netloc
+    contact = [urllib.parse.urljoin(final, h) for h in links if re.search(r"(contact|locations?|offices?|find-us)", h, re.I)]
+    extra = [urllib.parse.urljoin(final, h) for h in links
+             if re.search(r"(contact|about|privacy|terms|legal|cookie|imprint|locations?|offices?)", h, re.I)]
+    # Contact pages first: they also list the offices (trading addresses).
+    for link in list(dict.fromkeys(contact + extra))[:5]:
+        if urllib.parse.urlparse(link).netloc != host:
+            continue
+        is_contact = link in contact
+        if conf == "high" and not is_contact:
+            continue
+        sub = _fetch(link)
+        if not sub:
+            continue
+        sub_text = _text(sub[1])
+        if is_contact:
+            found += [{**a, "page": sub[0]} for a in addresses(sub_text) if a["postcode"] not in {f["postcode"] for f in found}]
+        c2, w2 = evidence(sub_text, company_number, postcode, names)
+        rank = {"high": 3, "medium": 2, "low": 1, None: 0}
+        if rank[c2] > rank[conf]:
+            conf, why, page = c2, w2, sub[0]
     title = re.search(r"(?is)<title[^>]*>(.*?)</title>", html)
-    return {"url": final, "reachable": True, "confidence": conf, "evidence": why, "page": page,
+    return {"url": final, "reachable": True, "confidence": conf, "evidence": why, "page": page, "addresses": found,
             "title": " ".join(htmlmod.unescape(title.group(1)).split())[:120] if title else None}
 
 

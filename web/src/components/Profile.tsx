@@ -328,6 +328,9 @@ function controlText(natures: string[]): string | null {
   return bits.length ? bits.join(", ") : null;
 }
 
+const OWN_LABEL: Record<string, string> = { owner_held: "Owner-held", group_owned: "Group-owned", investor_backed: "Investor-backed",
+  eot: "Employee-owned (EOT)", trust: "Held in trust", foreign_owned: "Foreign parent" };
+
 const SEG_COLOURS = ["var(--teal)", "var(--orange)", "var(--blue)", "var(--purple)", "var(--amber)", "var(--green)"];
 
 type Who = {
@@ -459,6 +462,12 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
   return (
     <section id="ownership">
       <Head icon="owners" tone="orange" title="Owners & directors" aside={flags} />
+      {data.enrichment?.ownership && (
+        <div className="callout amber" style={{ marginBottom: 10 }}>
+          <b>Research: {OWN_LABEL[data.enrichment.ownership] ?? data.enrichment.ownership}.</b> {data.enrichment.ownership_note ?? ""}{" "}
+          <span className="faint small">This overrides Companies House in scoring. The register below may be out of date.</span>
+        </div>
+      )}
       {useStatement ? (
         <p style={{ margin: "0 0 4px" }}><b>{stmt.size} {stmt.size === 1 ? "shareholder" : "shareholders"}
           {owners[0] ? `; largest ${owners[0].name} with ${owners[0].pct}%` : ""}.</b></p>

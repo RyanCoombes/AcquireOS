@@ -306,6 +306,8 @@ def companies(
             params["btype"] = business_type
         if has_website is not None:
             where.append(("" if has_website else "not ") + "exists (select 1 from enrichment en where en.company_number = c.company_number and en.website is not null)")
+        if mine in ("hide_closed", "pipeline", "untouched"):  # a company combined into another shows only as that one
+            where.append("uc.merged_into is null")
         if mine == "hide_closed":   # hide companies you have passed on or rejected
             where.append("coalesce(uc.status, 'new') not in ('passed', 'rejected')")
         elif mine == "pipeline":    # only ones you are working on
@@ -401,7 +403,9 @@ def companies(
                    s.score, s.coverage, not ({sx}) as excluded, s.exclusion, s.value_low, s.value_high, s.value_basis,
                    s.box_name, s.boxes,
                    coalesce(uc.status, 'new') as status, uc.rating, uc.next_action, uc.next_action_on,
-                   ch.last_change, ch.last_kinds, en.website, en.business_type
+                   ch.last_change, ch.last_kinds, en.website, en.business_type,
+                   ao_signals(c.company_number) as signals, ao_same_business(c.company_number) as same_business,
+                   en.trading_region, uc.merged_into
             from page p join company c on c.company_number = p.company_number
             left join company_latest l on l.company_number = c.company_number
             left join estimate e on e.company_number = c.company_number
@@ -608,8 +612,10 @@ def company(num: str, bb: str | None = None):
         facts = (scoring.load_facts(c, num) or [{}])[0]
         override = (state or {}).get("valuation") or {}
         a = valuation.assumptions(bb["criteria"], override)
-        val = {**valuation.value(facts, a), "assumptions": a, "defaults": valuation.assumptions(bb["criteria"]),
-               "override": override, "cash": facts.get("cash")}
+        own_margin = not any(override.get(k) not in (None, "") for k in ("margin_low", "margin_high"))
+        val = {**valuation.value(facts, a, use_filed_margin=own_margin), "assumptions": a, "defaults": valuation.assumptions(bb["criteria"]),
+               "override": override, "cash": facts.get("cash"), "filed_margin": facts.get("filed_margin"),
+               "filed_margin_period": facts.get("filed_margin_period")}
         geo = c.execute("select lat, lon, precision from postcode_geo where postcode = %s and lat is not null",
                         (row["postcode"],)).fetchone() if row["postcode"] else None
         sic_known = {r["code"]: r["description"] for r in c.execute(
@@ -618,6 +624,23 @@ def company(num: str, bb: str | None = None):
 
         sics = [{"code": code, "description": sic_mod.describe(code, sic_known)} for code in row["sic_codes"] or []]
         enr = c.execute("select * from enrichment where company_number = %s", (num,)).fetchone()
+        signals = c.execute("select ao_signals(%s) as s", (num,)).fetchone()["s"] or []
+        # Companies that look like the same business, with their figures, and
+        # any you have combined into this one.
+        same_business = c.execute(
+            """select c2.company_number, c2.name, c2.postcode, l.employees, e.revenue_low, e.revenue_high, e.basis as revenue_basis,
+                      uc.merged_into
+               from unnest(ao_same_business(%s)) x(num) join company c2 on c2.company_number = x.num
+               left join company_latest l on l.company_number = c2.company_number
+               left join estimate e on e.company_number = c2.company_number
+               left join user_company uc on uc.company_number = c2.company_number and uc.user_id = %s""",
+            (num, UID)).fetchall()
+        merged_here = c.execute(
+            """select uc.company_number, c2.name, l.employees, e.revenue_low, e.revenue_high, e.basis as revenue_basis
+               from user_company uc join company c2 on c2.company_number = uc.company_number
+               left join company_latest l on l.company_number = uc.company_number
+               left join estimate e on e.company_number = uc.company_number
+               where uc.user_id = %s and uc.merged_into = %s""", (UID, num)).fetchall()
         if enr and enr.get("locations"):
             # Map positions for the other offices, where their postcodes are known.
             pcs = [l["postcode"] for l in enr["locations"] if l.get("postcode")]
@@ -659,6 +682,8 @@ def company(num: str, bb: str | None = None):
         sc = next((x for x in scores if x["buy_box_id"] == bb["id"]), None)
     return {
         "deal": deal, "manual": manual, "buy_box": {"id": bb["id"], "name": bb["name"]}, "scores": scores,
+        "signals": signals, "same_business": same_business, "merged_into": (state or {}).get("merged_into"),
+        "merged_here": merged_here,
         "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
         "changes": changes, "valuation": val, "fin_summary": fintrends.summary(fin), "ch": ch_details,
         "company": row, "financials": fin, "estimate": est, "ownership": own, "people": people,
@@ -812,6 +837,33 @@ class StateIn(BaseModel):
     funding: dict | None = None
     stage_note: str | None = None
     clear_rating: bool = False
+
+
+class MergeIn(BaseModel):
+    into: str | None = None  # null to separate them again
+
+
+@app.post("/api/companies/{num}/merge")
+def merge_company(num: str, body: MergeIn):
+    """Treat this company as part of another (the same business): it then
+    shows only under that one in your lists."""
+    num = num.strip().upper()
+    into = body.into.strip().upper() if body.into else None
+    if into == num:
+        raise HTTPException(400, "A company cannot be combined with itself")
+    with db.conn() as c:
+        if into and not c.execute("select 1 from company where company_number = %s", (into,)).fetchone():
+            raise HTTPException(404, "Company not found")
+        if into and c.execute("select 1 from user_company where user_id = %s and company_number = %s and merged_into is not null",
+                              (UID, into)).fetchone():
+            raise HTTPException(400, "That company is itself combined into another; combine with that one instead")
+        c.execute("insert into user_company (user_id, company_number) values (%s, %s) on conflict do nothing", (UID, num))
+        c.execute("update user_company set merged_into = %s, updated_at = now() where user_id = %s and company_number = %s",
+                  (into, UID, num))
+        # Anything combined into this one moves with it.
+        if into:
+            c.execute("update user_company set merged_into = %s where user_id = %s and merged_into = %s", (into, UID, num))
+    return {"ok": True, "merged_into": into}
 
 
 class BulkStateIn(StateIn):
@@ -1196,6 +1248,8 @@ class EnrichIn(BaseModel):
     linkedin: str | None = None
     phone: str | None = None
     sources: list | None = None
+    ownership: str | None = None
+    ownership_note: str | None = None
 
 
 @app.post("/api/companies/{num}/enrichment")
@@ -1505,12 +1559,27 @@ def find_website(num: str, body: WebsiteCheckIn | None = None):
                    else website.find(names, b["company_number"], b["postcode"]))
         best = next((r for r in results if r.get("confidence") in ("high", "medium")), None)
         saved = None
+        added = []
         if best:
             saved = enrich.save_enrichment(
                 c, b["company_number"], source_url=best.get("page") or best["url"], website=best["url"],
                 confidence=best["confidence"], source_label=f"Website check: {best['evidence']}", by="website check")["saved"]
-    return {"results": results, "saved": saved,
-            "message": (f"Saved {best['url']} ({best['evidence']})." if best else
+            # Offices listed on the company's own (confirmed) site: trading
+            # addresses, added to any already saved. The registered office is skipped.
+            cur = c.execute("select locations from enrichment where company_number = %s", (b["company_number"],)).fetchone()
+            locs = list((cur or {}).get("locations") or [])
+            have = {l.get("postcode") for l in locs} | {b["postcode"]}
+            for a in best.get("addresses") or []:
+                if a["postcode"] not in have:
+                    locs.append({"kind": "office", "name": None, "address": a["address"], "postcode": a["postcode"]})
+                    have.add(a["postcode"])
+                    added.append(a)
+            if added:
+                enrich.save_enrichment(c, b["company_number"], source_url=added[0]["page"], locations=locs,
+                                       confidence=best["confidence"], source_label="Offices listed on the company's website",
+                                       by="website check")
+    return {"results": results, "saved": saved, "offices_added": added,
+            "message": (f"Saved {best['url']} ({best['evidence']})." + (f" Added {len(added)} office address(es) from the site." if added else "") if best else
                         "No site could be confirmed. Ask Claude to search using the research brief, or enter one you know.")}
 
 

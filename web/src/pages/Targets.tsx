@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Row } from "../api";
-import { ErrorLine, Flags, RevenueTag, Score, StatusMark, Toast, useAsync } from "../components/bits";
+import { ErrorLine, Flags, RevenueTag, Score, Signals, StatusMark, Toast, useAsync } from "../components/bits";
 import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
 import MoneyInput from "../components/MoneyInput";
@@ -444,11 +444,15 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
         <Link className="rowlink" to={href} onClick={(e) => e.stopPropagation()}>{r.name}</Link>
         {bad && <span className="tag red">{cap(r.company_status)}</span>}
         {recent && r.last_kinds?.length ? <span className="tag" title={`Changed ${relDays(r.last_change)}`}>{r.last_kinds.map((k) => CHANGE_KIND[k] ?? k).join(", ")}</span> : null}
+        <Signals s={r.signals} />
+        {r.same_business?.length ? <Link className="sig grey" to={`/c/${r.same_business[0]}`} onClick={(e) => e.stopPropagation()}
+          title="Same owner and address, or a director in common at the same postcode">
+          Same business as {r.same_business.length === 1 ? "1 other" : `${r.same_business.length} others`}</Link> : null}
       </div>
       <div className="sub">
         {r.company_number}
         {r.postcode ? ` · ${r.postcode}` : ""}
-        {r.region ? ` · ${r.region}` : ""}
+        {r.trading_region && r.trading_region !== r.region ? ` · trades in ${r.trading_region}` : r.region ? ` · ${r.region}` : ""}
         {dim && r.exclusion ? <span className="flag red">{r.exclusion}</span> : null}
         {r.matched_owner ? <span className="flag" title="Matched by owner's name">owner: {r.matched_owner}</span> : null}
         {r.accounts_overdue ? <span className="flag red">accounts overdue</span> : r.confirmation_overdue ? <span className="flag red">confirmation overdue</span> : null}
@@ -504,8 +508,8 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
         {range(r.value_low, r.value_high)}
         {r.value_basis === "loss" ? <div className="sub">loss-making as filed</div>
           : r.value_low && r.value_basis ? <div><span className={`revtag ${r.value_basis === "filed" ? "filed" : "est"}`}
-              title={r.value_basis === "filed" ? "From profit in the filed accounts" : "From estimated revenue × margin"}>
-              {r.value_basis === "filed" ? "✓ Filed profit" : "≈ Estimate"}</span></div> : null}
+              title={r.value_basis === "filed" ? "From profit in the filed accounts" : r.value_basis === "filed_margin" ? "Revenue × the company's own margin from its last accounts with profit" : "From estimated revenue × your buy box's margin"}>
+              {r.value_basis === "filed" ? "✓ Filed profit" : r.value_basis === "filed_margin" ? "≈ Own margin" : "≈ Estimate"}</span></div> : null}
       </td>
       <td className="num hide-sm">{years(r.incorporation_date)}</td>
       <td className="num">{age ?? "—"}</td>

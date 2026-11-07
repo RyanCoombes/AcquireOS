@@ -93,3 +93,16 @@ export function RevenueTag({ basis, method, long }: { basis?: string | null; met
     </>
   );
 }
+
+/** Signals worked out from the register: recently sold, possible buyer, many shareholders. */
+export const SIGNALS: Record<string, [string, string, string]> = {
+  recently_sold: ["Recently sold", "red", "A company became the owner as the previous owners left, in the last 3 years"],
+  possible_buyer: ["Possible buyer", "blue", "Has taken control of established companies in the last 3 years: may be buying, not selling"],
+  many_shareholders: ["Many shareholders", "amber", "10 or more shareholders on its latest statement: usually investor or employee-owned"],
+};
+
+export function Signals({ s }: { s?: string[] | null }) {
+  if (!s?.length) return null;
+  return <>{s.filter((k) => SIGNALS[k]).map((k) => (
+    <span key={k} className={`sig ${SIGNALS[k][1]}`} title={SIGNALS[k][2]}>{SIGNALS[k][0]}</span>))}</>;
+}

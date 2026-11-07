@@ -575,3 +575,63 @@ def test_api_owners_register_and_deeper_shareholder_search(loaded, monkeypatch):
         r = chapi.fetch(c, "01000005")
         assert r["changes"] >= 1
         assert c.execute("select 1 from company_change where company_number = '01000005' and kind = 'owner' and field = 'Owner left'").fetchone()
+
+
+def test_trust_rules(loaded):
+    """Unknown owners score nothing; research and shareholders beat the register;
+    the company's own filed margin beats the default; the head office sets the region."""
+    from acquireos import enrich, scoring, valuation
+    from acquireos.api import app
+
+    loaded.commit()
+    crit = scoring.merged({})
+    base = {"company_number": "X", "name": "X LTD", "status": "active", "employees": 30, "revenue_low": 2e6, "revenue_high": 2e6}
+    unknown = {r["key"]: r for r in scoring.score_company(base, crit)["reasons"]}
+    assert unknown["ownership"]["points"] == 0 and unknown["owner_age"]["points"] == 0
+    lenient = {r["key"]: r for r in scoring.score_company(base, {**crit, "unknown_owner_points": 0.5})["reasons"]}
+    assert lenient["ownership"]["points"] == crit["ownership"]["weight"] / 2
+    # 17 shareholders: investor-backed, and owner age doesn't count
+    vc = {**base, "ownership_type": "owner_held", "oldest_birth_year": 1960, "signals": ["many_shareholders"],
+          "shareholder_names": [f"P{i}" for i in range(17)]}
+    r = {x["key"]: x for x in scoring.score_company(vc, crit)["reasons"]}
+    assert "Investor" in r["ownership"]["text"] and r["owner_age"]["points"] == 0
+    # research says sold to a group: wins over "owner-held" on the register
+    sold = {**base, "ownership_type": "owner_held", "research_ownership": "group_owned", "oldest_birth_year": 1960}
+    r = {x["key"]: x for x in scoring.score_company(sold, crit)["reasons"]}
+    assert r["ownership"]["points"] == 0 and "research" in r["ownership"]["text"]
+    # recently sold signal excludes by default
+    assert scoring.score_company({**base, "signals": ["recently_sold"]}, crit)["excluded"]
+    # own filed margin (2%) instead of the default 8-15%
+    a = valuation.assumptions({})
+    v = valuation.value({"revenue_low": 4.1e6, "revenue_high": 4.1e6, "filed_margin": 2.0, "filed_margin_period": "2023-03-31"}, a)
+    assert v["basis"] == "filed_margin" and round(v["ebitda_low"]) == 82000 and "2023" in v["steps"][0]
+    assert valuation.value({"revenue_low": 4.1e6, "revenue_high": 4.1e6, "filed_margin": 2.0}, a, use_filed_margin=False)["basis"] == "estimated"
+    # head office sets the trading region
+    with db.conn() as c:
+        enrich.save_enrichment(c, "01000001", source_url="https://example.com/contact", ownership="group_owned",
+                               ownership_note="Bought by a group in 2024",
+                               locations=[{"kind": "head office", "address": "1 Bridge St, Chester CH1 1AA"}])
+        en = c.execute("select ownership, trading_postcode, trading_region from enrichment where company_number = '01000001'").fetchone()
+        assert en["ownership"] == "group_owned" and en["trading_postcode"] == "CH1 1AA" and en["trading_region"]
+        f = scoring.load_facts(c, "01000001")[0]
+        assert f["research_ownership"] == "group_owned" and f["trading_region"] == en["trading_region"]
+    with TestClient(app) as cl:
+        d = cl.get("/api/companies/01000001").json()
+        assert "signals" in d and "same_business" in d
+        assert cl.post("/api/companies/01000002/merge", json={"into": "01000001"}).json()["merged_into"] == "01000001"
+        d = cl.get("/api/companies/01000001").json()
+        assert [m["company_number"] for m in d["merged_here"]] == ["01000002"]
+        listed = [r["company_number"] for r in cl.get("/api/companies", params={"mine": "hide_closed", "limit": 50}).json()["rows"]]
+        assert "01000002" not in listed and "01000001" in listed
+        cl.post("/api/companies/01000002/merge", json={"into": None})
+        listed = [r["company_number"] for r in cl.get("/api/companies", params={"mine": "hide_closed", "limit": 50}).json()["rows"]]
+        assert "01000002" in listed
+
+
+def test_website_offices():
+    from acquireos.website import addresses
+
+    got = addresses("Head Office: Data8 Ltd, Unit 4, Chester Business Park, Chester, CH4 9QZ. Tel 01244 000000 | "
+                    "Wrexham office: 12 High St, Wrexham LL11 1AA")
+    assert [a["postcode"] for a in got] == ["CH4 9QZ", "LL11 1AA"]
+    assert got[0]["address"].startswith("Data8 Ltd, Unit 4")

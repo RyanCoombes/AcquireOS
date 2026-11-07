@@ -12,6 +12,8 @@ const FIELDS: { k: keyof Assumptions; label: string; unit: string; step: number 
   { k: "multiple_high", label: "Multiple, high", unit: "×", step: 0.25 },
 ];
 
+const round1 = (x: number) => Math.round(x * 10) / 10;
+
 export default function Valuation({ data, num, onSaved }: { data: CompanyDetail; num: string; onSaved: () => void }) {
   const v = data.valuation;
   const [a, setA] = useState<Assumptions>(v.assumptions);
@@ -21,13 +23,22 @@ export default function Valuation({ data, num, onSaved }: { data: CompanyDetail;
   const op = toNum(latest?.operating_profit ?? null);
 
   // Same method as the server (backend/acquireos/valuation.py), recalculated live.
+  const [marginTouched, setMarginTouched] = useState(false);
+  const fm = v.filed_margin ?? null;
+  const ownMargin = fm !== null && !marginTouched && v.override?.margin_low == null && v.override?.margin_high == null;
+  const mLo = ownMargin ? Math.max(Number(fm), 0) : a.margin_low;
+  const mHi = ownMargin ? Math.max(mLo, (mLo + a.margin_low) / 2) : a.margin_high;
   const live = useMemo(() => {
     if (op !== null && op > 0) return { eLo: op, eHi: op, basis: "filed" as const };
     if (op !== null && op <= 0) return null;  // loss-making as filed: no earnings-based value
     const rLo = toNum(est?.revenue_low ?? null), rHi = toNum(est?.revenue_high ?? null) ?? rLo;
     if (rLo === null || rHi === null) return null;
-    return { eLo: (rLo * a.margin_low) / 100, eHi: (rHi * a.margin_high) / 100, basis: "estimated" as const };
-  }, [a, est, op]);
+    return { eLo: (rLo * mLo) / 100, eHi: (rHi * mHi) / 100, basis: ownMargin ? "filed_margin" as const : "estimated" as const };
+  }, [a, est, op, mLo, mHi, ownMargin]);
+  // Lenders already secured on the company: repaid from the seller's proceeds
+  // on a cash-free, debt-free deal, but they must release their charges.
+  const lenders = [...new Set((data.ch?.charges ?? []).filter((x) => x.status !== "fully-satisfied").flatMap((x) => x.holders))];
+  const outstanding = data.company.charges_outstanding ?? 0;
   const vLo = live ? live.eLo * a.multiple_low : null;
   const vHi = live ? live.eHi * a.multiple_high : null;
   const isOverride = Object.keys(v.override ?? {}).length > 0;
@@ -51,7 +62,7 @@ export default function Valuation({ data, num, onSaved }: { data: CompanyDetail;
       ) : (
         <>
           <div className="factline" style={{ borderTop: 0 }}>
-            <div><b>{range(live.eLo, live.eHi)}</b><span>Profit (EBITDA proxy) · {live.basis === "filed" ? "filed" : "estimate"}</span></div>
+            <div><b>{range(live.eLo, live.eHi)}</b><span>Profit (EBITDA proxy) · {live.basis === "filed" ? "filed" : live.basis === "filed_margin" ? "own margin" : "estimate"}</span></div>
             <div><b className="hl">{range(vLo, vHi)}</b><span>Enterprise value</span></div>
             {v.cash ? <div><b>{money(v.cash)}</b><span>Cash on balance sheet, not included</span></div> : null}
           </div>
@@ -59,18 +70,28 @@ export default function Valuation({ data, num, onSaved }: { data: CompanyDetail;
             {live.basis === "filed" ? (
               <li>Profit: filed operating profit of {money(op)}. Depreciation is not added back, so true EBITDA is likely higher.</li>
             ) : (
-              <li>Profit: {est?.basis === "filed" ? "filed turnover" : "estimated revenue"} of {range(est!.revenue_low, est!.revenue_high)} × {a.margin_low}–{a.margin_high}% margin.</li>
+              <li>Profit: {est?.basis === "filed" ? "filed turnover" : "estimated revenue"} of {range(est!.revenue_low, est!.revenue_high)} × {round1(mLo)}–{round1(mHi)}% margin
+                {live.basis === "filed_margin"
+                  ? <> (<b>the company's own</b>: {round1(Number(fm))}% in its {String(v.filed_margin_period ?? "").slice(0, 4)} accounts, the latest showing profit; the upper end allows for some improvement).</>
+                  : <> (your buy box's assumption{fm === null ? "; no profit has ever been filed" : ""}).</>}</li>
             )}
             <li>Value: profit × {a.multiple_low}–{a.multiple_high} times.</li>
-            <li>Debt is not netted off: small-company accounts rarely show it clearly. Check the charges register.</li>
+            <li>Debt is not netted off: on a cash-free, debt-free deal it is repaid from the seller's proceeds.</li>
           </ol>
+          {outstanding > 0 && (
+            <div className="callout amber">
+              <b>Existing secured lenders{lenders.length ? `: ${lenders.join(", ")}` : ` (${outstanding} outstanding charge${outstanding === 1 ? "" : "s"})`}.</b>{" "}
+              On a cash-free, debt-free deal they're repaid from the seller's proceeds and must release their charges at completion.
+              Ask early how much is owed: the register shows the security, not the balance.
+            </div>
+          )}
           <div className="assume">
             {FIELDS.map((f) => (
               <label key={f.k} className="field">
                 <span className="label">{f.label}</span>
                 <span className="unit">
                   <input type="number" step={f.step} min={0} value={a[f.k]} disabled={live.basis === "filed" && f.k.startsWith("margin")}
-                         onChange={(e) => { setA({ ...a, [f.k]: Number(e.target.value) }); setDirty(true); }} />
+                         onChange={(e) => { setA({ ...a, [f.k]: Number(e.target.value) }); setDirty(true); if (f.k.startsWith("margin")) setMarginTouched(true); }} />
                   <i>{f.unit}</i>
                 </span>
               </label>
@@ -78,9 +99,11 @@ export default function Valuation({ data, num, onSaved }: { data: CompanyDetail;
             <div className="assume-actions">
               {dirty && <button className="btn primary" onClick={() => save(a)}>Save for this company</button>}
               {(isOverride || dirty) && (
-                <button className="btn quiet" onClick={() => { setA(v.defaults); save(null); }}>Use buy box defaults</button>
+                <button className="btn quiet" onClick={() => { setA(v.defaults); setMarginTouched(false); save(null); }}>Use buy box defaults</button>
               )}
-              {!dirty && !isOverride && <span className="faint small">Defaults from your buy box. Change them here for this company only.</span>}
+              {!dirty && !isOverride && <span className="faint small">{ownMargin
+                ? "Using the company's own margin (above); the margin boxes are your buy box's defaults. Change them to override."
+                : "Defaults from your buy box. Change them here for this company only."}</span>}
               {!dirty && isOverride && <span className="small" style={{ color: "var(--amber)" }}>Using your own assumptions for this company.</span>}
             </div>
           </div>

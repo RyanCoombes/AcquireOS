@@ -4,8 +4,10 @@ This is a screening estimate, not a valuation. Every result says which
 figures it used and which were assumed, so it can be checked and overridden.
 
 Method:
-  1. Profit (EBITDA proxy): filed operating profit when the accounts include
-     it; otherwise revenue × an assumed margin range.
+  1. Profit (EBITDA proxy): filed operating profit when the latest accounts
+     include it; otherwise revenue × a margin: the company's own margin from
+     the most recent accounts that showed profit (if any), else the buy box's
+     assumed range.
   2. Enterprise value: profit × an assumed multiple range.
   3. Cash on the balance sheet is reported separately. Small-company
      accounts rarely show debt clearly, so it is not netted off.
@@ -29,7 +31,7 @@ def assumptions(criteria: dict | None, override: dict | None = None) -> dict:
     return a
 
 
-def value(f: dict, a: dict) -> dict:
+def value(f: dict, a: dict, use_filed_margin: bool = True) -> dict:
     """f: facts with revenue_low/high, revenue_basis, operating_profit, cash."""
     steps: list[str] = []
     op = f.get("operating_profit")
@@ -45,12 +47,28 @@ def value(f: dict, a: dict) -> dict:
                           "No earnings-based value; it would be priced on its assets or a turnaround view."]}
     elif f.get("revenue_low"):
         r_lo, r_hi = float(f["revenue_low"]), float(f["revenue_high"] or f["revenue_low"])
-        e_lo, e_hi = r_lo * a["margin_low"] / 100, r_hi * a["margin_high"] / 100
-        basis = "estimated"
         rb = "filed turnover" if f.get("revenue_basis") == "filed" else "estimated revenue"
-        steps.append(
-            f"Profit: {rb} of {_m(r_lo)}–{_m(r_hi)} × {a['margin_low']:g}–{a['margin_high']:g}% margin = {_m(e_lo)}–{_m(e_hi)}."
-        )
+        fm = f.get("filed_margin")
+        if use_filed_margin and fm is not None:
+            # The company's own margin from its last profit and loss account
+            # beats a generic assumption. Allow some improvement since then,
+            # up to halfway to the buy box's low margin.
+            yr = str(f.get("filed_margin_period") or "")[:4]
+            m_lo = max(float(fm), 0.0)
+            m_hi = max(m_lo, (m_lo + a["margin_low"]) / 2)
+            e_lo, e_hi = r_lo * m_lo / 100, r_hi * m_hi / 100
+            basis = "filed_margin"
+            steps.append(
+                f"Profit: {rb} of {_m(r_lo)}–{_m(r_hi)} × {m_lo:g}–{m_hi:g}% margin = {_m(e_lo)}–{_m(e_hi)}. "
+                f"The margin is the company's own: {float(fm):g}% in its {yr or 'last'} accounts, the latest that "
+                f"show profit; the upper end allows for some improvement since.")
+        else:
+            e_lo, e_hi = r_lo * a["margin_low"] / 100, r_hi * a["margin_high"] / 100
+            basis = "estimated"
+            steps.append(
+                f"Profit: {rb} of {_m(r_lo)}–{_m(r_hi)} × {a['margin_low']:g}–{a['margin_high']:g}% margin "
+                f"(your buy box's assumption; no profit has been filed) = {_m(e_lo)}–{_m(e_hi)}."
+            )
     else:
         return {"ebitda_low": None, "ebitda_high": None, "value_low": None, "value_high": None,
                 "basis": None, "steps": ["Not enough figures filed to estimate profit."]}

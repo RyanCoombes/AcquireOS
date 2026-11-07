@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
-import { ErrorLine, Flags, RevenueTag, Score, Toast, useAsync } from "../components/bits";
+import { ErrorLine, Flags, RevenueTag, Score, Signals, Toast, useAsync } from "../components/bits";
 import { AreaChart as SmallLine } from "../components/charts";
 import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
@@ -85,7 +85,9 @@ export default function Company() {
             {c.incorporation_date && <span className="chip">Since {c.incorporation_date.slice(0, 4)} · {years(c.incorporation_date)} yrs</span>}
             {c.region && <span className="chip">{c.postcode ? `${c.postcode.split(" ")[0]} · ` : ""}{c.region}</span>}
             {c.accounts_category && <span className="chip">{accountsLabel(c.accounts_category).replace(/ accounts?.*$/, "").replace(/^./, (x) => x.toUpperCase())}</span>}
-            {own && own.ownership_type !== "unknown" && <span className="chip teal">{OWNERSHIP[own.ownership_type]}</span>}
+            {data.enrichment?.ownership ? <span className="chip teal" title={data.enrichment.ownership_note ?? "From research"}>{OWNERSHIP[data.enrichment.ownership]} · research</span>
+              : own && own.ownership_type !== "unknown" && <span className="chip teal">{OWNERSHIP[own.ownership_type]}</span>}
+            <Signals s={data.signals} />
             {data.enrichment?.website && <a className="chip link" href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")} ↗</a>}
           </div>
         </div>
@@ -106,6 +108,7 @@ export default function Company() {
       </div>
 
       {score?.excluded && <div className="callout red"><b>Outside {shownName}:</b> {score.exclusion}</div>}
+      <SameBusiness data={data} num={num} onChange={reload} />
       {data.changes.filter((x) => Date.now() - new Date(x.detected_at).getTime() < 30 * 864e5).length > 0 && (
         <div className="callout">
           <b>Changed recently:</b>{" "}
@@ -582,4 +585,54 @@ const COMPANY_TYPES: Record<string, string> = {
 function companyType(t: string | null): string {
   if (!t) return "—";
   return COMPANY_TYPES[t.toLowerCase()] ?? t;
+}
+
+
+/** Companies that look like one business (same owner and address, or a
+    director in common at the same postcode), and ones you have combined. */
+function SameBusiness({ data, num, onChange }: { data: CompanyDetail; num: string; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const merge = async (who: string, into: string | null) => {
+    setBusy(true);
+    try { await api.merge(who, into); onChange(); } finally { setBusy(false); }
+  };
+  if (data.merged_into) {
+    return (
+      <div className="callout">
+        <b>Combined with <Link to={`/c/${data.merged_into}`}>{data.merged_into}</Link>:</b> you're treating them as one business,
+        so this company only shows under that one in your lists.{" "}
+        <button className="linkish" disabled={busy} onClick={() => merge(num, null)}>Separate again</button>
+      </div>
+    );
+  }
+  const here = data.merged_here ?? [];
+  const others = (data.same_business ?? []).filter((x) => !here.some((h) => h.company_number === x.company_number));
+  if (!here.length && !others.length) return null;
+  const sum = (k: "employees" | "revenue_low" | "revenue_high") =>
+    [data.company, ...here].reduce((t, x: any) => t + (Number(k === "employees" ? (x === data.company ? data.financials.at(-1)?.employees : x.employees) :
+      x === data.company ? (data.estimate as any)?.[k] : x[k]) || 0), 0);
+  return (
+    <div className="callout">
+      {here.length > 0 && (
+        <div style={{ marginBottom: others.length ? 8 : 0 }}>
+          <b>One business with {here.map((h, i) => <span key={h.company_number}>{i ? ", " : ""}<Link to={`/c/${h.company_number}`}>{h.name}</Link></span>)}.</b>{" "}
+          Together: about {sum("employees")} staff, {range(sum("revenue_low"), sum("revenue_high"))} revenue.{" "}
+          {here.map((h) => <button key={h.company_number} className="linkish" disabled={busy} onClick={() => merge(h.company_number, null)}>Separate {h.name}</button>)}
+        </div>
+      )}
+      {others.length > 0 && (
+        <div>
+          <b>Looks like the same business as:</b>{" "}
+          {others.map((o, i) => (
+            <span key={o.company_number}>{i ? "; " : ""}<Link to={`/c/${o.company_number}`}>{o.name}</Link>
+              <span className="faint"> ({o.employees ?? "?"} staff{o.revenue_low ? `, ${range(o.revenue_low, o.revenue_high)}` : ""})</span>{" "}
+              <button className="btn quiet" style={{ height: 26 }} disabled={busy || !!o.merged_into} onClick={() => merge(o.company_number, num)}
+                      title="Show it under this company in your lists, with combined figures">
+                {o.merged_into ? "Combined elsewhere" : "Treat as one business"}</button></span>
+          ))}
+          <div className="faint small" style={{ marginTop: 4 }}>Same owner and address, or a director in common at the same postcode.</div>
+        </div>
+      )}
+    </div>
+  );
 }

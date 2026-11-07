@@ -46,7 +46,14 @@ export function Location({ data }: { data: CompanyDetail }) {
           {points.length > 1 && <div className="faint small" style={{ marginTop: 6 }}>Black line: parent or subsidiary. Green: same owner.</div>}
         </div>
         <div>
-          <div className="label">Registered office</div>
+          {data.enrichment?.trading_postcode && data.enrichment.trading_postcode !== c.postcode && (
+            <>
+              <div className="label">Trades from</div>
+              <div style={{ marginBottom: 12 }}><b>{data.enrichment.trading_region ?? data.enrichment.trading_postcode}</b>
+                <span className="faint small"> · {data.enrichment.trading_postcode} · used for region and scoring</span></div>
+            </>
+          )}
+          <div className="label">Registered office{data.enrichment?.trading_postcode && data.enrichment.trading_postcode !== c.postcode ? " (legal address only, often the accountant's)" : ""}</div>
           <div style={{ marginBottom: 12 }}>{c.registered_address ?? "—"}
             {data.geo?.precision === "outcode" && <div className="faint small">Placed at the postcode district: exact postcode not found</div>}</div>
           {offices.length > 0 && (
@@ -79,6 +86,9 @@ export function Location({ data }: { data: CompanyDetail }) {
   );
 }
 
+const OWN_TYPES: Record<string, string> = { owner_held: "Owner-held", group_owned: "Group-owned (sold to a group)",
+  investor_backed: "Investor-backed", eot: "Employee-owned (EOT)", trust: "Held in trust", foreign_owned: "Foreign parent" };
+
 const BT = ["software", "saas", "data", "msp", "it_consultancy", "field_service", "agency", "reseller", "other"];
 const BT_LABEL: Record<string, string> = { software: "Software", saas: "SaaS", data: "Data", msp: "Managed service provider",
   it_consultancy: "IT consultancy", field_service: "Field service", agency: "Agency", reseller: "Reseller", other: "Other" };
@@ -90,6 +100,7 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
   const [f, setF] = useState({ website: e?.website ?? "", business_type: e?.business_type ?? "", recurring_revenue: e?.recurring_revenue ?? "",
                                field_service: e?.field_service ?? "", summary: e?.summary ?? "", source_url: "",
                                linkedin: e?.linkedin ?? "", phone: e?.phone ?? "",
+                               ownership: e?.ownership ?? "", ownership_note: e?.ownership_note ?? "",
                                locations: (e?.locations ?? []).map((l) => [cap(l.kind), l.name ?? "", l.address ?? ""].join(" | ")).join("\n"),
                                facts: (e?.facts ?? []).map((x) => `${x.label}: ${x.value}`).join("\n") });
   const [err, setErr] = useState<string | null>(null);
@@ -152,7 +163,8 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
         <form style={{ display: "grid", gap: 10, marginTop: 8 }} onSubmit={async (ev) => {
           ev.preventDefault(); setErr(null);
           const body: Record<string, unknown> = { source_url: f.source_url || "manual", confidence: "high" };
-          for (const k of ["website", "business_type", "recurring_revenue", "field_service", "summary", "linkedin", "phone"] as const) if (f[k]) body[k] = f[k];
+          for (const k of ["website", "business_type", "recurring_revenue", "field_service", "summary", "linkedin", "phone", "ownership", "ownership_note"] as const) if (f[k]) body[k] = f[k];
+          if (!f.ownership && e?.ownership) body.ownership = "unknown";  // back to what Companies House shows
           // One office per line: "Kind | Name | Address"; one fact per line: "Label: value".
           body.locations = f.locations.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
             const [kind, name, ...addr] = l.split("|").map((x) => x.trim());
@@ -177,6 +189,15 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
               <label key={k} className="field"><span className="label">{k === "recurring_revenue" ? "Recurring revenue" : "Field service"}</span>
                 <select value={f[k]} onChange={(x) => setF({ ...f, [k]: x.target.value })}><option value="">—</option>{["yes", "partly", "no", "unknown"].map((v) => <option key={v}>{v}</option>)}</select></label>
             ))}
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <label className="field"><span className="label">Ownership (from research)</span>
+              <select value={f.ownership} onChange={(x) => setF({ ...f, ownership: x.target.value })}>
+                <option value="">As Companies House shows</option>
+                {Object.entries(OWN_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select></label>
+            <label className="field" style={{ flex: 1 }}><span className="label">What research found</span>
+              <input value={f.ownership_note} placeholder="e.g. Bought by Aspire Systems (India), July 2024" onChange={(x) => setF({ ...f, ownership_note: x.target.value })} /></label>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <label className="field"><span className="label">LinkedIn</span><input type="url" style={{ width: 260 }} value={f.linkedin} onChange={(x) => setF({ ...f, linkedin: x.target.value })} placeholder="https://linkedin.com/company/…" /></label>

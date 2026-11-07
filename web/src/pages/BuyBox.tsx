@@ -64,7 +64,18 @@ export default function BuyBox() {
     ...(ex.ownership ?? []).map((k: string) => OWNERSHIP[k] ?? k),
     ...(ex.address_flags ?? []).map((k: string) => meta.data?.address_flags?.[k] ?? k),
     ...(ex.tiers ?? []).map((t: string) => `tier ${t}`),
+    ...(ex.recently_sold !== false ? ["recently sold"] : []),
+    ...(ex.possible_buyer ? ["possible buyers"] : []),
   ];
+  const toggle = (path: string[], label: string, dflt: boolean) => {
+    const on = (get(c, path) ?? dflt) as boolean;
+    return (
+      <label className={`xcheck ${on ? "on" : ""}`}>
+        <input type="checkbox" checked={on} aria-label={`Exclude ${label}`} onChange={(e) => upd(path, e.target.checked)} />
+        <span className="mark" aria-hidden>{on ? "✕" : ""}</span>{label}
+      </label>
+    );
+  };
   const n = (path: string[], props: Record<string, unknown> = {}) => (
     <input type="number" value={get(c, path) ?? ""} onChange={(e) => upd(path, e.target.value === "" ? 0 : Number(e.target.value))} {...props} />
   );
@@ -218,6 +229,18 @@ export default function BuyBox() {
           <dt>Exclude review tiers</dt>
           <dd>{xchecks((meta.data?.tiers ?? []).map((t) => [t, t]), ["exclude", "tiers"])}
             <div className="faint small">Tiers from a ranked file you imported, if any.</div></dd>
+          <dt>Exclude sold or buying companies</dt>
+          <dd>{toggle(["exclude", "recently_sold"], "Recently sold to another company", true)}
+            {toggle(["exclude", "possible_buyer"], "Possible buyers (taking over others)", false)}
+            <div className="faint small">From changes on the owners register in the last 3 years. Research you save overrides them.</div></dd>
+          <dt>When owners aren't on record</dt>
+          <dd>
+            <select value={String(get(c, ["unknown_owner_points"]) ?? 0)} onChange={(e) => upd(["unknown_owner_points"], Number(e.target.value))}>
+              <option value="0">No points for ownership and owner age (cautious)</option>
+              <option value="0.5">Half points (neutral)</option>
+            </select>
+            <div className="faint small">Missing owners often means a group or investors own it, so the cautious option is the default.</div>
+          </dd>
           <dt>Always excluded</dt>
           <dd className="muted">Dissolved, insolvent or being struck off.</dd>
         </dl>

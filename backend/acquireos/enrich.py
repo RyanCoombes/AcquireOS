@@ -78,7 +78,8 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
                     field_service: str | None = None, summary: str | None = None,
                     confidence: str = "medium", source_label: str | None = None, by: str = "claude",
                     locations: list | None = None, facts: list | None = None, linkedin: str | None = None,
-                    phone: str | None = None, sources: list | None = None) -> dict:
+                    phone: str | None = None, sources: list | None = None, ownership: str | None = None,
+                    ownership_note: str | None = None) -> dict:
     num = company_number.strip().upper()
     if not conn.execute("select 1 from company where company_number = %s", (num,)).fetchone():
         raise EnrichError(f"Company {num} is not in AcquireOS")
@@ -104,11 +105,24 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
         if url and str(url).strip():
             extra_sources.append((str(url).strip(), label))
 
+    from .ownership import TYPE_LABELS
+    from .normalise import region_for
+
+    if ownership and ownership not in TYPE_LABELS:
+        raise EnrichError(f"ownership must be one of {list(TYPE_LABELS)}")
     fields = {"website": website, "business_type": business_type, "recurring_revenue": recurring_revenue,
-              "field_service": field_service, "summary": summary, "linkedin": linkedin, "phone": phone}
+              "field_service": field_service, "summary": summary, "linkedin": linkedin, "phone": phone,
+              "ownership": None if ownership == "unknown" else ownership, "ownership_note": ownership_note}
     given = {k: v for k, v in fields.items() if v not in (None, "")}
+    if ownership == "unknown":  # back to what Companies House shows
+        given["ownership"], given["ownership_note"] = None, None
     if locs is not None:
         given["locations"] = json.dumps(locs)
+        # Where it really trades: the head office, which wins over the
+        # registered office (often the accountant's) for region and scoring.
+        head = next((l for l in locs if l["kind"] == "head office" and l.get("postcode")), None)
+        given["trading_postcode"] = head["postcode"] if head else None
+        given["trading_region"] = region_for(head["postcode"]) if head else None
     if fct is not None:
         given["facts"] = json.dumps(fct)
     if not given and not extra_sources:
@@ -132,11 +146,18 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
         {**given, "num": num, "conf": confidence, "by": by},
     )
     labels = {"website": "Website", "business_type": "Business type", "recurring_revenue": "Recurring revenue",
-              "field_service": "Field-service work", "summary": "Summary", "linkedin": "LinkedIn", "phone": "Phone"}
+              "field_service": "Field-service work", "summary": "Summary", "linkedin": "LinkedIn", "phone": "Phone",
+              "ownership": "Ownership"}
     kinds = {"website": "website", "business_type": "classification", "recurring_revenue": "classification",
-             "field_service": "classification", "summary": "summary", "linkedin": "contact", "phone": "contact"}
+             "field_service": "classification", "summary": "summary", "linkedin": "contact", "phone": "contact",
+             "ownership": "ownership"}
+    if "ownership" in given and ownership_note:
+        given_note = f"{TYPE_LABELS[given['ownership']]}: {ownership_note}"
+    else:
+        given_note = None
     src = None if source_url == "manual" else source_url
-    rows = [(kinds[k], v if k == "summary" else f"{labels[k]}: {v}", src, source_label)
+    rows = [(kinds[k], v if k == "summary" else given_note if (k == "ownership" and given_note) else
+             f"{labels[k]}: {(TYPE_LABELS.get(v, v) if v else 'as Companies House shows') if k == 'ownership' else v}", src, source_label)
             for k, v in given.items() if k in labels]
     for loc in locs or []:
         rows.append(("location", f"{loc['kind'].capitalize()}: {', '.join(x for x in (loc['name'], loc['address']) if x)}",

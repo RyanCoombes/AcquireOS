@@ -1,8 +1,14 @@
 """Score companies against a saved buy box, with a reason for every point.
 
-Missing data is neutral: it earns half the points (neither a hit nor a
-miss) and is reported as "unknown". Each score carries a coverage figure:
-the share of the possible points that could actually be assessed.
+Missing data is reported as "unknown". Missing staff, revenue and the like
+earn half the points (neither a hit nor a miss); missing owner data earns
+none by default (unknown_owner_points), because an untraced owner is often
+a group or investor. Each score carries a coverage figure: the share of the
+possible points that could actually be assessed.
+
+Which source wins: researched ownership (enrichment.ownership, sourced)
+over the register; investor signals from the shareholder list over
+"owner-held"; the researched trading region over the registered office's.
 """
 from __future__ import annotations
 
@@ -17,6 +23,9 @@ DEFAULT_CRITERIA = {
     "revenue": {"weight": 15, "min": 1_000_000, "ideal_min": 2_000_000, "ideal_max": 8_000_000, "max": 15_000_000},
     "owner_age": {"weight": 20, "min": 50, "ideal": 60},
     "ownership": {"weight": 15, "good": ["owner_held"], "neutral": ["unknown", "trust"]},
+    # Share of the points earned when owners or their ages are not known:
+    # 0 (default, cautious) or 0.5 (neutral, as for other missing data).
+    "unknown_owner_points": 0.0,
     "net_asset_growth": {"weight": 5},
     "sic": {"weight": 5, "preferred": ["62012", "62020", "62030", "62090", "63110", "63120", "58290", "58210"]},
     "valuation": {"margin_low": 8.0, "margin_high": 15.0, "multiple_low": 3.0, "multiple_high": 5.0},
@@ -55,6 +64,8 @@ DEFAULT_CRITERIA = {
         "keywords": ["electrical", "plumbing", "heating", "cctv", "fire alarm", "scaffold", "roofing", "cleaning"],
         "address_flags": [],
         "regions": [],  # regions to leave out
+        "recently_sold": True,    # a company became the owner as the previous owners left
+        "possible_buyer": False,  # has been buying other companies itself
         # Exclude companies that research has found to be field-service or
         # van-based (from the enrichment field_service = yes).
         "field_service": True,
@@ -164,6 +175,8 @@ def _money(v):
 
 
 UNKNOWN_SHARE = 0.5
+# Bump when the scoring rules change, so every company is scored again.
+SCORING_VERSION = 2
 
 
 def score_company(c: dict, criteria: dict, today: date | None = None, scope=None,
@@ -174,10 +187,26 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
     cr = merged(criteria) if "exclude" not in criteria or "staff" not in criteria else criteria
     reasons = []
 
-    def add(key, label, weight, frac, status, text):
-        # Unknown is neutral: half the points, so missing data neither helps nor hurts much.
-        pts = round(weight * frac, 1) if status != STATUS_UNKNOWN else round(weight * UNKNOWN_SHARE, 1)
+    def add(key, label, weight, frac, status, text, unknown_share=UNKNOWN_SHARE):
+        # Unknown earns a fixed share of the points (half, or none for owner data).
+        pts = round(weight * frac, 1) if status != STATUS_UNKNOWN else round(weight * unknown_share, 1)
         reasons.append({"key": key, "label": label, "points": pts, "max": weight, "status": status, "text": text})
+
+    owner_unknown = float(cr.get("unknown_owner_points", 0.0) or 0.0)
+    signals = set(c.get("signals") or [])
+    # Ownership: research (sourced, usually newer) wins over the register; a
+    # long shareholder list or an investor's name means investor-backed.
+    t = c.get("research_ownership") or c.get("ownership_type")
+    from .chapi import is_investor
+
+    investors = [n for n in (c.get("shareholder_names") or []) if is_investor(n)]
+    investor_note = None
+    if (investors or "many_shareholders" in signals) and t in (None, "unknown", "owner_held") and not c.get("research_ownership"):
+        t = "investor_backed"
+        investor_note = (f"{len(c.get('shareholder_names') or [])} shareholders" if "many_shareholders" in signals else "")
+        if investors:
+            investor_note = ((investor_note + "; ") if investor_note else "") + f"investor: {investors[0]}"
+    region = c.get("trading_region") or c.get("region")
 
     # exclusions first; the universe before anything else, so a company outside
     # it is always reported (and stored) as outside it
@@ -212,8 +241,16 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
                 exclusion = f"Matches excluded keyword “{kw}”"
                 break
     out_regions = ex.get("regions") or []
-    if not exclusion and c.get("region") and c["region"] in out_regions:
-        exclusion = f"Region excluded: {c['region']}"
+    if not exclusion and region and region in out_regions:
+        exclusion = f"Region excluded: {region}" + (" (where it trades)" if c.get("trading_region") else "")
+    if not exclusion and ex.get("recently_sold", True) and "recently_sold" in signals and not c.get("research_ownership") == "owner_held":
+        exclusion = "Recently sold: a company became the owner as the previous owners left"
+    if not exclusion and ex.get("possible_buyer") and "possible_buyer" in signals:
+        exclusion = "Possible buyer: has taken over other companies recently"
+    if not exclusion and t and t in ex.get("ownership", []) and t != c.get("ownership_type"):
+        from .ownership import TYPE_LABELS
+
+        exclusion = f"Ownership: {TYPE_LABELS.get(t, t).lower()} (research)"
 
     s = cr["staff"]
     if c.get("employees") is None:
@@ -251,8 +288,12 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
             f"{rng} ({basis}); ideal {_money(r['ideal_min'])}–{_money(r['ideal_max'])}")
 
     o = cr["owner_age"]
-    if not c.get("oldest_birth_year"):
-        add("owner_age", "Owner age", o["weight"], 0, STATUS_UNKNOWN, "No individual owner with a birth date on file")
+    if t == "investor_backed" or (t and t not in ("owner_held", "unknown", "trust")):
+        add("owner_age", "Owner age", o["weight"], 0, STATUS_MISS,
+            "Not owner-run, so the owners' ages don't point to a succession sale")
+    elif not c.get("oldest_birth_year"):
+        add("owner_age", "Owner age", o["weight"], 0, STATUS_UNKNOWN, "No individual owner with a birth date on file",
+            unknown_share=owner_unknown)
     else:
         age = today.year - c["oldest_birth_year"]
         if age >= o["ideal"]:
@@ -265,15 +306,15 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
             f"Oldest owner about {age}; succession more likely from {o['ideal']}")
 
     ow = cr["ownership"]
-    t = c.get("ownership_type")
+    src = " (research)" if c.get("research_ownership") else f" ({investor_note})" if investor_note else ""
     if not t or t == "unknown":
-        add("ownership", "Ownership", ow["weight"], 0, STATUS_UNKNOWN, "Ownership not yet traced")
+        add("ownership", "Ownership", ow["weight"], 0, STATUS_UNKNOWN, "Ownership not yet traced", unknown_share=owner_unknown)
     elif t in ow["good"]:
         add("ownership", "Ownership", ow["weight"], 1, STATUS_GOOD, "Owner-held" + (" through a holding company" if "via_holdco" in (c.get("ownership_flags") or []) else ""))
     elif t in ow.get("neutral", []):
-        add("ownership", "Ownership", ow["weight"], 0.5, STATUS_PART, t.replace("_", " ").capitalize())
+        add("ownership", "Ownership", ow["weight"], 0.5, STATUS_PART, t.replace("_", " ").capitalize() + src)
     else:
-        add("ownership", "Ownership", ow["weight"], 0, STATUS_MISS, t.replace("_", " ").capitalize())
+        add("ownership", "Ownership", ow["weight"], 0, STATUS_MISS, t.replace("_", " ").capitalize() + src)
 
     g = cr["net_asset_growth"]
     if c.get("net_assets") is None or c.get("net_assets_prev") is None:
@@ -340,6 +381,10 @@ select c.company_number, c.name, c.status, c.review_tier, c.incorporation_date, 
        e.revenue_low, e.revenue_high, e.basis as revenue_basis,
        o.ownership_type, o.flags as ownership_flags, o.oldest_birth_year,
        concat_ws(' ', rt.txt, en.summary, en.business_type) as research_text, en.field_service,
+       en.ownership as research_ownership, en.trading_region,
+       ao_signals(c.company_number) as signals,
+       (select array_agg(sh.name order by sh.name) from shareholder sh where sh.company_number = c.company_number) as shareholder_names,
+       fm.margin as filed_margin, fm.period_end as filed_margin_period,
        (select jsonb_object_agg(m.criterion_key, m.value) from manual_score m
          where m.company_number = c.company_number and m.user_id = 1) as manual
 from company c
@@ -348,6 +393,11 @@ left join estimate e on e.company_number = c.company_number
 left join company_ownership o on o.company_number = c.company_number
 left join research_text rt on rt.company_number = c.company_number
 left join enrichment en on en.company_number = c.company_number
+left join lateral (
+    select round(fp.operating_profit / fp.turnover * 100, 1) as margin, fp.period_end from financial_period fp
+    where fp.company_number = c.company_number and not fp.period_inferred and fp.turnover > 0
+      and fp.operating_profit is not null
+    order by fp.period_end desc limit 1) fm on true
 {where}
 """
 
@@ -383,7 +433,7 @@ def refresh_latest(conn, company_numbers: list[str] | None = None, from_table: s
     )
 
 
-_FLOATS = ("net_assets", "net_assets_prev", "revenue_low", "revenue_high", "operating_profit", "cash")
+_FLOATS = ("net_assets", "net_assets_prev", "revenue_low", "revenue_high", "operating_profit", "cash", "filed_margin")
 
 
 def _fact(r) -> dict:
@@ -449,7 +499,7 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
     parent_of = parents_in_universe(conn, criteria, company_number)
     # What the scores depend on besides each company's own facts: the
     # criteria, the valuation assumptions and the year (ages, years trading).
-    crit_hash = hashlib.md5(json.dumps([criteria, va, today.year], sort_keys=True, default=str).encode()).hexdigest()
+    crit_hash = hashlib.md5(json.dumps([criteria, va, today.year, SCORING_VERSION], sort_keys=True, default=str).encode()).hexdigest()
 
     def rows_for(facts, store_all=False):
         for f in facts:
