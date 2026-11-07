@@ -402,7 +402,7 @@ select c.company_number, c.name, c.status, c.review_tier, c.incorporation_date, 
        o.ownership_type, o.flags as ownership_flags, o.oldest_birth_year,
        concat_ws(' ', rt.txt, en.summary, en.business_type) as research_text, en.field_service,
        en.ownership as research_ownership, en.trading_region,
-       ao_signals(c.company_number) as signals,
+       {signals} as signals,
        (select array_agg(sh.name order by sh.name) from shareholder sh where sh.company_number = c.company_number) as shareholder_names,
        fm.margin as filed_margin, fm.period_end as filed_margin_period,
        (select jsonb_object_agg(m.criterion_key, m.value) from manual_score m
@@ -413,6 +413,7 @@ left join estimate e on e.company_number = c.company_number
 left join company_ownership o on o.company_number = c.company_number
 left join research_text rt on rt.company_number = c.company_number
 left join enrichment en on en.company_number = c.company_number
+left join company_signal sg on sg.company_number = c.company_number
 left join lateral (
     select round(fp.operating_profit / fp.turnover * 100, 1) as margin, fp.period_end from financial_period fp
     where fp.company_number = c.company_number and not fp.period_inferred and fp.turnover > 0
@@ -468,7 +469,10 @@ def load_facts(conn, company_number: str | None = None, with_hash: bool = False)
     where = "where c.company_number = %s" if company_number else ""
     rwhere = "where company_number = %s" if company_number else ""
     params = (company_number, company_number) if company_number else ()
-    sql = FACTS_SQL.format(where=where, rwhere=rwhere)
+    # One company: work its signals out live (exact after a fetch or research
+    # save). Many: read the stored ones, refreshed at the start of each job.
+    sql = FACTS_SQL.format(where=where, rwhere=rwhere,
+                           signals="ao_signals(c.company_number)" if company_number else "coalesce(sg.signals, '{}')")
     if with_hash:
         sql = f"select f.*, md5(f::text) as facts_hash from ({sql}) f"
     return [_fact(r) for r in conn.execute(sql, params).fetchall()]
@@ -596,8 +600,9 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
                           or f.company_number = any(%(u_parents)s) or s.reasons @> '[{"key": "parent"}]')"""
         wparams.setdefault("u_parents", list(parent_of))
         total = None
+    facts_sql = FACTS_SQL.format(where=where_sql, rwhere="", signals="coalesce(sg.signals, '{}')")
     sql = f"""select f.*, md5(f::text) as facts_hash
-              from ({FACTS_SQL.format(where=where_sql, rwhere="")}) f
+              from ({facts_sql}) f
               left join score s on s.buy_box_id = %(bb)s and s.company_number = f.company_number
               where {changed_sql}"""
     if total is None:

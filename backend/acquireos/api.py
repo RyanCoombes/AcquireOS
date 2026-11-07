@@ -1170,11 +1170,14 @@ def compute_sic_counts(c) -> list[dict]:
            group by code""")]
 
 
-def refresh_stats(c):
-    """Recompute stored summaries after a data load (called by the jobs)."""
-    c.execute("select ao_refresh_company_signals()")  # recently sold, possible buyers
-    todo = [("sic_counts", compute_sic_counts), ("coverage", _coverage_compute), ("meta_lists", compute_meta_lists),
-            ("dashboard:all", lambda cc: compute_dashboard_stats(cc, "all"))]
+def refresh_stats(c, data: bool = True):
+    """Recompute stored summaries after a data load (called by the jobs).
+    data=False after scoring only: skips what depends on the data, not scores."""
+    if data:
+        c.execute("select ao_refresh_company_signals()")  # recently sold, possible buyers
+    todo = [("sic_counts", compute_sic_counts), ("dashboard:all", lambda cc: compute_dashboard_stats(cc, "all"))]
+    if data:
+        todo += [("coverage", _coverage_compute), ("meta_lists", compute_meta_lists)]
     for b in c.execute("select id from buy_box where user_id = %s", (UID,)).fetchall():
         todo.append((f"dashboard:{b['id']}", lambda cc, i=b["id"]: compute_dashboard_stats(cc, str(i))))
     for key, fn in todo:
@@ -1782,17 +1785,31 @@ def score_pending(c) -> list[str]:
         return []
     job = jobs.Job("scoring", [f"Scoring “{b['name']}”" for b in pending] + ["Ownership links", "Summaries"])
     try:
+        # Signals (recently sold, possible buyer) once, before scoring uses them.
+        c.execute("select ao_refresh_company_signals()")
+        # Which companies were in a buy box before, to see if any are new.
+        c.execute("drop table if exists scope_before")
+        c.execute("create temp table scope_before as select company_number from company_best")
+        c.execute("create index on scope_before (company_number)")
         for b in pending:
             job.stage(f"Scoring “{b['name']}”")
             scoring.rescore(c, b, progress=lambda msg, frac=None: job.progress(frac, msg))
             c.commit()
-        job.stage("Ownership links")
-        from .ownership import rebuild_links
+        new_in_scope = c.execute(
+            """select count(*) as n from company_best cb
+               where not exists (select 1 from scope_before s where s.company_number = cb.company_number)""").fetchone()["n"]
+        if new_in_scope:
+            # Shared-owner and shared-address links are built for companies in a
+            # buy box, so new ones need them; otherwise nothing has changed.
+            job.stage("Ownership links")
+            from .ownership import rebuild_links
 
-        rebuild_links(c)
-        c.commit()
+            rebuild_links(c)
+            c.commit()
+        else:
+            job.skip("Ownership links", "not needed: no new companies in your buy boxes")
         job.stage("Summaries")
-        refresh_stats(c)
+        refresh_stats(c, data=False)
         c.commit()
         job.finish({"buy_boxes": [b["name"] for b in pending]})
     except Exception as e:

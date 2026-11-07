@@ -810,3 +810,17 @@ def test_targets_count_drops_when_ruled_out(loaded):
         cl.put(f"/api/companies/{num}/state", json={"status": "rejected"})
         after = cl.get("/api/meta").json()["counts"]
         assert after["in_scope"] == before - 1 and after["in_boxes"] >= after["in_scope"]
+
+
+def test_stored_and_live_signals_agree(loaded):
+    from acquireos import enrich
+
+    loaded.commit()
+    with db.conn() as c:
+        enrich.save_enrichment(c, "01000001", source_url="https://example.com/news", ownership="group_owned",
+                               ownership_note="Bought by a group")
+        c.execute("select ao_refresh_company_signals()")
+        bad = c.execute("""select c.company_number from company c left join company_signal sg using (company_number)
+                           where coalesce(sg.signals, '{}') is distinct from ao_signals(c.company_number)""").fetchall()
+        assert bad == []
+        assert "recently_sold" in c.execute("select ao_signals('01000001') as s").fetchone()["s"]

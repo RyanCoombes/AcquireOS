@@ -389,7 +389,11 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True, reread_old: bool =
             raise
         log(f"Accounts failed: {e}")
         out["accounts"] = {"error": str(e)}
-    part("Scoring", lambda: scoring.rescore_all(conn, progress=_loader_progress))
+    def score():
+        conn.execute("select ao_refresh_company_signals()")  # signals the scores use
+        return scoring.rescore_all(conn, progress=_loader_progress)
+
+    part("Scoring", score)
     part("Ownership links", lambda: rebuild_links(conn, progress=_loader_progress) or "done")
 
     def locate():
