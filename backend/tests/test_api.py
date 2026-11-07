@@ -682,3 +682,14 @@ def test_missing_turnover_years_estimated_from_own_revenue_per_head(loaded):
         e = c.execute("select * from estimate where company_number = '01000006'").fetchone()
         assert e["basis"] == "estimated" and "own revenue per head" in e["method"]
         assert round(float(e["revenue_low"])) == round(36 * 3200000 / 30 * 0.9)
+
+
+def test_confirmation_statement_changes_are_spelled_out():
+    from acquireos import chapi
+
+    a = {("ALEX SMITH", "ORDINARY"): 60, ("SAM JONES", "ORDINARY"): 25, ("PAT LEE", "ORDINARY"): 15}
+    b = {("ALEX SMITH", "ORDINARY"): 50, ("PAT LEE", "ORDINARY"): 15, ("DBW INVESTMENTS (10) LIMITED", "A"): 35}
+    t = chapi._shareholder_diff(a, b)
+    assert "Alex Smith 60% → 50%" in t and "new: Dbw Investments (10) Limited 35%" in t and "left: Sam Jones (was 25%)" in t
+    assert "Pat Lee" not in t  # unchanged
+    assert chapi._shareholder_diff(a, a) is None

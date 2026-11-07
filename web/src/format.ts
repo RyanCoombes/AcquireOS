@@ -107,7 +107,12 @@ const FILING_TYPES: Record<string, string> = {
 };
 export function filingLabel(type: string | null, desc: string | null): string {
   const base = FILING_TYPES[(type ?? "").toUpperCase()];
-  const d = (desc ?? "").replace(/-/g, " ");
+  const [raw, detail] = (desc ?? "").split("::");
+  const d = raw.replace(/-/g, " ");
+  if ((type ?? "").toUpperCase() === "CS01") {
+    if (/no updates/.test(d)) return "Confirmation statement: no changes";
+    if (/with updates/.test(d)) return `Confirmation statement with changes${detail ? `: ${detail}` : ""}`;
+  }
   if ((type ?? "").toUpperCase() === "AA") {
     const kind = d.match(/accounts type (\w+)/)?.[1];
     return kind ? `Accounts (${kind.replace("total exemption full", "small")})` : "Accounts";

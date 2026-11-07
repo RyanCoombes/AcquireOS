@@ -347,7 +347,7 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
     keep = {k: profile.get(k) for k in ("has_charges", "has_insolvency_history", "has_been_liquidated", "can_file",
                                          "date_of_cessation", "jurisdiction", "type", "subtype", "accounts",
                                          "confirmation_statement", "registered_office_is_in_dispute",
-                                         "undeliverable_registered_office_address") if k in profile}
+                                         "undeliverable_registered_office_address", "sic_codes") if k in profile}
     conn.execute(
         """insert into ch_fetch (company_number, fetched_at, checked_at, error, profile, insolvency, psc_statements,
                                  shareholders_from, etag, psc)
@@ -407,13 +407,50 @@ def _snapshot(conn, num: str) -> dict | None:
     }
 
 
+def _shareholder_diff(a: dict, b: dict) -> str | None:
+    """Who gained, lost, joined or left, in % of all shares, e.g.
+    "Alex Smith 60% → 50%; new: DBW Investments 10%; left: Sam Jones (was 25%)"."""
+    def pcts(d):
+        total = sum(d.values()) or 1
+        out: dict[str, float] = {}
+        for (name, _cls), v in d.items():
+            out[name] = out.get(name, 0) + 100 * v / total
+        return out
+    pa, pb = pcts(a), pcts(b)
+    bits = []
+    for name in sorted(set(pa) | set(pb), key=lambda n: -max(pa.get(n, 0), pb.get(n, 0))):
+        x, y = pa.get(name, 0), pb.get(name, 0)
+        nice = name.title()
+        if not x:
+            bits.append(f"new: {nice} {round(y)}%")
+        elif not y:
+            bits.append(f"left: {nice} (was {round(x)}%)")
+        elif abs(x - y) >= 0.5:
+            bits.append(f"{nice} {round(x)}% → {round(y)}%")
+    return "; ".join(bits[:6]) + (f"; and {len(bits) - 6} more" if len(bits) > 6 else "") if bits else None
+
+
 def _record_changes(conn, num: str, a: dict, b: dict, profile: dict) -> int:
     """Store what changed between two snapshots as company_change rows
     (source 'api'), so they show on the Changes page and as alerts."""
     rows: list[tuple] = []
+    # What a confirmation statement changed: shareholders (from the statement
+    # itself) and industry codes (from the profile).
+    sh_text = _shareholder_diff(a["shareholders"], b["shareholders"]) if a["shareholders"] and b["shareholders"] else None
+    sic_a, sic_b = (a["profile"] or {}).get("sic_codes"), (profile or {}).get("sic_codes")
+    sic_changed = bool(sic_a and sic_b and sorted(sic_a) != sorted(sic_b))
     for tid, f in b["filings"].items():
         if tid not in a["filings"] and (f["category"] or "") not in _COVERED:
-            rows.append(("filing", f["type"], str(f["filed_on"] or ""), f["description"]))
+            desc = f["description"] or ""
+            if (f["type"] or "").upper() == "CS01" and "with-updates" in desc:
+                parts = [f"shareholders: {sh_text}" if sh_text else None,
+                         "industry codes changed" if sic_changed else None]
+                parts = [x for x in parts if x]
+                desc += "::" + ("; ".join(parts) if parts else
+                                "no change to shareholders or industry codes (other details, e.g. share capital or contact details)")
+            rows.append(("filing", f["type"], str(f["filed_on"] or ""), desc))
+    if sic_changed:
+        rows.append(("sic", "sic_codes", ", ".join(sic_a), ", ".join(sic_b)))
     for key, o in b["officers"].items():
         was = a["officers"].get(key)
         if not was and not o["resigned_on"]:
@@ -427,11 +464,8 @@ def _record_changes(conn, num: str, a: dict, b: dict, profile: dict) -> int:
             rows.append(("charge", "New charge", None, holders))
         elif was["status"] != c["status"] and c["status"] in ("fully-satisfied", "part-satisfied"):
             rows.append(("charge", "Repaid" if c["status"] == "fully-satisfied" else "Part repaid", was["status"], holders))
-    if a["shareholders"] and b["shareholders"] and a["shareholders"] != b["shareholders"]:
-        total = sum(b["shareholders"].values()) or 1
-        top = sorted(b["shareholders"].items(), key=lambda x: -x[1])[:4]
-        rows.append(("shareholders", "Shareholders", None,
-                     ", ".join(f"{k[0].title()} {round(100 * v / total)}%" for k, v in top)))
+    if sh_text:
+        rows.append(("shareholders", "Shareholders", None, sh_text))
     if a.get("psc"):  # owners register changes (skipped the first time owners are fetched)
         for key, p in b.get("psc", {}).items():
             was = a["psc"].get(key)
