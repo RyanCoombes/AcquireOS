@@ -47,7 +47,13 @@ export default function Company() {
     if (!data?.ch?.enabled || checkedFor.current === num) return;
     checkedFor.current = num;
     const last = data.ch.fetched?.checked_at ?? data.ch.fetched?.fetched_at;
-    if (last && Date.now() - new Date(last).getTime() < 864e5) return;
+    // Check now if Companies House shows newer accounts than we have figures
+    // for (and they aren't already known to be PDF only); otherwise once a day.
+    const latest = [...data.financials].reverse().find((f) => !f.period_inferred)?.period_end;
+    const lad = data.company.last_accounts_date;
+    const pdf = ((data.ch.fetched as any)?.accounts_pdf ?? []) as string[];
+    const gap = !!lad && !pdf.includes(lad) && (!latest || new Date(lad).getTime() - new Date(latest).getTime() > 45 * 864e5);
+    if (!gap && last && Date.now() - new Date(last).getTime() < 864e5) return;
     setChCheck("Checking Companies House…");
     api.chCheck(num)
       .then((r) => {
@@ -164,6 +170,7 @@ export default function Company() {
 
           <section id="financials">
             <Head icon="money" tone="green" title="Financials" aside={(() => { const n = fin.filter((f) => !f.period_inferred).length; return `${n} ${n === 1 ? "year" : "years"} filed`; })()} />
+            <AccountsGap data={data} />
             {fin.length ? (
               <>
                 {data.fin_summary && <FinancialOverview s={data.fin_summary} />}
@@ -684,4 +691,34 @@ function CloseOut({ status, setState }: { status: string; setState: (p: Record<s
       )}
     </div>
   );
+}
+
+
+/** Accounts Companies House has that we have no figures for: being fetched,
+    or filed only as PDF (Claude can read those and save the figures). */
+function AccountsGap({ data }: { data: CompanyDetail }) {
+  const c = data.company;
+  const pdf = (data.ch?.fetched as any)?.accounts_pdf as string[] | undefined;
+  const latest = [...data.financials].reverse().find((f) => !f.period_inferred)?.period_end;
+  const behind = c.last_accounts_date && (!latest || new Date(c.last_accounts_date).getTime() - new Date(latest).getTime() > 45 * 864e5);
+  const url = `https://find-and-update.company-information.service.gov.uk/company/${c.company_number}/filing-history`;
+  if (pdf?.length) {
+    return (
+      <div className="callout amber" style={{ marginBottom: 10 }}>
+        <b>Accounts to {pdf.map((d) => date(d)).join(", ")} are filed only as PDF</b>, so their figures aren't loaded automatically.{" "}
+        Ask Claude: <i>“Read the accounts PDFs for {c.name} in AcquireOS and save the figures.”</i>{" "}
+        <a href={url} target="_blank" rel="noreferrer">Filings ↗</a>
+      </div>
+    );
+  }
+  if (behind) {
+    return (
+      <div className="callout" style={{ marginBottom: 10 }}>
+        Companies House has accounts to <b>{date(c.last_accounts_date)}</b>{latest ? `, but figures here stop at ${date(latest)}` : ""}.{" "}
+        {data.ch?.enabled ? "They're read from Companies House when the company is next checked (opening this page does it)." : "Add your Companies House API key to read them."}{" "}
+        <a href={url} target="_blank" rel="noreferrer">Filings ↗</a>
+      </div>
+    );
+  }
+  return null;
 }

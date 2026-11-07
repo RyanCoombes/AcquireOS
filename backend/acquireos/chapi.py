@@ -131,9 +131,26 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _document(meta_url: str, limit: int = 4_000_000) -> bytes | None:
-    """A filing's PDF from the Document API. The content URL redirects to a
-    signed storage link, which must be fetched without our credentials."""
+def _doc_formats(meta_url: str) -> list[str]:
+    """The formats Companies House holds a filing in, e.g. ["application/pdf",
+    "application/xhtml+xml"] (the second means machine-readable accounts)."""
+    if not enabled():
+        raise NoKey("No Companies House API key set (CH_API_KEY)")
+    auth = base64.b64encode(f"{config.CH_API_KEY}:".encode()).decode()
+    url = meta_url if meta_url.startswith("http") else DOC_BASE + meta_url
+    url = url.rstrip("/").removesuffix("/content")
+    _wait()
+    req = urllib.request.Request(url, headers={"Authorization": f"Basic {auth}", "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return list((json.loads(r.read()).get("resources") or {}).keys())
+    except Exception:
+        return []
+
+
+def _document(meta_url: str, limit: int = 4_000_000, accept: str = "application/pdf") -> bytes | None:
+    """A filing's document from the Document API (PDF by default). The content
+    URL redirects to a signed storage link, fetched without our credentials."""
     if not enabled():
         raise NoKey("No Companies House API key set (CH_API_KEY)")
     auth = base64.b64encode(f"{config.CH_API_KEY}:".encode()).decode()
@@ -141,7 +158,7 @@ def _document(meta_url: str, limit: int = 4_000_000) -> bytes | None:
     if not url.rstrip("/").endswith("/content"):
         url = url.rstrip("/") + "/content"
     _wait()
-    req = urllib.request.Request(url, headers={"Authorization": f"Basic {auth}", "Accept": "application/pdf"})
+    req = urllib.request.Request(url, headers={"Authorization": f"Basic {auth}", "Accept": accept})
     opener = urllib.request.build_opener(_NoRedirect)
     try:
         with opener.open(req, timeout=30) as r:
@@ -283,6 +300,45 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
         if profile.get("has_insolvency_history") or profile.get("has_been_liquidated"):
             insolvency = (_get(f"/company/{num}/insolvency") or {}).get("cases") or []
 
+    accounts_pdf: list = []
+    accounts_added = 0
+
+    def get_accounts():
+        """Accounts years missing from the bulk data (filed as PDF, or in a month
+        that did not load): read them from the Document API when Companies
+        House holds them as data; otherwise note they are PDF only."""
+        nonlocal accounts_added
+        from .importers.accounts import parse, _upsert
+
+        have = {r["period_end"] for r in conn.execute(
+            "select period_end from financial_period where company_number = %s and not period_inferred", (num,))}
+        aa = [f for f in filings_raw if (f.get("type") or "").upper() == "AA"
+              and (f.get("links") or {}).get("document_metadata")][:5]
+        for f in aa:
+            mu = _d((f.get("description_values") or {}).get("made_up_date"))
+            if not mu or any(abs((mu - h).days) <= 45 for h in have):
+                continue
+            link = f["links"]["document_metadata"]
+            if "application/xhtml+xml" in _doc_formats(link):
+                raw = _document(link, limit=20_000_000, accept="application/xhtml+xml")
+                data = parse(raw) if raw else {}
+                for pe, vals in data.items():
+                    _upsert(conn, num, pe, vals, f"api:{f.get('transaction_id')}", balance_date=mu)
+                if data:
+                    accounts_added += 1
+                    have.add(mu)
+                    continue
+            accounts_pdf.append(str(mu))
+        if accounts_added:
+            from .importers.companies import refresh_estimates
+            from .scoring import refresh_latest
+
+            conn.execute("create temp table if not exists api_touched (company_number text)")
+            conn.execute("delete from api_touched")
+            conn.execute("insert into api_touched values (%s)", (num,))
+            refresh_estimates(conn, from_table="api_touched")
+            refresh_latest(conn, [num])
+
     psc: list = []
 
     def get_psc():
@@ -333,6 +389,7 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
 
     before = _snapshot(conn, num)
     for name, fn in (("profile", get_profile), ("charges", get_charges), ("filings", get_filings),
+                     ("accounts", get_accounts),
                      ("officers", get_officers), ("insolvency", get_insolvency), ("owners", get_psc),
                      ("owner statements", get_statements),
                      ("shareholders", get_shareholders)):
@@ -350,16 +407,24 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
                                          "undeliverable_registered_office_address", "sic_codes") if k in profile}
     conn.execute(
         """insert into ch_fetch (company_number, fetched_at, checked_at, error, profile, insolvency, psc_statements,
-                                 shareholders_from, etag, psc)
-           values (%s, now(), now(), %s, %s, %s, %s, %s, %s, %s)
+                                 shareholders_from, etag, psc, accounts_pdf)
+           values (%s, now(), now(), %s, %s, %s, %s, %s, %s, %s, %s)
            on conflict (company_number) do update set fetched_at = now(), checked_at = now(), error = excluded.error,
              profile = excluded.profile, insolvency = excluded.insolvency, psc_statements = excluded.psc_statements,
              shareholders_from = coalesce(excluded.shareholders_from, ch_fetch.shareholders_from),
              etag = coalesce(excluded.etag, ch_fetch.etag),
-             psc = case when excluded.psc is null then ch_fetch.psc else excluded.psc end""",
+             psc = case when excluded.psc is null then ch_fetch.psc else excluded.psc end,
+             accounts_pdf = excluded.accounts_pdf""",
         (num, "; ".join(errors) or None, json.dumps(keep), json.dumps(insolvency), json.dumps(statements), shareholders_from,
-         profile.get("etag"), None if any(e.startswith("owners:") for e in errors) else json.dumps(psc)))
-    return {**counts, "changes": changes, "error": "; ".join(errors) or None}
+         profile.get("etag"), None if any(e.startswith("owners:") for e in errors) else json.dumps(psc),
+         json.dumps(accounts_pdf)))
+    if accounts_added and before:
+        conn.execute("""insert into company_change (company_number, kind, field, new_value, source)
+                        values (%s, 'accounts', 'period_end', %s, 'api')""",
+                     (num, str(max(r["period_end"] for r in conn.execute(
+                         "select period_end from financial_period where company_number = %s and not period_inferred",
+                         (num,)).fetchall()))))
+    return {**counts, "accounts_added": accounts_added, "changes": changes, "error": "; ".join(errors) or None}
 
 
 def check(conn, company_number: str) -> dict:
@@ -375,7 +440,15 @@ def check(conn, company_number: str) -> dict:
     ids = [it["transaction_id"] for it in fh.get("items") or [] if it.get("transaction_id")]
     known = {r["transaction_id"] for r in conn.execute(
         "select transaction_id from filing where company_number = %s and transaction_id = any(%s)", (num, ids))}
-    if any(i not in known for i in ids) or (profile.get("etag") or prev["etag"]) != prev["etag"]:
+    # Accounts Companies House has that we don't (filed as PDF, or in a bulk
+    # month that did not load), and not already known to be PDF only.
+    gap = conn.execute(
+        """select 1 from company c left join ch_fetch f on f.company_number = c.company_number
+           where c.company_number = %s and c.last_accounts_date is not null
+             and not exists (select 1 from financial_period fp where fp.company_number = c.company_number
+                             and not fp.period_inferred and abs(fp.period_end - c.last_accounts_date) <= 45)
+             and not coalesce(f.accounts_pdf, '[]'::jsonb) ? c.last_accounts_date::text""", (num,)).fetchone()
+    if gap or any(i not in known for i in ids) or (profile.get("etag") or prev["etag"]) != prev["etag"]:
         r = fetch(conn, num)
         return {"changed": True, "full": True, **r}
     conn.execute("update ch_fetch set checked_at = now() where company_number = %s", (num,))
@@ -571,3 +644,35 @@ def signals(conn, num: str, charges=None, filings=None, shareholders=None) -> li
     order = {"strong": 0, "possible": 1}
     out.sort(key=lambda s: (order[s["strength"]], str(s["date"] or "")), reverse=False)
     return out
+
+
+def accounts_pdf_text(conn, company_number: str, made_up: str | None = None) -> dict:
+    """The text of a set of accounts filed as PDF (for Claude to read), the
+    newest by default. Scanned paper filings have no text: says so."""
+    num = company_number.strip().upper()
+    rows = conn.execute(
+        """select transaction_id, filed_on, detail from filing where company_number = %s and type = 'AA'
+           order by filed_on desc""", (num,)).fetchall()
+    if not rows:
+        return {"error": "No accounts filings on file: fetch the company from Companies House first"}
+    pick = next((r for r in rows if not made_up or (r["detail"] or {}).get("made_up_date") == made_up), None)
+    if not pick or not (pick["detail"] or {}).get("document"):
+        return {"error": f"No accounts made up to {made_up} with a document"}
+    pdf = _document(pick["detail"]["document"], limit=25_000_000)
+    if not pdf:
+        return {"error": "Companies House did not return the document"}
+    from pypdf import PdfReader
+    import io
+
+    try:
+        reader = PdfReader(io.BytesIO(pdf))
+        text = "\n".join((pg.extract_text() or "") for pg in reader.pages[:60])
+        pages = len(reader.pages)
+    except Exception as e:
+        return {"error": f"Could not read the PDF: {e}"}
+    link = f"https://find-and-update.company-information.service.gov.uk/company/{num}/filing-history"
+    made = (pick["detail"] or {}).get("made_up_date")
+    if len(text.strip()) < 200:
+        return {"made_up_to": made, "pages": pages, "text": None, "scanned": True, "filing_history": link,
+                "note": "This is a scanned paper filing with no text layer. Open it from the filing history and read the figures from the images."}
+    return {"made_up_to": made, "pages": pages, "scanned": False, "text": text[:80_000], "filing_history": link}

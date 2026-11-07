@@ -118,6 +118,66 @@ def start_website_check(scope: str = "targets", limit: int = 200) -> str:
 
 
 @server.tool(description=(
+    "Read a set of accounts that Companies House holds only as a PDF (the figures are not in the bulk data). "
+    "Returns the PDF's text (newest accounts, or made_up_date YYYY-MM-DD). Read the balance sheet, profit and loss "
+    "and notes, then save the figures with save_financials. Scanned paper filings have no text: say so."))
+def read_accounts_pdf(company_number: str, made_up_date: str | None = None) -> str:
+    from . import chapi
+
+    with db.conn() as c:
+        return _j(chapi.accounts_pdf_text(c, company_number, made_up_date))
+
+
+@server.tool(description=(
+    "Save figures you read from a company's filed accounts (e.g. a PDF via read_accounts_pdf), for one year end "
+    "(period_end YYYY-MM-DD). Give only figures printed in the accounts, in pounds; never estimates. source_url is "
+    "the filing (its Companies House filing-history page). The company is rescored. Figures are marked as read "
+    "from a PDF. Fields: turnover, gross_profit, operating_profit, profit_loss (after tax), employees (average), "
+    "net_assets, cash, debtors, fixed_assets, current_assets, net_current_assets, total_assets_less_cl, staff_costs, "
+    "director_pay, dividends."))
+def save_financials(company_number: str, period_end: str, source_url: str, turnover: float | None = None,
+                    gross_profit: float | None = None, operating_profit: float | None = None,
+                    profit_loss: float | None = None, employees: int | None = None, net_assets: float | None = None,
+                    cash: float | None = None, debtors: float | None = None, fixed_assets: float | None = None,
+                    current_assets: float | None = None, net_current_assets: float | None = None,
+                    total_assets_less_cl: float | None = None, staff_costs: float | None = None,
+                    director_pay: float | None = None, dividends: float | None = None) -> str:
+    from datetime import date as _date
+
+    from . import scoring
+    from .importers.accounts import _upsert
+    from .importers.companies import refresh_estimates
+
+    vals = {k: v for k, v in dict(turnover=turnover, gross_profit=gross_profit, operating_profit=operating_profit,
+                                    profit_loss=profit_loss, employees=employees, net_assets=net_assets, cash=cash,
+                                    debtors=debtors, fixed_assets=fixed_assets, current_assets=current_assets,
+                                    net_current_assets=net_current_assets, total_assets_less_cl=total_assets_less_cl,
+                                    staff_costs=staff_costs, director_pay=director_pay, dividends=dividends).items()
+            if v is not None}
+    if not vals:
+        raise ValueError("Give at least one figure")
+    if not source_url:
+        raise ValueError("source_url is required")
+    num = company_number.strip().upper()
+    pe = _date.fromisoformat(period_end)
+    with db.conn() as c:
+        if not c.execute("select 1 from company where company_number = %s", (num,)).fetchone():
+            raise ValueError(f"Company {num} is not in AcquireOS")
+        _upsert(c, num, pe, vals, "pdf:claude", balance_date=pe)
+        c.execute("""insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)
+                     values (%s, 'fact', %s, %s, 'Accounts PDF', 'claude (mcp)', 'high')""",
+                  (num, f"Figures read from the accounts to {period_end}: " +
+                   ", ".join(f"{k.replace('_', ' ')} {v:,.0f}" for k, v in vals.items()), source_url))
+        c.execute("create temp table if not exists api_touched (company_number text)")
+        c.execute("delete from api_touched")
+        c.execute("insert into api_touched values (%s)", (num,))
+        refresh_estimates(c, from_table="api_touched")
+        scoring.refresh_latest(c, [num])
+        scoring.rescore(c, company_number=num)
+    return _j({"saved": sorted(vals), "period_end": period_end})
+
+
+@server.tool(description=(
     "A briefing for today: unread changes to pipeline companies, next actions due in the next 7 days, "
     "pipeline companies recently sold or buying others, and how far the Companies House sync has got."))
 def daily_briefing() -> str:

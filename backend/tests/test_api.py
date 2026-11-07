@@ -733,3 +733,51 @@ def test_new_mcp_tools(loaded):
         assert _j.loads(m.mark_changes_read(all=True))["ok"]
         b = _j.loads(m.daily_briefing())
         assert {"unread_pipeline_changes", "next_actions_due", "pipeline_sold_or_buying", "sync"} <= set(b)
+
+
+def test_missing_accounts_years_read_through_the_api(loaded, monkeypatch):
+    from acquireos import chapi
+
+    from .conftest import FIX
+    loaded.commit()
+    monkeypatch.setattr(chapi.config, "CH_API_KEY", "x")
+    doc = (FIX / "Prod224_0001_01000001_20270331.html").read_bytes()
+
+    def fake(path):
+        if "/filing-history" in path:
+            return {"items": [
+                {"transaction_id": "aa27", "date": "2027-09-01", "type": "AA", "category": "accounts",
+                 "description_values": {"made_up_date": "2027-03-31"}, "links": {"document_metadata": "/document/x27"}},
+                {"transaction_id": "aa26", "date": "2026-09-01", "type": "AA", "category": "accounts",
+                 "description_values": {"made_up_date": "2026-03-31"}, "links": {"document_metadata": "/document/x26"}}]}
+        if path == "/company/01000003":
+            return {"etag": "e"}
+        return {"items": []}
+    monkeypatch.setattr(chapi, "_get", fake)
+    monkeypatch.setattr(chapi, "_doc_formats", lambda link: ["application/pdf", "application/xhtml+xml"] if "x27" in link else ["application/pdf"])
+    monkeypatch.setattr(chapi, "_document", lambda link, limit=0, accept="": doc if "x27" in link else None)
+    with db.conn() as c:
+        c.execute("delete from financial_period where company_number = '01000003'")
+        r = chapi.fetch(c, "01000003", people=False)
+        assert r["accounts_added"] == 1
+        assert c.execute("select 1 from financial_period where company_number = '01000003' and period_end = '2027-03-31'").fetchone()
+        f = c.execute("select accounts_pdf from ch_fetch where company_number = '01000003'").fetchone()
+        assert f["accounts_pdf"] == ["2026-03-31"]  # only a PDF for that year
+
+
+def test_save_financials_from_pdf(loaded):
+    import json as _j
+
+    from acquireos import mcp_server as m
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        r = _j.loads(m.save_financials("01000003", "2025-12-31", "https://find-and-update.company-information.service.gov.uk/company/01000003/filing-history",
+                                       turnover=12_500_000, operating_profit=900_000, employees=95, net_assets=2_100_000))
+        assert r["saved"] == ["employees", "net_assets", "operating_profit", "turnover"]
+        with db.conn() as c:
+            fp = c.execute("select source, turnover from financial_period where company_number = '01000003' and period_end = '2025-12-31'").fetchone()
+            assert fp["source"] == "pdf:claude" and float(fp["turnover"]) == 12_500_000
+        d = cl.get("/api/companies/01000003").json()
+        assert d["estimate"]["basis"] == "filed"
