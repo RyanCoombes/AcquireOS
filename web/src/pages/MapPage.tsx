@@ -4,8 +4,7 @@ import { api } from "../api";
 import { ErrorLine, useAsync } from "../components/bits";
 import MapView, { type MapLink, type MapPoint } from "../components/MapView";
 import SicPicker from "../components/SicPicker";
-import MoneyInput from "../components/MoneyInput";
-import { NumField, NumRange, Select } from "../components/Filters";
+import { FilterGroup, MoneyRange, NumField, NumRange, Select } from "../components/Filters";
 import { int, OWNERSHIP } from "../format";
 
 export default function MapPage() {
@@ -30,7 +29,7 @@ export default function MapPage() {
   const m = meta.data;
   const saved = useAsync(() => api.searches(), []);
   const [more, setMore] = useState(false);
-  const MORE = ["wales", "revenue", "sold", "sic", "company_status", "status", "min_years", "accounts_size", "overdue", "charges", "min_value", "max_value", "changed_days", "flag"];
+  const MORE = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "wales", "revenue", "sold", "sic", "company_status", "status", "min_years", "accounts_size", "overdue", "charges", "min_value", "max_value", "changed_days", "flag"];
   const moreActive = MORE.filter((k) => query[k]).length;
   const active = Object.keys(query).length;
   // A saved search from the lists: its filters, on the map (all companies unless it was a targets search).
@@ -100,39 +99,43 @@ export default function MapPage() {
           <span className="faint small">{data.data ? `${int(data.data.located)} of ${int(data.data.total)} on the map` : ""}</span>
         </div>
         {more && (
-          <div className="band-more">
-            <div className="field" style={{ flexBasis: "100%" }}>
-              <label>Industry (SIC)</label>
-              <SicPicker value={(params.get("sic") ?? "").split(",").filter(Boolean)} width="100%" onChange={(v) => set("sic", v.join(","))} />
-            </div>
-            <Select label="Company status" k="company_status" query={query} set={set} options={(m?.status_groups ?? []).map((g) => [g.value, g.label])} />
-            <Select label="My status" k="status" query={query} set={set} options={(m?.statuses ?? []).map((x) => [x.value, x.label])} />
-            <NumField label="Years trading" k="min_years" placeholder="at least" query={query} set={set} />
-            <Select label="Accounts filed" k="accounts_size" query={query} set={set} options={(m?.account_sizes ?? []).map((g) => [g.value, g.label])} />
-            <Select label="Overdue filings" k="overdue" query={query} set={set}
-                    options={[["any", "Accounts or confirmation"], ["accounts", "Accounts overdue"], ["confirmation", "Confirmation statement overdue"]]} />
-            <Select label="Charges (secured loans)" k="charges" query={query} set={set}
-                    options={[["outstanding", "Has outstanding charges"], ["none", "No outstanding charges"]]} />
-            <div className="field">
-              <label>Indicative value</label>
-              <div className="range">
-                <MoneyInput value={query.min_value ? Number(query.min_value) : null} commit="blur" width={120} placeholder="min, e.g. 500k"
-                            aria-label="Indicative value minimum" onChange={(v) => set("min_value", v === null ? null : String(v))} />
-                <span className="faint">to</span>
-                <MoneyInput value={query.max_value ? Number(query.max_value) : null} commit="blur" width={120} placeholder="max, e.g. 3m"
-                            aria-label="Indicative value maximum" onChange={(v) => set("max_value", v === null ? null : String(v))} />
+          <div className="band-more grouped">
+            <FilterGroup title="Money" icon="£" query={query} keys={["min_revenue", "max_revenue", "revenue", "min_profit", "max_profit", "min_net_assets", "min_value", "max_value", "accounts_size"]}>
+              <MoneyRange label="Revenue" lo="min_revenue" hi="max_revenue" query={query} set={set} hint="filed or estimate" />
+              <Select label="Revenue source" k="revenue" query={query} set={set} options={[["filed", "Filed (confirmed in the accounts)"], ["estimated", "Estimate"], ["none", "No revenue figure"]]} />
+              <MoneyRange label="Operating profit" lo="min_profit" hi="max_profit" query={query} set={set} hint="latest filed accounts" />
+              <MoneyRange label="Net assets" lo="min_net_assets" query={query} set={set} />
+              <MoneyRange label="Indicative value" lo="min_value" hi="max_value" query={query} set={set} />
+              <Select label="Accounts filed" k="accounts_size" query={query} set={set} options={(m?.account_sizes ?? []).map((g) => [g.value, g.label])} />
+            </FilterGroup>
+            <FilterGroup title="Owners and sale signals" icon="●" query={query} keys={["sold", "flag"]}>
+              <Select label="Recently sold" k="sold" query={query} set={set}
+                      options={[["hide", "Hide companies sold in the last 3 years"], ["only", "Only companies sold in the last 3 years"]]} />
+              <Select label="Ownership flag" k="flag" query={query} set={set} options={[
+                ["recent_change", "Recent ownership change"], ["via_holdco", "Owned via holdco"], ["foreign_parent", "Foreign parent"],
+                ["investor", "Investor"], ["trust", "Trust"], ["eot", "EOT"], ["mass_address", "Shared address"],
+              ]} />
+            </FilterGroup>
+            <FilterGroup title="Location" icon="⌖" query={query} keys={["wales"]}>
+              <Select label="Presence in Wales" k="wales" query={query} set={set} options={[["any", "Any presence (registered, office or Welsh funding)"], ["registered", "Registered office in Wales"], ["office", "Office in Wales, registered elsewhere"], ["funding", "Welsh public funding (DBW, Finance Wales)"], ["director", "A director lives in Wales (hint only)"]]} />
+            </FilterGroup>
+            <FilterGroup title="Company" icon="▤" query={query} keys={["company_status", "min_years", "overdue", "charges", "sic"]}>
+              <Select label="Company status" k="company_status" query={query} set={set} options={(m?.status_groups ?? []).map((g) => [g.value, g.label])} />
+              <NumField label="Years trading" k="min_years" placeholder="at least" query={query} set={set} />
+              <Select label="Overdue filings" k="overdue" query={query} set={set}
+                      options={[["any", "Accounts or confirmation"], ["accounts", "Accounts overdue"], ["confirmation", "Confirmation statement overdue"]]} />
+              <Select label="Charges (secured loans)" k="charges" query={query} set={set}
+                      options={[["outstanding", "Has outstanding charges"], ["none", "No outstanding charges"]]} />
+              <div className="field" style={{ flexBasis: "100%" }}>
+                <label>Industry (SIC)</label>
+                <SicPicker value={(params.get("sic") ?? "").split(",").filter(Boolean)} width="100%" onChange={(v) => set("sic", v.join(","))} />
               </div>
-            </div>
-            <Select label="Presence in Wales" k="wales" query={query} set={set} options={[["any", "Any presence (registered, office or Welsh funding)"], ["registered", "Registered office in Wales"], ["office", "Office in Wales, registered elsewhere"], ["funding", "Welsh public funding (DBW, Finance Wales)"], ["director", "A director lives in Wales (hint only)"]]} />
-            <Select label="Revenue" k="revenue" query={query} set={set} options={[["filed", "Filed (confirmed in the accounts)"], ["estimated", "Estimate"], ["none", "No revenue figure"]]} />
-            <Select label="Recently sold" k="sold" query={query} set={set}
-                    options={[["hide", "Hide companies sold in the last 3 years"], ["only", "Only companies sold in the last 3 years"]]} />
-            <Select label="Changed in" k="changed_days" query={query} set={set}
-                    options={[["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"], ["365", "Last year"]]} />
-            <Select label="Flag" k="flag" query={query} set={set} options={[
-              ["recent_change", "Recent ownership change"], ["via_holdco", "Owned via holdco"], ["foreign_parent", "Foreign parent"],
-              ["investor", "Investor"], ["trust", "Trust"], ["eot", "EOT"], ["mass_address", "Shared address"],
-            ]} />
+            </FilterGroup>
+            <FilterGroup title="Your work and changes" icon="↻" query={query} keys={["status", "changed_days"]}>
+              <Select label="My status" k="status" query={query} set={set} options={(m?.statuses ?? []).map((x) => [x.value, x.label])} />
+              <Select label="Changed in" k="changed_days" query={query} set={set}
+                      options={[["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"], ["365", "Last year"]]} />
+            </FilterGroup>
           </div>
         )}
         <label className="check" style={{ flexBasis: "100%" }}><input type="checkbox" checked={showLinks} onChange={(e) => setShowLinks(e.target.checked)} />Show ownership links</label>

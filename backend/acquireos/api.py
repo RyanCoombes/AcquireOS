@@ -229,6 +229,9 @@ def companies(
     accounts_size: str | None = None, overdue: str | None = None, charges: str | None = None,
     numbers: str | None = None, count: bool = True, mine: str | None = None, sold: str | None = None,
     signal: str | None = None, revenue: str | None = None, wales: str | None = None,
+    min_revenue: float | None = None, max_revenue: float | None = None, min_profit: float | None = None,
+    max_profit: float | None = None, min_net_assets: float | None = None, max_net_assets: float | None = None,
+    min_cash: float | None = None,
 ):
     """All companies, with scores from one buy box (bb=<id>) or each company's
     best score across buy boxes (bb=all). in_box limits to companies inside
@@ -290,6 +293,16 @@ def companies(
                 "exists (select 1 from company_change x where x.company_number = c.company_number and x.kind = %(ckind)s"
                 + (" and x.detected_at > now() - make_interval(days => %(cdays)s))" if changed_days else ")"))
             params["ckind"] = change_kind
+        # Money ranges. Revenue is the filed figure or the estimate (a range):
+        # a company matches when its range overlaps yours. Profit, net assets
+        # and cash are from the latest filed accounts.
+        for col, lo, hi, key in (("e.revenue_high", min_revenue, None, "minrev"), ("e.revenue_low", None, max_revenue, "maxrev"),
+                                 ("l.operating_profit", min_profit, max_profit, "prof"),
+                                 ("l.net_assets", min_net_assets, max_net_assets, "na"), ("l.cash", min_cash, None, "cash")):
+            if lo is not None:
+                where.append(f"{col} >= %({key}_lo)s"); params[f"{key}_lo"] = lo
+            if hi is not None:
+                where.append(f"{col} <= %({key}_hi)s"); params[f"{key}_hi"] = hi
         if min_value is not None:
             where.append("s.value_high >= %(minv)s"); params["minv"] = min_value
         if max_value is not None:

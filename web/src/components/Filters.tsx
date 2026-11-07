@@ -1,3 +1,5 @@
+import type React from "react";
+import MoneyInput from "./MoneyInput";
 /* Filter controls shared by the company lists and the map (values live in the URL). */
 export type SetFn = (k: string, v: string | null) => void;
 
@@ -40,3 +42,32 @@ export function NumRange({ label, lo, hi, query, set, wide }: { label: string; l
   );
 }
 
+
+/** A titled group of filters in "More filters", with how many are set. */
+export function FilterGroup({ title, icon, query, keys, children }: { title: string; icon: string; query: Record<string, string>; keys: string[]; children: React.ReactNode }) {
+  const n = keys.filter((k) => query[k]).length;
+  return (
+    <fieldset className="fgroup">
+      <legend><span className="fg-ico" aria-hidden>{icon}</span>{title}{n ? <span className="fg-n">{n}</span> : null}</legend>
+      <div className="fg-body">{children}</div>
+    </fieldset>
+  );
+}
+
+/** A pounds range (or minimum only), e.g. revenue £1m to £5m. */
+export function MoneyRange({ label, lo, hi, query, set, hint }: { label: string; lo: string; hi?: string; query: Record<string, string>; set: SetFn; hint?: string }) {
+  return (
+    <div className="field">
+      <label>{label}{hint ? <span className="faint"> · {hint}</span> : null}</label>
+      <div className="range">
+        <MoneyInput value={query[lo] ? Number(query[lo]) : null} commit="blur" width={110} placeholder={hi ? "min" : "at least"}
+                    aria-label={`${label} minimum`} onChange={(v) => set(lo, v === null ? null : String(v))} />
+        {hi && <>
+          <span className="faint">to</span>
+          <MoneyInput value={query[hi] ? Number(query[hi]) : null} commit="blur" width={110} placeholder="max"
+                      aria-label={`${label} maximum`} onChange={(v) => set(hi, v === null ? null : String(v))} />
+        </>}
+      </div>
+    </div>
+  );
+}

@@ -4,8 +4,7 @@ import { api, type Row } from "../api";
 import { ErrorLine, Flags, RevenueTag, Score, Signals, StatusMark, Toast, useAsync } from "../components/bits";
 import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
-import MoneyInput from "../components/MoneyInput";
-import { NumField, NumRange, Select } from "../components/Filters";
+import { FilterGroup, MoneyRange, NumField, NumRange, Select } from "../components/Filters";
 import { ageFrom, cap, CHANGE_KIND, date, int, isBadStatus, OWNERSHIP, range, relDays, years } from "../format";
 
 const PAGE = 100;
@@ -51,9 +50,9 @@ const DEFAULTS: Record<Mode, Record<string, string>> = {
   directory: { sort: "name", dir: "asc" },
   targets: { sort: "score", dir: "desc", in_box: "true", mine: "hide_closed" },
 };
-const FILTER_KEYS = ["wales", "revenue", "sold", "signal", "mine", "accounts_size", "overdue", "charges", "bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
+const FILTER_KEYS = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "wales", "revenue", "sold", "signal", "mine", "accounts_size", "overdue", "charges", "bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
   "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
-const MORE_KEYS = ["wales", "revenue", "sold", "signal", "overdue", "charges", "business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
+const MORE_KEYS = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "wales", "revenue", "sold", "signal", "overdue", "charges", "business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
 
 export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const base = mode === "directory" ? "/companies" : "/targets";
@@ -321,40 +320,51 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
               <button className="btn" onClick={saveCurrent}>{currentSaved ? "Update saved search" : "Save search"}</button>
             </div>
             {more && (
-              <div className="band-more">
-                {mode === "directory" ? <>{fitSelect}{score}{ownership}{ownerAge}{myStatus}</>
-                  : <>{companyStatus}{industryWide}{yearsTrading}{accountsSize}</>}
-                {overdueSel}{chargesSel}
-                <Select label="Presence in Wales" k="wales" query={query} set={set} options={[["any", "Any presence (registered, office or Welsh funding)"], ["registered", "Registered office in Wales"], ["office", "Office in Wales, registered elsewhere"], ["funding", "Welsh public funding (DBW, Finance Wales)"], ["director", "A director lives in Wales (hint only)"]]} />
-                <Select label="Revenue" k="revenue" query={query} set={set} options={[["filed", "Filed (confirmed in the accounts)"], ["estimated", "Estimate"], ["none", "No revenue figure"]]} />
-                <Select label="Recently sold" k="sold" query={query} set={set}
-                        options={[["hide", "Hide companies sold in the last 3 years"], ["only", "Only companies sold in the last 3 years"]]} />
-                <Select label="Other signals" k="signal" query={query} set={set}
-                        options={[["possible_buyer", "Possible buyers (taking over others)"], ["many_shareholders", "10 or more shareholders"]]} />
-                <div className="field">
-                  <label>Indicative value</label>
-                  <div className="range">
-                    <MoneyInput value={query.min_value ? Number(query.min_value) : null} commit="blur" width={120} placeholder="min, e.g. 500k"
-                                aria-label="Indicative value minimum" onChange={(v) => set("min_value", v === null ? null : String(v))} />
-                    <span className="faint">to</span>
-                    <MoneyInput value={query.max_value ? Number(query.max_value) : null} commit="blur" width={120} placeholder="max, e.g. 3m"
-                                aria-label="Indicative value maximum" onChange={(v) => set("max_value", v === null ? null : String(v))} />
-                  </div>
-                </div>
-                <Select label="Review tier" k="tier" query={query} set={set} options={(m?.tiers ?? []).map((t) => [t, t])} />
-                <Select label="Business type" k="business_type" query={query} set={set} options={[
-                  ["software", "Software"], ["saas", "SaaS"], ["data", "Data"], ["msp", "Managed service provider"],
-                  ["it_consultancy", "IT consultancy"], ["field_service", "Field service"], ["agency", "Agency"], ["reseller", "Reseller"], ["other", "Other"],
-                ]} />
-                <Select label="Website" k="has_website" query={query} set={set} options={[["true", "Found"], ["false", "Not found yet"]]} />
-                <Select label="Changed in" k="changed_days" query={query} set={set}
-                        options={[["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"], ["365", "Last year"]]} />
-                <Select label="Change type" k="change_kind" query={query} set={set} options={Object.entries(CHANGE_KIND)} />
-                <Select label="Flag" k="flag" query={query} set={set} options={[
-                  ["recent_change", "Recent ownership change"], ["via_holdco", "Owned via holdco"], ["foreign_parent", "Foreign parent"],
-                  ["investor", "Investor"], ["trust", "Trust"], ["eot", "EOT"], ["ch_default", "CH default address"],
-                  ["formation_agent", "Formation-agent address"], ["mass_address", "Shared address"],
-                ]} />
+              <div className="band-more grouped">
+                <FilterGroup title="Money" icon="£" query={query} keys={["min_revenue", "max_revenue", "revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "min_value", "max_value", ...(mode === "targets" ? ["accounts_size"] : [])]}>
+                  <MoneyRange label="Revenue" lo="min_revenue" hi="max_revenue" query={query} set={set} hint="filed or estimate" />
+                  <Select label="Revenue source" k="revenue" query={query} set={set} options={[["filed", "Filed (confirmed in the accounts)"], ["estimated", "Estimate"], ["none", "No revenue figure"]]} />
+                  <MoneyRange label="Operating profit" lo="min_profit" hi="max_profit" query={query} set={set} hint="latest filed accounts" />
+                  <MoneyRange label="Net assets" lo="min_net_assets" query={query} set={set} />
+                  <MoneyRange label="Cash" lo="min_cash" query={query} set={set} />
+                  <MoneyRange label="Indicative value" lo="min_value" hi="max_value" query={query} set={set} />
+                  {mode === "targets" && accountsSize}
+                </FilterGroup>
+                <FilterGroup title="Owners and sale signals" icon="●" query={query}
+                             keys={["sold", "signal", "flag", ...(mode === "directory" ? ["ownership", "min_owner_age"] : [])]}>
+                  {mode === "directory" && <>{ownership}{ownerAge}</>}
+                  <Select label="Recently sold" k="sold" query={query} set={set}
+                          options={[["hide", "Hide companies sold in the last 3 years"], ["only", "Only companies sold in the last 3 years"]]} />
+                  <Select label="Other signals" k="signal" query={query} set={set}
+                          options={[["possible_buyer", "Possible buyers (taking over others)"], ["many_shareholders", "10 or more shareholders"]]} />
+                  <Select label="Ownership flag" k="flag" query={query} set={set} options={[
+                    ["recent_change", "Recent ownership change"], ["via_holdco", "Owned via holdco"], ["foreign_parent", "Foreign parent"],
+                    ["investor", "Investor"], ["trust", "Trust"], ["eot", "EOT"], ["ch_default", "CH default address"],
+                    ["formation_agent", "Formation-agent address"], ["mass_address", "Shared address"],
+                  ]} />
+                </FilterGroup>
+                <FilterGroup title="Location" icon="⌖" query={query} keys={["wales"]}>
+                  <Select label="Presence in Wales" k="wales" query={query} set={set} options={[["any", "Any presence (registered, office or Welsh funding)"], ["registered", "Registered office in Wales"], ["office", "Office in Wales, registered elsewhere"], ["funding", "Welsh public funding (DBW, Finance Wales)"], ["director", "A director lives in Wales (hint only)"]]} />
+                </FilterGroup>
+                <FilterGroup title="Company" icon="▤" query={query}
+                             keys={["overdue", "charges", "business_type", "has_website", "tier", ...(mode === "targets" ? ["company_status", "sic", "min_years"] : [])]}>
+                  {mode === "targets" && <>{companyStatus}{yearsTrading}</>}
+                  {overdueSel}{chargesSel}
+                  <Select label="Business type" k="business_type" query={query} set={set} options={[
+                    ["software", "Software"], ["saas", "SaaS"], ["data", "Data"], ["msp", "Managed service provider"],
+                    ["it_consultancy", "IT consultancy"], ["field_service", "Field service"], ["agency", "Agency"], ["reseller", "Reseller"], ["other", "Other"],
+                  ]} />
+                  <Select label="Website" k="has_website" query={query} set={set} options={[["true", "Found"], ["false", "Not found yet"]]} />
+                  <Select label="Review tier" k="tier" query={query} set={set} options={(m?.tiers ?? []).map((t) => [t, t])} />
+                  {mode === "targets" && industryWide}
+                </FilterGroup>
+                <FilterGroup title={mode === "directory" ? "Fit and your work" : "Changes"} icon="↻" query={query}
+                             keys={["changed_days", "change_kind", ...(mode === "directory" ? ["bb", "min_score", "status"] : [])]}>
+                  {mode === "directory" && <>{fitSelect}{score}{myStatus}</>}
+                  <Select label="Changed in" k="changed_days" query={query} set={set}
+                          options={[["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"], ["365", "Last year"]]} />
+                  <Select label="Change type" k="change_kind" query={query} set={set} options={Object.entries(CHANGE_KIND)} />
+                </FilterGroup>
               </div>
             )}
           </div>

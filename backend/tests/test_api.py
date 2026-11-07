@@ -850,3 +850,21 @@ def test_presence_in_wales(loaded):
         anyw = {r["company_number"] for r in cl.get("/api/companies", params={"wales": "any", "limit": 100}).json()["rows"]}
         reg = {r["company_number"] for r in cl.get("/api/companies", params={"wales": "registered", "limit": 100}).json()["rows"]}
         assert office == {eng} and eng in anyw and reg <= anyw and eng not in reg
+
+
+def test_money_filters(loaded):
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        def rows(**p):
+            return cl.get("/api/companies", params={**p, "limit": 200}).json()["rows"]
+        for r in rows(min_revenue=2_000_000):
+            assert r["revenue_high"] is not None and float(r["revenue_high"]) >= 2_000_000
+        for r in rows(max_revenue=1_000_000):
+            assert float(r["revenue_low"]) <= 1_000_000
+        with db.conn() as c:
+            want = {x["company_number"] for x in c.execute("select company_number from company_latest where operating_profit >= 100000")}
+            na = {x["company_number"] for x in c.execute("select company_number from company_latest where net_assets >= 500000")}
+        assert {r["company_number"] for r in rows(min_profit=100_000)} == want
+        assert {r["company_number"] for r in rows(min_net_assets=500_000)} == na
