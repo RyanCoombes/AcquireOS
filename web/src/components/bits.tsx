@@ -6,7 +6,7 @@ export const STATUS_LABEL: Record<Status, string> = {
   new: "New", watching: "Watching", researching: "Assessing", approach: "Shortlisted",
   contacted: "First contact", in_talks: "Getting to know", nda: "NDA and accounts", offer: "Indicative offer",
   heads: "Heads of terms", diligence: "Due diligence", spa: "SPA and disclosure", completion: "Completion",
-  handover: "Handover", passed: "Passed", rejected: "Rejected",
+  handover: "Handover", passed: "Not now", rejected: "Not suitable",
 };
 
 export function StatusMark({ s }: { s: Status }) {

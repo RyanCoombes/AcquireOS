@@ -233,7 +233,8 @@ def companies(
     min_years: int | None = None, format: str = "list", business_type: str | None = None,
     has_website: bool | None = None, bb: str = "all", in_box: bool | None = None,
     accounts_size: str | None = None, overdue: str | None = None, charges: str | None = None,
-    numbers: str | None = None, count: bool = True, mine: str | None = None,
+    numbers: str | None = None, count: bool = True, mine: str | None = None, sold: str | None = None,
+    signal: str | None = None,
 ):
     """All companies, with scores from one buy box (bb=<id>) or each company's
     best score across buy boxes (bb=all). in_box limits to companies inside
@@ -306,6 +307,12 @@ def companies(
             params["btype"] = business_type
         if has_website is not None:
             where.append(("" if has_website else "not ") + "exists (select 1 from enrichment en where en.company_number = c.company_number and en.website is not null)")
+        if sold in ("hide", "only"):  # recently sold to another company (register or research)
+            where.append(("" if sold == "only" else "not ") +
+                         "exists (select 1 from company_signal sg where sg.company_number = c.company_number and 'recently_sold' = any(sg.signals))")
+        if signal in ("possible_buyer", "many_shareholders"):
+            where.append("exists (select 1 from company_signal sg where sg.company_number = c.company_number and %(signal)s = any(sg.signals))")
+            params["signal"] = signal
         if mine in ("hide_closed", "pipeline", "untouched"):  # a company combined into another shows only as that one
             where.append("uc.merged_into is null")
         if mine == "hide_closed":   # hide companies you have passed on or rejected
@@ -405,8 +412,9 @@ def companies(
                    coalesce(uc.status, 'new') as status, uc.rating, uc.next_action, uc.next_action_on,
                    ch.last_change, ch.last_kinds, en.website, en.business_type,
                    ao_signals(c.company_number) as signals, ao_same_business(c.company_number) as same_business,
-                   en.trading_region, uc.merged_into
+                   en.trading_region, uc.merged_into, sg.sold_on, sg.sold_to
             from page p join company c on c.company_number = p.company_number
+            left join company_signal sg on sg.company_number = c.company_number
             left join company_latest l on l.company_number = c.company_number
             left join estimate e on e.company_number = c.company_number
             left join company_ownership o on o.company_number = c.company_number
@@ -625,6 +633,8 @@ def company(num: str, bb: str | None = None):
         sics = [{"code": code, "description": sic_mod.describe(code, sic_known)} for code in row["sic_codes"] or []]
         enr = c.execute("select * from enrichment where company_number = %s", (num,)).fetchone()
         signals = c.execute("select ao_signals(%s) as s", (num,)).fetchone()["s"] or []
+        sold = c.execute("select sold_on, sold_to from company_signal where company_number = %s and 'recently_sold' = any(signals)",
+                         (num,)).fetchone()
         # Companies that look like the same business, with their figures, and
         # any you have combined into this one.
         same_business = c.execute(
@@ -682,7 +692,7 @@ def company(num: str, bb: str | None = None):
         sc = next((x for x in scores if x["buy_box_id"] == bb["id"]), None)
     return {
         "deal": deal, "manual": manual, "buy_box": {"id": bb["id"], "name": bb["name"]}, "scores": scores,
-        "signals": signals, "same_business": same_business, "merged_into": (state or {}).get("merged_into"),
+        "signals": signals, "sold": sold, "same_business": same_business, "merged_into": (state or {}).get("merged_into"),
         "merged_here": merged_here,
         "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
         "changes": changes, "valuation": val, "fin_summary": fintrends.summary(fin), "ch": ch_details,
@@ -1200,6 +1210,7 @@ def compute_sic_counts(c) -> list[dict]:
 
 def refresh_stats(c):
     """Recompute stored summaries after a data load (called by the jobs)."""
+    c.execute("select ao_refresh_company_signals()")  # recently sold, possible buyers
     todo = [("sic_counts", compute_sic_counts), ("coverage", _coverage_compute), ("meta_lists", compute_meta_lists),
             ("dashboard:all", lambda cc: compute_dashboard_stats(cc, "all"))]
     for b in c.execute("select id from buy_box where user_id = %s", (UID,)).fetchall():

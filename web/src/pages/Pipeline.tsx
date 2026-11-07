@@ -111,7 +111,7 @@ export default function Pipeline() {
 
       {closed.length > 0 && (
         <section style={{ marginTop: 18 }}>
-          <div className="sechead"><h2>Passed and rejected</h2><span className="faint small">{closed.length}</span></div>
+          <div className="sechead"><h2>Not suitable or not now</h2><span className="faint small">{closed.length}</span></div>
           <table>
             <tbody>
               {closed.map((r) => (

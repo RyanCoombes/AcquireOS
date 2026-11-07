@@ -88,6 +88,7 @@ export default function Company() {
             {data.enrichment?.ownership ? <span className="chip teal" title={data.enrichment.ownership_note ?? "From research"}>{OWNERSHIP[data.enrichment.ownership]} · research</span>
               : own && own.ownership_type !== "unknown" && <span className="chip teal">{OWNERSHIP[own.ownership_type]}</span>}
             <Signals s={data.signals} />
+            {data.sold?.sold_to && <span className="chip" title="From the owners register or your research">Sold{data.sold.sold_on ? ` ${date(data.sold.sold_on)}` : ""} to {data.sold.sold_to}</span>}
             {data.enrichment?.website && <a className="chip link" href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")} ↗</a>}
           </div>
         </div>
@@ -326,6 +327,7 @@ function MyCall({ data, num, setState, onNote, onOutreach, onScored }: {
         <h2>Your call</h2>
         <div className="label" style={{ margin: "0 0 4px" }}>Stage</div>
         <StageSelect value={s.status} onChange={(v) => setState({ status: v, stage_note: "Changed on the company page" })} />
+        <CloseOut status={s.status} setState={setState} />
         <div className="label" style={{ margin: "14px 0 4px" }}>Rating <span className="faint">(keys 1–5)</span></div>
         <div className="rating">
           {[1, 2, 3, 4, 5].map((n) => (
@@ -631,6 +633,45 @@ function SameBusiness({ data, num, onChange }: { data: CompanyDetail; num: strin
                 {o.merged_into ? "Combined elsewhere" : "Treat as one business"}</button></span>
           ))}
           <div className="faint small" style={{ marginTop: 4 }}>Same owner and address, or a director in common at the same postcode.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/** One click to rule a company out, with a reason kept in its history. */
+const NOT_SUITABLE = ["Too small", "Too big", "Wrong sector", "Already sold", "Not owner-run", "Investor-backed", "Weak finances", "Wrong location"];
+const NOT_NOW = ["Owner not ready", "Owner said no", "Timing", "Revisit next year"];
+
+function CloseOut({ status, setState }: { status: string; setState: (p: Record<string, unknown>) => void }) {
+  const [open, setOpen] = useState<null | "rejected" | "passed">(null);
+  const closed = status === "rejected" || status === "passed";
+  const pick = (st: "rejected" | "passed", why: string) => {
+    setState({ status: st, stage_note: `${st === "rejected" ? "Not suitable" : "Not now"}: ${why}` });
+    setOpen(null);
+  };
+  return (
+    <div className="closeout">
+      {!closed && (
+        <div className="row">
+          <button className={`btn quiet ${open === "rejected" ? "on" : ""}`} onClick={() => setOpen(open === "rejected" ? null : "rejected")}
+                  title="Doesn't fit. Hidden from targets.">✕ Not suitable</button>
+          <button className={`btn quiet ${open === "passed" ? "on" : ""}`} onClick={() => setOpen(open === "passed" ? null : "passed")}
+                  title="Fits, but not now. Hidden from targets; easy to bring back.">⏸ Not now</button>
+        </div>
+      )}
+      {open && (
+        <div className="reasons">
+          <span className="faint small">Why?</span>
+          {(open === "rejected" ? NOT_SUITABLE : NOT_NOW).map((r) => <button key={r} className="chipbtn" onClick={() => pick(open, r)}>{r}</button>)}
+          <button className="chipbtn" onClick={() => pick(open, "no reason given")}>Skip</button>
+        </div>
+      )}
+      {closed && (
+        <div className="faint small" style={{ marginTop: 6 }}>
+          {status === "rejected" ? "Ruled out: hidden from targets." : "Not now: hidden from targets."}{" "}
+          <button className="linkish small" onClick={() => setState({ status: "watching", stage_note: "Brought back" })}>Bring back to Watching</button>
         </div>
       )}
     </div>

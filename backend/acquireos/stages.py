@@ -72,8 +72,8 @@ STAGES: list[tuple[str, str, str, str, list[str]]] = [
         "Staff and clients told",
         "Owner support period under way",
     ]),
-    ("passed", "Passed", "closed", "Not pursuing for now", []),
-    ("rejected", "Rejected", "closed", "Not a fit", []),
+    ("passed", "Not now", "closed", "Fits, but not pursuing now (timing, owner not ready). Hidden from targets; easy to bring back", []),
+    ("rejected", "Not suitable", "closed", "Doesn't fit (size, sector, owner, already sold). Hidden from targets", []),
 ]
 
 PHASES = [("assess", "Assess"), ("engage", "Engage"), ("deal", "Deal"), ("owned", "Owned"), ("closed", "Closed")]

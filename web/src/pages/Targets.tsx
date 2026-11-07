@@ -6,7 +6,7 @@ import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
 import MoneyInput from "../components/MoneyInput";
 import { NumField, NumRange, Select } from "../components/Filters";
-import { ageFrom, cap, CHANGE_KIND, int, isBadStatus, OWNERSHIP, range, relDays, years } from "../format";
+import { ageFrom, cap, CHANGE_KIND, date, int, isBadStatus, OWNERSHIP, range, relDays, years } from "../format";
 
 const PAGE = 100;
 type Mode = "directory" | "targets";
@@ -40,6 +40,7 @@ const VIEWS: Record<Mode, { key: string; label: string; params: Record<string, s
   directory: [
     { key: "all", label: "A to Z", params: {} },
     { key: "changed", label: "Changed recently", params: { changed_days: "30", sort: "changed" } },
+    { key: "sold", label: "Recently sold", params: { sold: "only" } },
   ],
   targets: [
     { key: "fit", label: "Best fit first", params: {} },
@@ -50,9 +51,9 @@ const DEFAULTS: Record<Mode, Record<string, string>> = {
   directory: { sort: "name", dir: "asc" },
   targets: { sort: "score", dir: "desc", in_box: "true", mine: "hide_closed" },
 };
-const FILTER_KEYS = ["mine", "accounts_size", "overdue", "charges", "bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
+const FILTER_KEYS = ["sold", "signal", "mine", "accounts_size", "overdue", "charges", "bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
   "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
-const MORE_KEYS = ["overdue", "charges", "business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
+const MORE_KEYS = ["sold", "signal", "overdue", "charges", "business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
 
 export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const base = mode === "directory" ? "/companies" : "/targets";
@@ -214,7 +215,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const ownerAge = <NumField label="Owner aged" k="min_owner_age" placeholder="at least" query={query} set={set} />;
   const ownership = <Select label="Ownership" k="ownership" query={query} set={set} options={Object.entries(OWNERSHIP).map(([v, l]) => [v, l])} />;
   const myStatus = <Select label="My status" k="status" query={query} set={set} options={(m?.statuses ?? []).map((x) => [x.value, x.label])} />;
-  // What to show by your own decisions. Targets hides passed and rejected by default.
+  // What to show by your own decisions. Targets hides not suitable and not now by default.
   const mineDefault = DEFAULTS[mode].mine ?? "all";
   const mineValue = query.mine ?? mineDefault;
   const show = (
@@ -223,7 +224,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
       <select id="f-mine" value={mineValue} className={mineValue !== "all" ? "set" : ""}
               onChange={(e) => set("mine", e.target.value === mineDefault ? null : e.target.value)}>
         <option value="all">Everything</option>
-        <option value="hide_closed">Hide passed and rejected</option>
+        <option value="hide_closed">Hide not suitable and not now</option>
         <option value="pipeline">Only my pipeline</option>
         <option value="untouched">Only not looked at yet</option>
       </select>
@@ -322,6 +323,10 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                 {mode === "directory" ? <>{fitSelect}{score}{ownership}{ownerAge}{myStatus}</>
                   : <>{companyStatus}{industryWide}{yearsTrading}{accountsSize}</>}
                 {overdueSel}{chargesSel}
+                <Select label="Recently sold" k="sold" query={query} set={set}
+                        options={[["hide", "Hide companies sold in the last 3 years"], ["only", "Only companies sold in the last 3 years"]]} />
+                <Select label="Other signals" k="signal" query={query} set={set}
+                        options={[["possible_buyer", "Possible buyers (taking over others)"], ["many_shareholders", "10 or more shareholders"]]} />
                 <div className="field">
                   <label>Indicative value</label>
                   <div className="range">
@@ -445,6 +450,8 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
         {bad && <span className="tag red">{cap(r.company_status)}</span>}
         {recent && r.last_kinds?.length ? <span className="tag" title={`Changed ${relDays(r.last_change)}`}>{r.last_kinds.map((k) => CHANGE_KIND[k] ?? k).join(", ")}</span> : null}
         <Signals s={r.signals} />
+        {r.sold_to && r.signals?.includes("recently_sold") ? <span className="sub" style={{ display: "block" }}>
+          Sold{r.sold_on ? ` ${date(r.sold_on)}` : ""} to {r.sold_to}</span> : null}
         {r.same_business?.length ? <Link className="sig grey" to={`/c/${r.same_business[0]}`} onClick={(e) => e.stopPropagation()}
           title="Same owner and address, or a director in common at the same postcode">
           Same business as {r.same_business.length === 1 ? "1 other" : `${r.same_business.length} others`}</Link> : null}

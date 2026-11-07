@@ -44,6 +44,7 @@ export interface Row {
   revenue_high: string | null;
   revenue_basis: string | null; revenue_method?: string | null;
   signals?: string[]; same_business?: string[]; trading_region?: string | null; merged_into?: string | null;
+  sold_on?: string | null; sold_to?: string | null;
   ownership_type: string | null;
   oldest_birth_year: number | null;
   flags: string[] | null;
@@ -162,6 +163,7 @@ export interface CompanyDetail {
   valuation: Valuation;
   deal: Deal;
   signals?: string[];
+  sold?: { sold_on: string | null; sold_to: string | null } | null;
   same_business?: { company_number: string; name: string; postcode: string | null; employees: number | null;
                     revenue_low: string | null; revenue_high: string | null; revenue_basis: string | null; merged_into: string | null }[];
   merged_into?: string | null;

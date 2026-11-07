@@ -635,3 +635,26 @@ def test_website_offices():
                     "Wrexham office: 12 High St, Wrexham LL11 1AA")
     assert [a["postcode"] for a in got] == ["CH4 9QZ", "LL11 1AA"]
     assert got[0]["address"].startswith("Data8 Ltd, Unit 4")
+
+
+def test_recently_sold_list_filter(loaded):
+    from acquireos.api import app, refresh_stats
+
+    loaded.commit()
+    with db.conn() as c:
+        # 01000002: its owner left as a company took over, two months ago
+        c.execute("insert into person (person_key, kind, name, registration_number) values ('t-buyer', 'corporate', 'BIG GROUP PLC', '07777777')")
+        c.execute("update company_person set ceased_on = current_date - 60 where company_number = '01000002'")
+        c.execute("""insert into company_person (row_key, company_number, person_id, role, natures, notified_on)
+                     select 'r-buy', '01000002', id, 'psc', '{ownership-of-shares-75-to-100-percent}', current_date - 60
+                     from person where person_key = 't-buyer'""")
+        c.execute("update company_ownership set ownership_type = 'group_owned' where company_number = '01000002'")
+        refresh_stats(c)
+        row = c.execute("select * from company_signal where company_number = '01000002'").fetchone()
+        assert "recently_sold" in row["signals"] and row["sold_to"] == "BIG GROUP PLC"
+    with TestClient(app) as cl:
+        only = [r["company_number"] for r in cl.get("/api/companies", params={"sold": "only"}).json()["rows"]]
+        hide = [r["company_number"] for r in cl.get("/api/companies", params={"sold": "hide", "limit": 100}).json()["rows"]]
+        assert only == ["01000002"] and "01000002" not in hide
+        d = cl.get("/api/companies/01000002").json()
+        assert d["sold"]["sold_to"] == "BIG GROUP PLC"

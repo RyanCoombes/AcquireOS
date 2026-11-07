@@ -30,7 +30,7 @@ export default function MapPage() {
   const m = meta.data;
   const saved = useAsync(() => api.searches(), []);
   const [more, setMore] = useState(false);
-  const MORE = ["sic", "company_status", "status", "min_years", "accounts_size", "overdue", "charges", "min_value", "max_value", "changed_days", "flag"];
+  const MORE = ["sold", "sic", "company_status", "status", "min_years", "accounts_size", "overdue", "charges", "min_value", "max_value", "changed_days", "flag"];
   const moreActive = MORE.filter((k) => query[k]).length;
   const active = Object.keys(query).length;
   // A saved search from the lists: its filters, on the map (all companies unless it was a targets search).
@@ -78,7 +78,7 @@ export default function MapPage() {
           <label htmlFor="f-mine">Decided</label>
           <select id="f-mine" value={query.mine ?? "all"} className={query.mine ? "set" : ""} onChange={(e) => set("mine", e.target.value === "all" ? null : e.target.value)}>
             <option value="all">Everything</option>
-            <option value="hide_closed">Hide passed and rejected</option>
+            <option value="hide_closed">Hide not suitable and not now</option>
             <option value="pipeline">Only my pipeline</option>
             <option value="untouched">Only not looked at yet</option>
           </select>
@@ -123,6 +123,8 @@ export default function MapPage() {
                             aria-label="Indicative value maximum" onChange={(v) => set("max_value", v === null ? null : String(v))} />
               </div>
             </div>
+            <Select label="Recently sold" k="sold" query={query} set={set}
+                    options={[["hide", "Hide companies sold in the last 3 years"], ["only", "Only companies sold in the last 3 years"]]} />
             <Select label="Changed in" k="changed_days" query={query} set={set}
                     options={[["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"], ["365", "Last year"]]} />
             <Select label="Flag" k="flag" query={query} set={set} options={[
