@@ -97,7 +97,7 @@ export default function Company() {
             <span className="chip">No. {c.company_number}</span>
             {c.incorporation_date && <span className="chip">Since {c.incorporation_date.slice(0, 4)} · {years(c.incorporation_date)} yrs</span>}
             {c.region && <span className="chip">{c.postcode ? `${c.postcode.split(" ")[0]} · ` : ""}{c.region}</span>}
-            {c.accounts_category && <span className="chip">{accountsLabel(c.accounts_category).replace(/ accounts?.*$/, "").replace(/^./, (x) => x.toUpperCase())}</span>}
+            {c.accounts_category && <span className="chip" title={`Accounts filed: ${accountsLabel(c.accounts_category)}`}>{accountsChip(c.accounts_category)}</span>}
             {data.enrichment?.ownership ? <span className="chip teal" title={data.enrichment.ownership_note ?? "From research"}>{OWNERSHIP[data.enrichment.ownership]} · research</span>
               : own && own.ownership_type !== "unknown" && <span className="chip teal">{OWNERSHIP[own.ownership_type]}</span>}
             <Signals s={data.signals} />
@@ -523,6 +523,19 @@ const ACCOUNTS_LABEL: Record<string, string> = {
   "no accounts filed": "no accounts filed yet", "initial": "initial accounts",
 };
 export function accountsLabel(cat: string) { return ACCOUNTS_LABEL[cat] ?? cat; }
+
+/** Short chip text for the accounts type, e.g. "Small company", "Dormant", "No accounts yet". */
+const ACCOUNTS_CHIP: Record<string, string> = {
+  "micro entity": "Micro company", "small": "Small company", "total exemption full": "Small company",
+  "total exemption small": "Small company", "unaudited abridged": "Small company", "audited abridged": "Small company",
+  "partial exemption": "Small company", "medium": "Medium company", "full": "Large company (full accounts)",
+  "group": "Group accounts", "audit exemption subsidiary": "Subsidiary of a group", "filing exemption subsidiary": "Subsidiary of a group",
+  "dormant": "Dormant", "no accounts filed": "No accounts filed yet", "initial": "No accounts filed yet",
+  "accounts type not available": "Accounts type not given",
+};
+function accountsChip(cat: string) {
+  return ACCOUNTS_CHIP[cat.toLowerCase()] ?? `Accounts: ${cat}`;
+}
 
 /** Balance sheet and cost detail, where the accounts include it. Creditors
     are worked out from the totals the accounts state. */
