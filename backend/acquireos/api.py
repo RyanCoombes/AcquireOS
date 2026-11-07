@@ -820,6 +820,8 @@ def _links_for(c, num):
 
 FUNDING_KEYS = {"price", "your_cash", "investor_equity", "investor_stake", "investor_loan", "investor_rate", "investor_years",
                 "vendor_loan", "vendor_rate", "vendor_years", "bank_rate", "bank_years",
+                # EBITDA adjustments: costs leaving with the seller, costs of the new team
+                "addback_owner_pay", "addback_other", "new_salaries", "new_oncost",
                 # older names, still read
                 "investor_cash", "vendor_pct"}
 

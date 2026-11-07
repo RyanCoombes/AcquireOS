@@ -20,6 +20,8 @@ export default function Valuation({ data, num, onSaved }: { data: CompanyDetail;
   const [dirty, setDirty] = useState(false);
   const est = data.estimate;
   const latest = [...data.financials].reverse().find((f) => !f.period_inferred);
+  // Directors' pay from the newest accounts that show it (a starting point for the add-back).
+  const latestPay = [...data.financials].reverse().find((f) => !f.period_inferred && toNum((f as any).director_pay ?? null));
   const op = toNum(latest?.operating_profit ?? null);
 
   // Same method as the server (backend/acquireos/valuation.py), recalculated live.
@@ -108,6 +110,8 @@ export default function Valuation({ data, num, onSaved }: { data: CompanyDetail;
             </div>
           </div>
           <DealCheck eLo={live.eLo} eHi={live.eHi} vLo={vLo ?? 0} vHi={vHi ?? 0} saved={data.state.funding ?? {}}
+                     directorPay={toNum(latestPay?.director_pay ?? null)} payYear={latestPay?.period_end ?? null}
+                     multiples={[a.multiple_low, a.multiple_high]}
                      onSave={(f) => api.setState(num, { funding: f })} />
         </>
       )}
@@ -122,15 +126,17 @@ function annuity(principal: number, ratePct: number, years: number) {
   return (principal * r) / (1 - Math.pow(1 + r, -years));
 }
 
-function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave }: {
+function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave, directorPay, payYear, multiples }: {
   eLo: number; eHi: number; vLo: number; vHi: number; saved: Partial<Funding> & { investor_cash?: number; vendor_pct?: number };
-  onSave: (f: Funding) => Promise<unknown>;
+  onSave: (f: Funding) => Promise<unknown>; directorPay?: number | null; payYear?: string | null; multiples: [number, number];
 }) {
   const mid = Math.round(((vLo + vHi) / 2) / 10000) * 10000;
   // Older saved checks used investor_cash / vendor_pct: read them once.
   const start: Funding = {
     price: mid, your_cash: 0, investor_equity: 0, investor_stake: 30, investor_loan: 0, investor_rate: 10, investor_years: 5,
     vendor_loan: Math.round(mid * 0.3 / 10000) * 10000, vendor_rate: 0, vendor_years: 3, bank_rate: 9, bank_years: 5,
+    addback_owner_pay: directorPay && directorPay > 0 ? Math.round(directorPay / 1000) * 1000 : 0, addback_other: 0,
+    new_salaries: 0, new_oncost: 15,
     ...saved,
   } as Funding;
   if (saved.investor_cash !== undefined && saved.investor_equity === undefined) start.investor_equity = saved.investor_cash;
@@ -158,7 +164,12 @@ function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave }: {
     bank: annuity(bank, f.bank_rate, f.bank_years),
   };
   const service = yearly.investor + yearly.vendor + yearly.bank;
-  const eMid = (eLo + eHi) / 2;
+  // Adjusted EBITDA: add back costs that leave with the seller, take off the new team's cost.
+  const newTeam = (f.new_salaries ?? 0) * (1 + (f.new_oncost ?? 0) / 100);
+  const adj = (f.addback_owner_pay ?? 0) + (f.addback_other ?? 0) - newTeam;
+  const rawMid = (eLo + eHi) / 2;
+  const [aLo, aHi] = [eLo + adj, eHi + adj];
+  const eMid = rawMid + adj;
   const cover = (profit: number) => (service > 0 ? profit / service : null);
   const verdict = (c: number | null) => c === null ? "No debt" : c >= 2 ? "Comfortable" : c >= 1.5 ? "Workable" : c >= 1.2 ? "Tight" : "Does not cover";
   const coverCls = (c: number | null) => (c !== null && c < 1.2 ? "neg" : c !== null && c >= 1.5 ? "pos" : "");
@@ -207,24 +218,45 @@ function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave }: {
       </table>
       {over > 0 && <div className="callout red">These add up to {money(named)}, which is {money(over)} more than the price. Lower one of them.</div>}
 
-      <h4 className="dc-h">2. Can the business pay it back?</h4>
+      <h4 className="dc-h">2. Adjusted profit (EBITDA)</h4>
       <table className="dc-table dc-walk">
         <thead><tr><th /><th className="num">Low</th><th className="num">Middle</th><th className="num">High</th></tr></thead>
         <tbody>
           <tr><td>Profit a year <span className="faint small">(EBITDA proxy, from above)</span></td>
-            <td className="num">{money(eLo)}</td><td className="num"><b>{money(eMid)}</b></td><td className="num">{money(eHi)}</td></tr>
+            <td className="num">{money(eLo)}</td><td className="num">{money(rawMid)}</td><td className="num">{money(eHi)}</td></tr>
+          <tr><td>+ Departing owners' pay
+              <div className="sub">{directorPay ? `Directors' pay filed: ${money(directorPay)}${payYear ? ` (${String(payYear).slice(0, 4)})` : ""}. ` : ""}Salaries, pension and benefits that stop when they leave</div></td>
+            <td className="num" colSpan={3}>{money_("addback_owner_pay")}</td></tr>
+          <tr><td>+ Other one-off or owner costs<div className="sub">e.g. family on the payroll, personal car, one-off legal fees</div></td>
+            <td className="num" colSpan={3}>{money_("addback_other")}</td></tr>
+          <tr><td>− New team salaries<div className="sub">Your salary and any new hires (MBI team)</div></td>
+            <td className="num" colSpan={3}>{money_("new_salaries")}
+              <span className="faint small"> + on-costs </span>{num("new_oncost")}%<span className="faint small"> = {money(newTeam)}</span></td></tr>
+          <tr className="total"><td>= Adjusted EBITDA</td>
+            {[aLo, eMid, aHi].map((e, i) => <td key={i} className={`num ${e < 0 ? "neg" : ""}`}><b>{money(e)}</b></td>)}</tr>
+          <tr><td>Value at your multiples ({multiples[0]}–{multiples[1]}×)<div className="sub">On adjusted EBITDA, compared with your price of {money(f.price)}</div></td>
+            <td className="num" colSpan={3}>{range(Math.max(aLo, 0) * multiples[0], Math.max(aHi, 0) * multiples[1])}</td></tr>
+        </tbody>
+      </table>
+
+      <h4 className="dc-h">3. Can the business pay it back?</h4>
+      <table className="dc-table dc-walk">
+        <thead><tr><th /><th className="num">Low</th><th className="num">Middle</th><th className="num">High</th></tr></thead>
+        <tbody>
+          <tr><td>Adjusted EBITDA <span className="faint small">(from step 2)</span></td>
+            <td className="num">{money(aLo)}</td><td className="num"><b>{money(eMid)}</b></td><td className="num">{money(aHi)}</td></tr>
           <tr><td>− Loan repayments a year</td>
             <td className="num">{money(service)}</td><td className="num">{money(service)}</td><td className="num">{money(service)}</td></tr>
           <tr className="total"><td>= Left after repayments</td>
-            {[eLo, eMid, eHi].map((e, i) => <td key={i} className={`num ${left(e) < 0 ? "neg" : ""}`}><b>{money(left(e))}</b></td>)}</tr>
+            {[aLo, eMid, aHi].map((e, i) => <td key={i} className={`num ${left(e) < 0 ? "neg" : ""}`}><b>{money(left(e))}</b></td>)}</tr>
           <tr><td>Your share ({yours}%){f.investor_equity > 0 ? <span className="faint small"> · the investor's {f.investor_stake}% is theirs</span> : null}</td>
-            {[eLo, eMid, eHi].map((e, i) => <td key={i} className={`num ${left(e) < 0 ? "neg" : ""}`}>{money((left(e) * yours) / 100)}</td>)}</tr>
+            {[aLo, eMid, aHi].map((e, i) => <td key={i} className={`num ${left(e) < 0 ? "neg" : ""}`}>{money((left(e) * yours) / 100)}</td>)}</tr>
           <tr><td>Debt cover <span className="faint small">profit ÷ repayments; lenders usually want 1.5× or more</span></td>
-            {[eLo, eMid, eHi].map((e, i) => { const c = cover(e); return (
+            {[aLo, eMid, aHi].map((e, i) => { const c = cover(e); return (
               <td key={i} className={`num ${coverCls(c)}`}><b>{c === null ? "—" : `${c.toFixed(1)}×`}</b><div className="small">{verdict(c)}</div></td>); })}</tr>
         </tbody>
       </table>
-      <p className="faint small">Before tax, capex, fees and your salary.</p>
+      <p className="faint small">Before tax, capex and fees. Your salary is in the adjustments (step 2).</p>
     </details>
   );
 }
