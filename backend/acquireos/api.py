@@ -166,7 +166,7 @@ def _meta():
                       -- targets still open: in a buy box, not ruled out or combined into another
                       (select count(*) from company_best cb where not exists (
                          select 1 from user_company uc where uc.company_number = cb.company_number and uc.user_id = %(uid)s
-                         and (uc.status in ('rejected', 'passed') or uc.merged_into is not null))) as in_scope,
+                         and (uc.status in ('rejected', 'passed')))) as in_scope,
                       (select count(*) from company_change ch
                          join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
                          where uc.status not in ('new', 'rejected', 'passed') and {UNREAD_SQL}
@@ -312,8 +312,6 @@ def companies(
         if signal in ("possible_buyer", "many_shareholders"):
             where.append("exists (select 1 from company_signal sg where sg.company_number = c.company_number and %(signal)s = any(sg.signals))")
             params["signal"] = signal
-        if mine in ("hide_closed", "pipeline", "untouched"):  # a company combined into another shows only as that one
-            where.append("uc.merged_into is null")
         if mine == "hide_closed":   # hide companies you have passed on or rejected
             where.append("coalesce(uc.status, 'new') not in ('passed', 'rejected')")
         elif mine == "pipeline":    # only ones you are working on
@@ -411,7 +409,7 @@ def companies(
                    coalesce(uc.status, 'new') as status, uc.rating, uc.next_action, uc.next_action_on,
                    ch.last_change, ch.last_kinds, en.website, en.business_type,
                    ao_signals(c.company_number) as signals, ao_same_business(c.company_number) as same_business,
-                   en.trading_region, uc.merged_into, sg.sold_on, sg.sold_to
+                   en.trading_region, sg.sold_on, sg.sold_to
             from page p join company c on c.company_number = p.company_number
             left join company_signal sg on sg.company_number = c.company_number
             left join company_latest l on l.company_number = c.company_number
@@ -634,22 +632,13 @@ def company(num: str, bb: str | None = None):
         signals = c.execute("select ao_signals(%s) as s", (num,)).fetchone()["s"] or []
         sold = c.execute("select sold_on, sold_to from company_signal where company_number = %s and 'recently_sold' = any(signals)",
                          (num,)).fetchone()
-        # Companies that look like the same business, with their figures, and
-        # any you have combined into this one.
+        # Companies that look like the same business (same owner and address, or
+        # a director in common at the same postcode), shown for information.
         same_business = c.execute(
-            """select c2.company_number, c2.name, c2.postcode, l.employees, e.revenue_low, e.revenue_high, e.basis as revenue_basis,
-                      uc.merged_into
+            """select c2.company_number, c2.name, c2.postcode, l.employees, e.revenue_low, e.revenue_high, e.basis as revenue_basis
                from unnest(ao_same_business(%s)) x(num) join company c2 on c2.company_number = x.num
                left join company_latest l on l.company_number = c2.company_number
-               left join estimate e on e.company_number = c2.company_number
-               left join user_company uc on uc.company_number = c2.company_number and uc.user_id = %s""",
-            (num, UID)).fetchall()
-        merged_here = c.execute(
-            """select uc.company_number, c2.name, l.employees, e.revenue_low, e.revenue_high, e.basis as revenue_basis
-               from user_company uc join company c2 on c2.company_number = uc.company_number
-               left join company_latest l on l.company_number = uc.company_number
-               left join estimate e on e.company_number = uc.company_number
-               where uc.user_id = %s and uc.merged_into = %s""", (UID, num)).fetchall()
+               left join estimate e on e.company_number = c2.company_number""", (num,)).fetchall()
         if enr and enr.get("locations"):
             # Map positions for the other offices, where their postcodes are known.
             pcs = [l["postcode"] for l in enr["locations"] if l.get("postcode")]
@@ -691,8 +680,7 @@ def company(num: str, bb: str | None = None):
         sc = next((x for x in scores if x["buy_box_id"] == bb["id"]), None)
     return {
         "deal": deal, "manual": manual, "buy_box": {"id": bb["id"], "name": bb["name"]}, "scores": scores,
-        "signals": signals, "sold": sold, "same_business": same_business, "merged_into": (state or {}).get("merged_into"),
-        "merged_here": merged_here,
+        "signals": signals, "sold": sold, "same_business": same_business,
         "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
         "changes": changes, "valuation": val, "fin_summary": fintrends.summary(fin), "ch": ch_details,
         "company": row, "financials": fin, "estimate": est, "ownership": own, "people": people,
@@ -846,33 +834,6 @@ class StateIn(BaseModel):
     funding: dict | None = None
     stage_note: str | None = None
     clear_rating: bool = False
-
-
-class MergeIn(BaseModel):
-    into: str | None = None  # null to separate them again
-
-
-@app.post("/api/companies/{num}/merge")
-def merge_company(num: str, body: MergeIn):
-    """Treat this company as part of another (the same business): it then
-    shows only under that one in your lists."""
-    num = num.strip().upper()
-    into = body.into.strip().upper() if body.into else None
-    if into == num:
-        raise HTTPException(400, "A company cannot be combined with itself")
-    with db.conn() as c:
-        if into and not c.execute("select 1 from company where company_number = %s", (into,)).fetchone():
-            raise HTTPException(404, "Company not found")
-        if into and c.execute("select 1 from user_company where user_id = %s and company_number = %s and merged_into is not null",
-                              (UID, into)).fetchone():
-            raise HTTPException(400, "That company is itself combined into another; combine with that one instead")
-        c.execute("insert into user_company (user_id, company_number) values (%s, %s) on conflict do nothing", (UID, num))
-        c.execute("update user_company set merged_into = %s, updated_at = now() where user_id = %s and company_number = %s",
-                  (into, UID, num))
-        # Anything combined into this one moves with it.
-        if into:
-            c.execute("update user_company set merged_into = %s where user_id = %s and merged_into = %s", (into, UID, num))
-    return {"ok": True, "merged_into": into}
 
 
 class BulkStateIn(StateIn):

@@ -74,7 +74,7 @@ def search_companies(query: str | None = None, region: str | None = None, min_sc
                          revenue=revenue)
     keep = ("company_number", "name", "region", "trading_region", "postcode", "sic_codes", "employees", "revenue_low",
             "revenue_high", "revenue_basis", "revenue_method", "value_low", "value_high", "value_basis", "ownership_type",
-            "oldest_birth_year", "flags", "signals", "sold_on", "sold_to", "same_business", "merged_into", "score",
+            "oldest_birth_year", "flags", "signals", "sold_on", "sold_to", "same_business", "score",
             "excluded", "exclusion", "status", "rating", "company_status", "last_change", "website")
     return _j({"total": r["total"], "companies": [{k: row.get(k) for k in keep} for row in r["rows"]]})
 
@@ -101,14 +101,6 @@ def mark_changes_read(ids: list[int] | None = None, all: bool = False) -> str:
     if all:
         return _j(a.changes_seen())
     return _j(a.changes_read(a.ReadIn(ids=ids or [])))
-
-
-@server.tool(description=(
-    "Treat one company as part of another (the same business, e.g. same director and office): it then shows only "
-    "under `into` in the user's lists. into=null separates them again. Only when the user asks."))
-def combine_companies(company_number: str, into: str | None) -> str:
-    a = _api()
-    return _j(a.merge_company(company_number, a.MergeIn(into=into)))
 
 
 @server.tool(description=(

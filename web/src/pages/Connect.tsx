@@ -96,7 +96,7 @@ export default function Connect() {
               ["save_enrichment", "Saves website, business type, offices, key facts, contacts, a summary and ownership found by research (e.g. sold to a group). A source link is required; the company is rescored straight away."],
               ["read_accounts_pdf, save_financials", "Reads accounts Companies House holds only as PDF and saves the figures printed in them, marked as from the PDF."],
               ["daily_briefing", "Unread changes to your pipeline, next actions due this week, pipeline companies sold or buying others, and sync progress."],
-              ["start_website_check, combine_companies, mark_changes_read", "Run the strict website check, treat two companies as one business, mark changes read. Only when you ask."],
+              ["start_website_check, mark_changes_read", "Run the strict website check, mark changes read. Only when you ask."],
               ["flag_data_issue, list_data_issues, resolve_data_issue", "Records problems for you to review, such as a wrong SIC code or a suspect owner link."],
               ["add_note, set_status", "Writes to your own notes and pipeline, labelled as Claude. Only when you ask."],
             ].map(([t, d]) => <tr key={t}><td style={{ width: "34%" }}><code>{t}</code></td><td className="muted">{d}</td></tr>)}

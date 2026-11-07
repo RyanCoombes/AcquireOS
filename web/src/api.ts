@@ -43,7 +43,7 @@ export interface Row {
   revenue_low: string | null;
   revenue_high: string | null;
   revenue_basis: string | null; revenue_method?: string | null;
-  signals?: string[]; same_business?: string[]; trading_region?: string | null; merged_into?: string | null;
+  signals?: string[]; same_business?: string[]; trading_region?: string | null;
   sold_on?: string | null; sold_to?: string | null;
   ownership_type: string | null;
   oldest_birth_year: number | null;
@@ -165,10 +165,7 @@ export interface CompanyDetail {
   signals?: string[];
   sold?: { sold_on: string | null; sold_to: string | null } | null;
   same_business?: { company_number: string; name: string; postcode: string | null; employees: number | null;
-                    revenue_low: string | null; revenue_high: string | null; revenue_basis: string | null; merged_into: string | null }[];
-  merged_into?: string | null;
-  merged_here?: { company_number: string; name: string; employees: number | null; revenue_low: string | null;
-                  revenue_high: string | null; revenue_basis: string | null }[];
+                    revenue_low: string | null; revenue_high: string | null; revenue_basis: string | null }[];
   manual: { criteria: ManualCriterion[]; values: Record<string, ManualValue> };
   buy_box: { id: number; name: string };
   geo: { lat: number; lon: number; precision: string } | null;
@@ -265,8 +262,6 @@ export const api = {
     req<{ results: { url: string; reachable: boolean; confidence: "high" | "medium" | "low" | null; evidence: string; page?: string; title?: string | null }[];
           saved: string[] | null; message: string }>(`/api/companies/${encodeURIComponent(n)}/find-website`,
       { method: "POST", body: JSON.stringify({ url: url ?? null }) }),
-  merge: (n: string, into: string | null) =>
-    req<{ ok: boolean; merged_into: string | null }>(`/api/companies/${encodeURIComponent(n)}/merge`, { method: "POST", body: JSON.stringify({ into }) }),
   chCheck: (n: string) => req<NonNullable<CompanyDetail["ch"]> & { changed: boolean; changes: number }>(
     `/api/companies/${encodeURIComponent(n)}/ch-check`, { method: "POST" }),
   chSync: () => req<ChSync>("/api/ch-sync"),

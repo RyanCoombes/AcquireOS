@@ -457,7 +457,7 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
           Sold{r.sold_on ? ` ${date(r.sold_on)}` : ""} to {r.sold_to}</span> : null}
         {r.same_business?.length ? <Link className="sig grey" to={`/c/${r.same_business[0]}`} onClick={(e) => e.stopPropagation()}
           title="Same owner and address, or a director in common at the same postcode">
-          Same business as {r.same_business.length === 1 ? "1 other" : `${r.same_business.length} others`}</Link> : null}
+          Linked to {r.same_business.length === 1 ? "1 other" : `${r.same_business.length} others`}</Link> : null}
       </div>
       <div className="sub">
         {r.company_number}

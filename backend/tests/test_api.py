@@ -618,15 +618,7 @@ def test_trust_rules(loaded):
     with TestClient(app) as cl:
         d = cl.get("/api/companies/01000001").json()
         assert "signals" in d and "same_business" in d
-        assert cl.post("/api/companies/01000002/merge", json={"into": "01000001"}).json()["merged_into"] == "01000001"
-        d = cl.get("/api/companies/01000001").json()
-        assert [m["company_number"] for m in d["merged_here"]] == ["01000002"]
-        listed = [r["company_number"] for r in cl.get("/api/companies", params={"mine": "hide_closed", "limit": 50}).json()["rows"]]
-        assert "01000002" not in listed and "01000001" in listed
-        cl.post("/api/companies/01000002/merge", json={"into": None})
-        listed = [r["company_number"] for r in cl.get("/api/companies", params={"mine": "hide_closed", "limit": 50}).json()["rows"]]
-        assert "01000002" in listed
-
+        assert cl.post("/api/companies/01000002/merge", json={"into": "01000001"}).status_code in (404, 405)  # removed
 
 def test_website_offices():
     from acquireos.website import addresses
@@ -727,8 +719,7 @@ def test_new_mcp_tools(loaded):
     with TestClient(app):
         r = _j.loads(m.search_companies(sold="hide", mine="hide_closed", limit=5))
         assert "companies" in r and all("signals" in x for x in r["companies"])
-        assert _j.loads(m.combine_companies("01000002", "01000001"))["merged_into"] == "01000001"
-        assert _j.loads(m.combine_companies("01000002", None))["merged_into"] is None
+        assert not hasattr(m, "combine_companies")
         assert "rows" in _j.loads(m.list_changes(days=30, unread_only=True))
         assert _j.loads(m.mark_changes_read(all=True))["ok"]
         b = _j.loads(m.daily_briefing())
