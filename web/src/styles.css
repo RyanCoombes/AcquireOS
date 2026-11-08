@@ -1259,3 +1259,38 @@ table.y2 { font-size: 13px; }
 .invtag { display: inline-block; font-size: 11px; font-weight: 650; color: var(--amber); background: var(--amber-soft); border-radius: 99px; padding: 1px 8px; margin-left: 6px; cursor: help; vertical-align: 1px; }
 .invline { font-size: 13px; color: var(--ink-2); margin: 0 0 6px; }
 .invline .invtag { margin-left: 0; }
+
+/* Owners & directors: one card per person */
+.pcards { display: grid; gap: 10px; margin-top: 12px; }
+.pcard { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--panel); }
+.pc-head { display: grid; grid-template-columns: 38px 1fr auto; gap: 10px; align-items: center; }
+.pc-av { width: 38px; height: 38px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 13px; }
+.pc-name { font-weight: 650; font-size: 14.5px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pc-name a { color: var(--ink); }
+.pc-sub { font-size: 12.5px; color: var(--ink-3); margin-top: 1px; }
+.pc-ret { color: var(--teal-2); font-weight: 600; }
+.pc-b { font-size: 11px; font-weight: 650; border-radius: 99px; padding: 1px 8px; }
+.pc-b.own { background: var(--teal-soft); color: var(--teal-2); } .pc-b.dir { background: var(--blue-soft); color: var(--blue); }
+.pc-b.sec { background: #eef0f3; color: var(--ink-2); } .pc-b.new { background: #efe9fb; color: #6a3fb0; } .pc-b.bad { background: var(--red-soft); color: var(--red); }
+.pc-pct { text-align: right; min-width: 90px; }
+.pc-pct b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.pc-pct .mini { display: block; width: 90px; height: 5px; border-radius: 3px; background: #eef0f3; margin: 3px 0 0 auto; overflow: hidden; }
+.pc-pct .mini i { display: block; height: 100%; border-radius: 3px; }
+.pc-facts { display: grid; grid-template-columns: 120px 1fr 120px 1fr; gap: 5px 10px; margin: 10px 0 0 48px; font-size: 13px; }
+.pc-facts dt { color: var(--ink-3); }
+.pc-facts dd { margin: 0; }
+.pc-actions { display: flex; gap: 12px; align-items: center; margin: 8px 0 0 48px; font-size: 12.5px; }
+@media (max-width: 1300px) { .pc-facts { grid-template-columns: 110px 1fr; } }
+@media (max-width: 600px) { .pc-facts, .pc-actions { margin-left: 0; } }
+.pc-counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.pc-counts span { font-size: 12.5px; color: var(--ink-2); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; }
+.pc-counts b { color: var(--ink); font-size: 14px; margin-right: 2px; }
+/* Balance chart in brand colours */
+.balchart .a-assets { fill: #0e7c6b; opacity: .22; }
+.balchart .l-assets { stroke: #0e7c6b; stroke-width: 2; }
+.balchart .a-net { fill: #1f5d70; opacity: .78; }
+.balchart .l-net { stroke: #16213a; stroke-width: 2; }
+.balchart .a-liab { fill: #9aa4b2; opacity: .35; }
+.balchart .l-liab { stroke: #7a8494; stroke-width: 1.6; }
+.k-assets { background: rgba(14,124,107,.35); } .k-net { background: #1f5d70; } .k-liab { background: rgba(154,164,178,.6); }
+.pc-facts { grid-template-columns: 120px 1fr !important; }

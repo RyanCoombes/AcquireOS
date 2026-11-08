@@ -34,8 +34,16 @@ export function BalanceChart({ series }: { series: FinSummary["series"] }) {
   const span = hi - lo || 1;
   const x = (i: number) => L + (i * (W - L - R)) / (pts.length - 1);
   const y = (v: number) => T + ((hi - v) * (H - T - B)) / span;
-  const area = (vals: number[]) => `M${x(0)},${y(0)} ` + vals.map((v, i) => `L${x(i)},${y(v)}`).join(" ") + ` L${x(vals.length - 1)},${y(0)} Z`;
-  const line = (vals: number[]) => vals.map((v, i) => `${i ? "L" : "M"}${x(i)},${y(v)}`).join(" ");
+  // Smooth curves through the points (control points a third of the way along, flattened at turning points).
+  const curve = (vals: number[]) => vals.map((v, i) => {
+    if (!i) return `M${x(0)},${y(v)}`;
+    const x0 = x(i - 1), x1 = x(i), y0 = y(vals[i - 1]), y1 = y(v), dx = (x1 - x0) / 3;
+    const s0 = i > 1 ? (y1 - y(vals[i - 2])) / (x1 - x(i - 2)) : (y1 - y0) / (x1 - x0);
+    const s1 = i < vals.length - 1 ? (y(vals[i + 1]) - y0) / (x(i + 1) - x0) : (y1 - y0) / (x1 - x0);
+    return `C${x0 + dx},${y0 + s0 * dx} ${x1 - dx},${y1 - s1 * dx} ${x1},${y1}`;
+  }).join(" ");
+  const area = (vals: number[]) => `${curve(vals)} L${x(vals.length - 1)},${y(0)} L${x(0)},${y(0)} Z`;
+  const line = (vals: number[]) => curve(vals);
   // Round tick steps (1, 2 or 5 × a power of ten) so the axis reads cleanly.
   const raw = span / 5, mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
   const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((v) => v >= raw) ?? raw;
@@ -397,6 +405,7 @@ type Who = {
   control?: string | null; est?: number;
   occupation?: string | null; residence?: string | null; nationality?: string | null; classes?: Set<string>;
   disq?: { from: string | null; until: string | null; reason: string | null; companies: string[] }[];
+  ownSince?: string | null; dirSince?: string | null; role?: string | null;
 };
 
 export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: React.ReactNode }) {
@@ -458,6 +467,7 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
     w.birthYear = w.birthYear ?? p.birth_year;
     w.regNo = p.registration_number;
     w.since = w.since ?? p.notified_on;
+    w.ownSince = w.ownSince && p.notified_on && w.ownSince < p.notified_on ? w.ownSince : p.notified_on ?? w.ownSince;
     w.control = controlText(p.natures);
     const s = stmt.get(pk(p));
     if (useStatement && s) w.pct = s.pct;
@@ -488,6 +498,7 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
     w.roles.add((o.role ?? "").includes("secretary") ? "Secretary" : "Director");
     w.birthYear = w.birthYear ?? o.birth_year;
     w.since = o.appointed_on && (!w.since || o.appointed_on < w.since) ? o.appointed_on : w.since;
+    if (!(o.role ?? "").includes("secretary")) { w.dirSince = o.appointed_on && (!w.dirSince || o.appointed_on < w.dirSince) ? o.appointed_on : w.dirSince; w.role = w.role ?? o.role; }
     w.boards = Math.max(w.boards, o.other_current);
     w.officerKey = o.officer_key;
     w.occupation = w.occupation ?? o.occupation; w.residence = w.residence ?? o.residence; w.nationality = w.nationality ?? o.nationality;
@@ -540,6 +551,20 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
           <span className="faint small">This overrides Companies House in scoring. The register below may be out of date.</span>
         </div>
       )}
+      {(() => {
+        const dirs = (ch?.officers ?? []).filter((o) => !o.resigned_on && !(o.role ?? "").includes("secretary")).length;
+        const owners = current.length;
+        const sh = stmt.size;
+        const prev = prevOwners.length + prevDirectors.length;
+        return (
+          <div className="pc-counts">
+            <span><b>{owners}</b> {owners === 1 ? "owner" : "owners"} on the register</span>
+            {sh > 0 && <span><b>{sh}</b> {sh === 1 ? "shareholder" : "shareholders"}</span>}
+            <span><b>{dirs}</b> {dirs === 1 ? "director" : "directors"}{!ch?.fetched ? " (fetch to see)" : ""}</span>
+            {prev > 0 && <span><b>{prev}</b> previous</span>}
+          </div>
+        );
+      })()}
       {useStatement ? (
         <p style={{ margin: "0 0 4px" }}><b>{stmt.size} {stmt.size === 1 ? "shareholder" : "shareholders"}
           {owners[0] ? `; largest ${owners[0].name} with ${owners[0].pct}%` : ""}.</b>
@@ -576,62 +601,68 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
       )}
 
       {people.length === 0 ? <div className="faint">No owners or directors on file.</div> : (
-        <div className="whos">
+        <div className="pcards">
           {people.map((w) => {
-            const theirs = w.officerKey ? others.filter((a) => a.officer_key === w.officerKey && !a.resigned_on) : [];
+            const all = w.officerKey ? others.filter((a) => a.officer_key === w.officerKey) : [];
+            const theirs = all.filter((a) => !a.resigned_on);
+            const yearAgo = Date.now() - 3.156e10;
+            const joined = all.filter((a) => a.appointed_on && new Date(a.appointed_on).getTime() > yearAgo);
+            const left = all.filter((a) => a.resigned_on && new Date(a.resigned_on).getTime() > yearAgo);
             const age = w.birthYear ? new Date().getFullYear() - w.birthYear : null;
-            const yrs = yearsSince(w.since);
             const pctText = (useStatement || !w.band) && w.pct != null ? `${w.pct}%` : w.band ? `${w.band[0]}–${w.band[1]}%` : null;
             const barW = (useStatement || !w.band) && w.pct != null ? w.pct : w.est ?? w.band?.[0] ?? 0;
-            const showAge = !w.company && (age || w.roles.has("Director") || w.roles.has("Secretary"));
+            const isOwner = w.roles.has("Owner") || w.roles.has("Shareholder");
+            const isDir = w.roles.has("Director");
+            const recent = (d?: string | null) => !!d && new Date(d).getTime() > yearAgo;
+            const since = (d: string | null | undefined) => (d ? <>{new Date(d).toLocaleDateString("en-GB", { month: "short", year: "numeric" })} <span className="faint">({yearsSince(d) ?? 0} {yearsSince(d) === 1 ? "yr" : "yrs"})</span></> : <span className="faint">date not given</span>);
+            const initials = w.company ? "Co" : w.name.split(/\s+/).filter(Boolean).slice(0, 2).map((x) => x[0]).join("").toUpperCase();
+            const coLink = (a: (typeof all)[number]) => <Link key={a.company_number + (a.role ?? "")} to={`/c/${a.company_number}`}>{niceName(a.company_name ?? a.company_number, true)}</Link>;
+            const list = (xs: (typeof all)) => xs.slice(0, 3).map((a, i) => <span key={i}>{i ? ", " : ""}{coLink(a)}</span>);
             return (
-              <div key={w.key} className="who">
-                <span className="dot" style={{ background: w.colour ?? "var(--grey-soft)" }} />
-                <div className="wmain">
-                  <div className="wname">
-                    {w.personId ? <Link to={`/owners/${w.personId}`}>{w.name}</Link> : w.name}
-                    {w.officerKey ? <WatchButton small kind="director" refId={w.officerKey} label={w.name}
-                                                 on={(data.watched_officers ?? []).includes(w.officerKey)} />
-                      : w.personId ? <WatchButton small kind="owner" refId={String(w.personId)} label={w.name}
-                                                       on={(data.watched_owners ?? []).includes(String(w.personId))} /> : null}
-                    {(w.personId || w.officerKey) && !w.company && (
-                      <Link className="wconn" to={`/connections/n/${encodeURIComponent(w.personId ? `p:${w.personId}` : `o:${w.officerKey}`)}`}
-                            title="Everything this person owns or directs">Connections</Link>)}
-                    {[...w.roles].filter((r) => r !== "Shareholder" || !w.roles.has("Owner")).map((r) =>
-                      <span key={r} className={`role ${r === "Shareholder" ? "owner" : r.toLowerCase()}`}>
-                        {r === "Shareholder" ? "Owner" : r === "Owner" && !w.band && w.pct == null && w.control ? "Controls" : r}</span>)}
-                  </div>
-                  <div className="wmeta">
-                    {w.company ? <>Company{w.regNo ? <> · <Link to={`/c/${w.regNo}`}>{w.regNo}</Link></> : null}
-                      {w.since ? ` · since ${date(w.since)}` : ""}{w.ultimately.length ? <> · owned by {w.ultimately.join(", ")}</> : null}</>
-                      : showAge ? <>{age ? `Age ${age}` : "Age not known"}{yrs !== null ? ` · ${yrs} ${yrs === 1 ? "yr" : "yrs"}` : ""}
-                          {w.roles.has("Director") ? ` · ${w.boards} other ${w.boards === 1 ? "board" : "boards"}` : ""}</> : "Shareholder"}
-                  </div>
-                  {(w.occupation || w.residence || w.nationality) && !w.company && (
-                    <div className="wmeta">
-                      {w.occupation ? <span className={/retired/i.test(w.occupation) ? "role owner" : ""}>{cap1(w.occupation)}</span> : null}
-                      {w.residence ? `${w.occupation ? " · " : ""}lives in ${cap1(w.residence)}` : ""}
-                      {w.nationality ? ` · ${cap1(w.nationality)}` : ""}
+              <div key={w.key} className="pcard">
+                <div className="pc-head">
+                  <span className="pc-av" style={{ background: w.colour ?? "#c9ced6" }}>{initials}</span>
+                  <div className="pc-title">
+                    <div className="pc-name">
+                      {w.personId ? <Link to={`/owners/${w.personId}`}>{w.name}</Link> : w.company && w.regNo ? <Link to={`/c/${w.regNo}`}>{w.name}</Link> : w.name}
+                      {isOwner && <span className="pc-b own">{w.control && !pctText ? "Controls" : "Owner"}</span>}
+                      {isDir && <span className="pc-b dir">Director</span>}
+                      {w.roles.has("Secretary") && <span className="pc-b sec">Secretary</span>}
+                      {(recent(w.dirSince) || recent(w.ownSince)) && <span className="pc-b new">New</span>}
+                      {w.disq?.length ? <span className="pc-b bad">Disqualified</span> : null}
                     </div>
-                  )}
-                  {w.classes && (allClasses.length > 1 || [...w.classes].some((c) => !/^ordinary$/i.test(c))) &&
-                    <div className="wmeta">Shares: {[...w.classes].join(", ")}</div>}
-                  {w.disq?.map((d, i) => (
-                    <div key={i} className="wnote warn"><b>Disqualified director</b> {d.from ? `from ${date(d.from)}` : ""}{d.until ? ` to ${date(d.until)}` : ""}
-                      {d.reason ? `: ${d.reason}` : ""}{d.companies.length ? ` (${d.companies.slice(0, 3).join(", ")})` : ""}</div>
-                  ))}
-                  {w.control && (!w.band || w.pct == null) && <div className="wnote">Control: {w.control}</div>}
-                  {w.note && <div className={`wnote ${w.note.warn ? "warn" : ""}`}>{w.note.text}</div>}
-                  {theirs.length > 0 && (
-                    <div className="wother">
-                      {theirs.slice(0, 3).map((a) => <Link key={a.company_number} to={`/c/${a.company_number}`}>{a.company_name ?? a.company_number}</Link>)}
-                      {theirs.length > 3 && <span className="faint"> +{theirs.length - 3} more</span>}
+                    <div className="pc-sub">
+                      {w.company ? <>Company{w.regNo ? ` · ${w.regNo}` : ""}{w.ultimately.length ? <> · owned by {w.ultimately.join(", ")}</> : null}</>
+                        : <>{age ? `Age ${age}` : "Age not known"}{w.occupation ? <> · <span className={/retired/i.test(w.occupation) ? "pc-ret" : ""}>{cap1(w.occupation)}</span></> : null}</>}
                     </div>
-                  )}
+                  </div>
+                  <div className="pc-pct">
+                    {pctText ? <><b>{pctText}</b><span className="mini"><i style={{ width: `${barW}%`, background: w.colour }} /></span>
+                      {w.est != null && !(useStatement && w.pct != null) && w.band && w.band[0] !== w.band[1] && <div className="faint small">about {w.est}%</div>}</> : null}
+                  </div>
                 </div>
-                <div className="wpct">
-                  {pctText ? <><b>{pctText}</b>{w.est != null && !(useStatement && w.pct != null) && w.band && w.band[0] !== w.band[1] && <div className="faint small">≈{w.est}%</div>}<span className="mini"><i style={{ width: `${barW}%`, background: w.colour }} /></span></> : <span className="faint small">—</span>}
-                </div>
+                <dl className="pc-facts">
+                  {isDir && <><dt>Director since</dt><dd>{since(w.dirSince)}</dd></>}
+                  {isOwner && <><dt>Owner since</dt><dd>{since(w.ownSince ?? w.since)}</dd></>}
+                  {!w.company && (w.residence || w.nationality) && <><dt>Lives in</dt><dd>{[w.residence && cap1(w.residence), w.nationality && cap1(w.nationality)].filter(Boolean).join(" · ")}</dd></>}
+                  {isDir && <><dt>Other boards</dt><dd>{theirs.length ? <>{theirs.length} active: {list(theirs)}{theirs.length > 3 ? <span className="faint"> +{theirs.length - 3}</span> : null}</> : w.boards ? `${w.boards} active` : <span className="faint">none</span>}</dd></>}
+                  {joined.length > 0 && <><dt>Recently joined</dt><dd>{list(joined)}</dd></>}
+                  {left.length > 0 && <><dt>Recently left</dt><dd>{list(left)}</dd></>}
+                  {w.classes && (allClasses.length > 1 || [...w.classes].some((c) => !/^ordinary$/i.test(c))) && <><dt>Shares</dt><dd>{[...w.classes].join(", ")}</dd></>}
+                  {w.control && (!w.band || w.pct == null) && <><dt>Control</dt><dd>{w.control}</dd></>}
+                </dl>
+                {w.disq?.map((d, i) => (
+                  <div key={i} className="wnote warn"><b>Disqualified director</b> {d.from ? `from ${date(d.from)}` : ""}{d.until ? ` to ${date(d.until)}` : ""}
+                    {d.reason ? `: ${d.reason}` : ""}{d.companies.length ? ` (${d.companies.slice(0, 3).join(", ")})` : ""}</div>
+                ))}
+                {w.note && <div className={`wnote ${w.note.warn ? "warn" : ""}`}>{w.note.text}</div>}
+                {(w.officerKey || w.personId) && !w.company && (
+                  <div className="pc-actions">
+                    {w.officerKey ? <WatchButton small kind="director" refId={w.officerKey} label={w.name} on={(data.watched_officers ?? []).includes(w.officerKey)} />
+                      : <WatchButton small kind="owner" refId={String(w.personId)} label={w.name} on={(data.watched_owners ?? []).includes(String(w.personId))} />}
+                    <Link to={`/connections/n/${encodeURIComponent(w.personId ? `p:${w.personId}` : `o:${w.officerKey}`)}`}>Connections</Link>
+                  </div>
+                )}
               </div>
             );
           })}

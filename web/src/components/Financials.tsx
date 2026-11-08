@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { CompanyDetail } from "../api";
 import { date, int, money } from "../format";
 import { Hint } from "./bits";
-import { BalanceChart } from "./Profile";
+import { FinancialOverview } from "./Profile";
 
 type F = CompanyDetail["financials"][number];
 type Val = number | null;
@@ -28,7 +28,7 @@ export default function Financials({ data }: { data: CompanyDetail }) {
     return { f, label: new Date(f.period_end).toLocaleDateString("en-GB", { month: "short", year: "numeric" }),
              turnover: n(f.turnover) ?? e, turnoverEst: f.turnover == null && e != null };
   });
-  const [tab, setTab] = useState("pl");
+  const [tab, setTab] = useState("ov");
   const [view, setView] = useState<"chart" | "table">("chart");
   if (!ys.length) return <div className="faint">No accounts on file.</div>;
 
@@ -66,7 +66,9 @@ export default function Financials({ data }: { data: CompanyDetail }) {
         { label: "Share capital", get: (f) => n(f.share_capital) },
         { label: "Net assets", get: (f) => n(f.net_assets), key: true, change: true },
       ],
-      chart: () => data.fin_summary?.series?.length ? <BalanceChart series={data.fin_summary.series} /> : null },
+      chart: (ys) => <ComboChart years={ys.map((y) => y.label)}
+        bars={[{ label: "Net assets", values: ys.map((y) => n(y.f.net_assets)), colour: "#0e7c6b" },
+               { label: "Net current assets", values: ys.map((y) => n(y.f.net_current_assets)), colour: "#7fb8ad" }]} /> },
     { key: "cash", label: "Cash & debt", rows: [
         { label: "Cash", get: (f) => n(f.cash), key: true, change: true },
         { label: "Bank loans and overdrafts", get: (f) => bank(f), key: true, hint: "Repaid from the price on a cash-free, debt-free deal" },
@@ -92,8 +94,9 @@ export default function Financials({ data }: { data: CompanyDetail }) {
   ];
   const allRows: Row[] = [...tabs[0].rows, ...tabs[1].rows, ...tabs[3].rows, { label: "Bank loans and overdrafts", get: (f: F) => bank(f) }];
   const all: Tab = { key: "all", label: "All figures", rows: allRows.filter((r, i, arr) => arr.findIndex((x) => x.label === r.label) === i) };
-  const shown = [...tabs, all].map((t) => ({ ...t, rows: t.rows.filter((r) => ys.some((y, i) => r.get(y.f, i) !== null)) }))
-    .filter((t) => t.rows.length > 0);
+  const overview: Tab = { key: "ov", label: "Overview", rows: [] };
+  const shown = [...(data.fin_summary?.rows?.length ? [overview] : []), ...tabs, all].map((t) => ({ ...t, rows: t.rows.filter((r) => ys.some((y, i) => r.get(y.f, i) !== null)) }))
+    .filter((t) => t.key === "ov" || t.rows.length > 0);
   const cur = shown.find((t) => t.key === tab) ?? shown[0];
 
   return (
@@ -102,8 +105,9 @@ export default function Financials({ data }: { data: CompanyDetail }) {
         <div className="tabs2" role="tablist">
           {shown.map((t) => <button key={t.key} role="tab" aria-selected={t.key === cur.key} className={t.key === cur.key ? "on" : ""} onClick={() => setTab(t.key)}>{t.label}</button>)}
         </div>
-        {cur.chart && <span className="seg2"><button className={view === "chart" ? "on" : ""} onClick={() => setView("chart")}>Chart and table</button><button className={view === "table" ? "on" : ""} onClick={() => setView("table")}>Table only</button></span>}
+        {cur.chart && cur.key !== "ov" && <span className="seg2"><button className={view === "chart" ? "on" : ""} onClick={() => setView("chart")}>Chart and table</button><button className={view === "table" ? "on" : ""} onClick={() => setView("table")}>Table only</button></span>}
       </div>
+      {cur.key === "ov" ? <FinancialOverview s={data.fin_summary!} /> : <>
       {cur.chart && view === "chart" && cur.chart(ys)}
       <div className="fin2-table">
         <table className="y2">
@@ -130,6 +134,7 @@ export default function Financials({ data }: { data: CompanyDetail }) {
         </table>
       </div>
       <p className="faint small" style={{ margin: "6px 0 0" }}>Only figures the accounts give. <span className="fig-est">Amber underlined</span>: estimate. ᴾ: read from a PDF.</p>
+      </>}
     </div>
   );
 }
