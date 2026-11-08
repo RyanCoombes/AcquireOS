@@ -33,7 +33,9 @@ export default function Financials({ data }: { data: CompanyDetail }) {
   if (!ys.length) return <div className="faint">No accounts on file.</div>;
 
   const turnoverRow: Row = { label: "Turnover", get: (_f, i) => ys[i].turnover, change: true, est: (i) => ys[i].turnoverEst, key: false };
-  const margin = (y: Year) => { const e = ebitda(y.f) ?? n(y.f.operating_profit); return e !== null && n(y.f.turnover) ? (100 * e) / n(y.f.turnover)! : null; };
+  const pos = (f: F) => (n(f.turnover) !== null && n(f.turnover)! > 0 ? n(f.turnover)! : null);
+  const sane = (m: number | null) => (m !== null && m >= -100 && m <= 100 ? m : null);
+  const margin = (y: Year) => { const e = ebitda(y.f) ?? n(y.f.operating_profit); return e !== null && pos(y.f) ? sane((100 * e) / pos(y.f)!) : null; };
   const tabs: Tab[] = [
     { key: "pl", label: "Revenue & profit", rows: [
         turnoverRow,
@@ -41,7 +43,7 @@ export default function Financials({ data }: { data: CompanyDetail }) {
         { label: "Operating profit", get: (f) => n(f.operating_profit), change: true },
         { label: "Depreciation and amortisation", get: (f) => da(f) },
         { label: "EBITDA", get: (f) => ebitda(f), key: true, change: true, hint: "Operating profit + depreciation and amortisation, both filed" },
-        { label: "EBITDA margin", get: (_f, i) => (ebitda(ys[i].f) !== null && ys[i].turnover ? (100 * ebitda(ys[i].f)!) / ys[i].turnover! : null), fmt: "pct" },
+        { label: "EBITDA margin", get: (_f, i) => (ebitda(ys[i].f) !== null && pos(ys[i].f) ? sane((100 * ebitda(ys[i].f)!) / pos(ys[i].f)!) : null), fmt: "pct" },
         { label: "Interest paid", get: (f) => n(f.interest_payable) },
         { label: "Tax", get: (f) => n(f.tax) },
         { label: "Profit after tax", get: (f) => n(f.profit_loss), change: true },
@@ -160,7 +162,7 @@ function ComboChart({ years, bars, line }: {
 }) {
   const live = bars.filter((b) => b.values.some((v) => v !== null));
   if (!live.length) return null;
-  const W = 1000, H = 230, L = 60, R = 14, T = 24, B = 28;
+  const W = 1000, H = 230, L = 200, R = 0, T = 24, B = 28;
   const all = live.flatMap((b) => b.values).filter((v): v is number => v !== null);
   const ticks = niceTicks(Math.min(0, ...all), Math.max(0, ...all));
   const min = ticks[0], max = ticks[ticks.length - 1], span = max - min || 1;
@@ -208,7 +210,7 @@ function ComboChart({ years, bars, line }: {
 
 /** A small line chart for a second measure (a margin, revenue per head), with its own scale. */
 function MiniLine({ years, values, label, fmt }: { years: string[]; values: Val[]; label: string; fmt: "money" | "pct" }) {
-  const W = 1000, H = 110, L = 60, R = 14, T = 22, B = 8;
+  const W = 1000, H = 110, L = 200, R = 0, T = 22, B = 8;
   const vs = values.filter((v): v is number => v !== null);
   const ticks = niceTicks(Math.min(0, ...vs), Math.max(...vs), 2);
   const lo = ticks[0], hi = ticks[ticks.length - 1], span = hi - lo || 1;

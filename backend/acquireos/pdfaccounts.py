@@ -27,7 +27,7 @@ FIELDS = ("turnover", "gross_profit", "operating_profit", "profit_loss", "net_as
 
 # Labels at the start of a line (lower-cased, punctuation simplified).
 # Bump when reading improves: years that couldn't be read are tried again.
-VERSION = 3
+VERSION = 4
 
 _PL = r"(profit|loss|\(loss\)\s*/\s*profit|profit\s*/\s*\(loss\)|\(profit\)\s*/\s*loss|loss\s*/\s*\(profit\))"
 LABELS: list[tuple[str, re.Pattern]] = [
@@ -137,6 +137,16 @@ def extract(text: str) -> dict:
     if "net_assets" not in found and "equity" in found:
         found["net_assets"] = found["equity"]
     found.pop("equity", None)
+    # Turnover is never negative, and doesn't jump twentyfold in a year: either
+    # column like that is a misread (a note number, a bracketed subtotal).
+    if "turnover" in found:
+        cur, prior = found["turnover"]
+        if cur is not None and cur <= 0:
+            dropped.append("turnover (not a positive figure)")
+            del found["turnover"]
+        elif prior is not None and (prior <= 0 or (cur and (cur / prior > 20 or prior / cur > 20))):
+            found["turnover"] = [cur, None]
+            dropped.append("prior-year turnover (doesn't fit the current year)")
     t = (found.get("turnover") or [None])[0]
     for f, lim in (("gross_profit", 1.0), ("operating_profit", 1.0), ("profit_loss", 1.5)):
         v = (found.get(f) or [None])[0]

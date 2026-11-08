@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { api, type Assumptions, type CompanyDetail, type Funding } from "../api";
 import { money, range, toNum } from "../format";
 import MoneyInput from "./MoneyInput";
+import { Hint } from "./bits";
 
 const FIELDS: { k: keyof Assumptions; label: string; unit: string; step: number }[] = [
   { k: "margin_low", label: "Margin, low", unit: "%", step: 1 },
@@ -68,24 +69,17 @@ export default function Valuation({ data, num, onSaved }: { data: CompanyDetail;
             <div><b className="hl">{range(vLo, vHi)}</b><span>Enterprise value</span></div>
             {v.cash ? <div><b>{money(v.cash)}</b><span>Cash on balance sheet, not included</span></div> : null}
           </div>
-          <ol className="steps">
-            {live.basis === "filed" ? (
-              <li>Profit: filed operating profit of {money(op)}. Depreciation is not added back, so true EBITDA is likely higher.</li>
-            ) : (
-              <li>Profit: {est?.basis === "filed" ? "filed turnover" : "estimated revenue"} of {range(est!.revenue_low, est!.revenue_high)} × {round1(mLo)}–{round1(mHi)}% margin
-                {live.basis === "filed_margin"
-                  ? <> (<b>the company's own</b>: {round1(Number(fm))}% in its {String(v.filed_margin_period ?? "").slice(0, 4)} accounts, the latest showing profit; the upper end allows for some improvement).</>
-                  : <> (your buy box's assumption{fm === null ? "; no profit has ever been filed" : ""}).</>}</li>
-            )}
-            <li>Value: profit × {a.multiple_low}–{a.multiple_high} times.</li>
-            <li>Debt is not netted off: on a cash-free, debt-free deal it is repaid from the seller's proceeds.</li>
-          </ol>
+          <p className="val-how">
+            {live.basis === "filed" ? <>Filed operating profit {money(op)}</> : <>{est?.basis === "filed" ? "Filed" : "Estimated"} revenue × {round1(mLo)}–{round1(mHi)}% margin{live.basis === "filed_margin" ? <> (its own, from {String(v.filed_margin_period ?? "").slice(0, 4)})</> : " (your buy box)"}</>}
+            {" "}× {a.multiple_low}–{a.multiple_high} times. Debt not netted off.
+            <Hint text={live.basis === "filed" ? "Depreciation is added back where it's filed (EBITDA). On a cash-free, debt-free deal, debt is repaid from the seller's proceeds, so it isn't taken off the value here."
+              : `${live.basis === "filed_margin" ? `The margin is the company's own: ${round1(Number(fm))}% in its latest accounts with profit; the upper end allows some improvement. ` : fm === null ? "No profit has ever been filed, so your buy box's margin is used. " : ""}On a cash-free, debt-free deal, debt is repaid from the seller's proceeds.`} />
+          </p>
           {outstanding > 0 && (
-            <div className="callout amber">
-              <b>Existing secured lenders{lenders.length ? `: ${lenders.join(", ")}` : ` (${outstanding} outstanding charge${outstanding === 1 ? "" : "s"})`}.</b>{" "}
-              On a cash-free, debt-free deal they're repaid from the seller's proceeds and must release their charges at completion.
-              Ask early how much is owed: the register shows the security, not the balance.
-            </div>
+            <p className="val-lend">
+              <span className="invtag">Secured lenders</span> {lenders.length ? lenders.join(", ") : `${outstanding} outstanding charge${outstanding === 1 ? "" : "s"}`}: repaid from the price; ask what's owed.
+              <Hint text="On a cash-free, debt-free deal they're repaid from the seller's proceeds and must release their charges at completion. The register shows the security, not the balance." />
+            </p>
           )}
           <div className="assume">
             {FIELDS.map((f) => (
@@ -103,9 +97,7 @@ export default function Valuation({ data, num, onSaved }: { data: CompanyDetail;
               {(isOverride || dirty) && (
                 <button className="btn quiet" onClick={() => { setA(v.defaults); setMarginTouched(false); save(null); }}>Use buy box defaults</button>
               )}
-              {!dirty && !isOverride && <span className="faint small">{ownMargin
-                ? "Using the company's own margin (above); the margin boxes are your buy box's defaults. Change them to override."
-                : "Defaults from your buy box. Change them here for this company only."}</span>}
+              {!dirty && !isOverride && <span className="faint small">{ownMargin ? "Margin boxes: your buy box's defaults (its own margin is used)." : "Your buy box's defaults; change them for this company only."}</span>}
               {!dirty && isOverride && <span className="small" style={{ color: "var(--amber)" }}>Using your own assumptions for this company.</span>}
             </div>
           </div>

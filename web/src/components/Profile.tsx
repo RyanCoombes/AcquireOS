@@ -417,6 +417,7 @@ type Who = {
 
 export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: React.ReactNode }) {
   const [view, setView] = useState<"now" | "time">("now");
+  const [only, setOnly] = useState<null | "owners" | "directors" | "shareholders">(null);
   const ch = data.ch;
   const own = data.ownership;
   const isCo = (n: string) => /\b(LIMITED|LTD|PLC|LLP|TRUST|NOMINEES?)\b/i.test(n);
@@ -564,11 +565,16 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
         const sh = stmt.size;
         const prev = prevOwners.length + prevDirectors.length;
         return (
-          <div className="pc-counts">
-            <span><b>{owners}</b> {owners === 1 ? "owner" : "owners"} on the register</span>
-            {sh > 0 && <span><b>{sh}</b> {sh === 1 ? "shareholder" : "shareholders"}</span>}
-            <span><b>{dirs}</b> {dirs === 1 ? "director" : "directors"}{!ch?.fetched ? " (fetch to see)" : ""}</span>
+          <div className="pc-counts" role="group" aria-label="Show only">
+            {([["owners", owners, owners === 1 ? "owner" : "owners", " on the register"], ["shareholders", sh, sh === 1 ? "shareholder" : "shareholders", ""],
+               ["directors", dirs, dirs === 1 ? "director" : "directors", !ch?.fetched ? " (fetch to see)" : ""]] as const)
+              .filter(([k, n]) => k !== "shareholders" || n > 0).map(([k, n, word, tail]) => (
+              <button key={k} className={only === k ? "on" : ""} aria-pressed={only === k} disabled={!n}
+                      onClick={() => setOnly(only === k ? null : k)} title={only === k ? "Show everyone" : `Show only ${word}`}>
+                <b>{n}</b> {word}{tail}</button>
+            ))}
             {prev > 0 && <span><b>{prev}</b> previous</span>}
+            {only && <button className="linkish small" onClick={() => setOnly(null)}>Show everyone</button>}
           </div>
         );
       })()}
@@ -609,7 +615,8 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
 
       {people.length === 0 ? <div className="faint">No owners or directors on file.</div> : (
         <div className="pcards">
-          {people.map((w) => {
+          {people.filter((w) => !only || (only === "directors" ? w.roles.has("Director")
+              : only === "owners" ? w.roles.has("Owner") : w.roles.has("Shareholder"))).map((w) => {
             const all = w.officerKey ? others.filter((a) => a.officer_key === w.officerKey) : [];
             const theirs = all.filter((a) => !a.resigned_on);
             const yearAgo = Date.now() - 3.156e10;

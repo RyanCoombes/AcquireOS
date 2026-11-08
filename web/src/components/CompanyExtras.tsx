@@ -134,7 +134,7 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
             {e?.linkedin && e?.phone && " · "}{e?.phone && <a href={`tel:${e.phone.replace(/\s/g, "")}`}>{e.phone}</a>}</div>
         )}
       </div>
-      {e?.summary && <div className="enr-summary"><Rich text={e.summary} /><Src url={sourceFor("summary")} /></div>}
+      {e?.summary && <div className="enr-summary"><Digest text={e.summary} /><Src url={sourceFor("summary")} /></div>}
       {(e?.facts ?? []).length > 0 && (
         <table className="facts">
           <tbody>
@@ -253,5 +253,28 @@ export function Rich({ text }: { text: string }) {
         return <p key={i}>{lines.map((l, j) => <span key={j}>{j > 0 && <br />}{bold(l)}</span>)}</p>;
       })}
     </>
+  );
+}
+
+
+/** A research note that came as one block of text: the first sentence as a lead,
+    the rest as short points (written lists are kept as they are). */
+function Digest({ text }: { text: string }) {
+  const [more, setMore] = useState(false);
+  if (/\n\s*[-•*]/.test(text) || text.length < 260) return <Rich text={text} />;
+  const parts = text.replace(/\s+/g, " ").split(/(?<=[.!?])\s+(?=[A-Z0-9£])/).map((x) => x.trim()).filter(Boolean);
+  const [lead, ...rest] = parts;
+  const shown = more ? rest : rest.slice(0, 5);
+  // "FINANCIALS from filed PDFs: …" → a bold label
+  const point = (t: string) => {
+    const m = t.match(/^([A-Z][A-Z &]{3,})(\b[^:]*:)\s*(.*)$/);
+    return m ? <><b>{m[1].charAt(0) + m[1].slice(1).toLowerCase()}{m[2]}</b> {m[3]}</> : t;
+  };
+  return (
+    <div className="digest">
+      <p className="dg-lead">{lead}</p>
+      {rest.length > 0 && <ul>{shown.map((t, i) => <li key={i}>{point(t)}</li>)}</ul>}
+      {rest.length > 5 && <button className="linkish small" onClick={() => setMore(!more)}>{more ? "Less" : `${rest.length - 5} more`}</button>}
+    </div>
   );
 }

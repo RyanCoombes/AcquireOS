@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
-import { ErrorLine, Flags, Hint, RevenueTag, Score, Signals, StatusMark, Toast, useAsync, WatchButton } from "../components/bits";
+import { ErrorLine, Flags, Hint, Score, Signals, StatusMark, Toast, useAsync, WatchButton } from "../components/bits";
 import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
 import MyScores from "../components/MyScores";
@@ -76,7 +76,7 @@ export default function Company() {
   const [inView, setInView] = useState("overview");
   useEffect(() => {
     if (!data) return;
-    const ids = ["overview", "ownership", "activity", "financials", "value", "compare", "charges", "filings", "group", "score", "research", "deal", "changes"];
+    const ids = ["overview", "activity", "financials", "ownership", "group", "value", "compare", "charges", "filings", "group", "score", "research", "deal", "changes"];
     const els = ids.map((id) => document.getElementById(id)).filter(Boolean) as HTMLElement[];
     const io = new IntersectionObserver((entries) => {
       const vis = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
@@ -150,7 +150,7 @@ export default function Company() {
           {data.ch?.enabled && <button className="btn quiet" onClick={refresh} title="Fetch everything from Companies House now, and read any accounts filed only as PDF">↻ Refresh</button>}
           <WatchButton kind="company" refId={c.company_number} on={!!data.watching} label={c.name} onChange={reload} />
           <a className="btn quiet" href={chUrl(c.company_number)} target="_blank" rel="noreferrer">Companies House ↗</a>
-          <Link className="btn" to={`/connections/${c.company_number}`}>Connection map</Link>
+          {data.enrichment?.website && <a className="btn" href={data.enrichment.website} target="_blank" rel="noreferrer">Website ↗</a>}
         </div>
       </div>
 
@@ -163,8 +163,9 @@ export default function Company() {
         </div>
         <div className="cokpi">
           <span className="k">Revenue</span>
-          <b>{est ? range(est.revenue_low, est.revenue_high) : "—"}</b>
-          <span className="s">{est ? <RevenueTag basis={est.basis} method={est.method} long /> : "Not filed or estimated"}</span>
+          <b>{est ? <span className={est.basis === "filed" ? "" : "fig-est"}>{range(est.revenue_low, est.revenue_high)}</span> : "—"}
+            {est && est.basis !== "filed" && <Hint text={`Estimate. ${est.method}`} />}</b>
+          <span className="s">{!est ? "Not filed or estimated" : est.basis === "filed" ? `Filed${est.method?.match(/year to (?:\d{1,2} )?([A-Z][a-z]{2} \d{4})/)?.[1] ? ` · ${est.method.match(/year to (?:\d{1,2} )?([A-Z][a-z]{2} \d{4})/)![1]}` : ""}` : "Estimate"}</span>
         </div>
         <div className={`cokpi ${profit && profit.v < 0 ? "bad" : ""}`}>
           <span className="k">{profit?.ebitda ? "EBITDA" : "Operating profit"}</span>
@@ -210,8 +211,8 @@ export default function Company() {
 
       <div className="company-page">
           <nav className="secnav" aria-label="Sections">
-            {[["overview", "Overview"], ["ownership", "Owners & directors"], ["activity", "Activity"], ["financials", "Financials"],
-              ["value", "Value"], ["charges", "Charges"], ["filings", "Filings"], ["group", "Group"], ["score", "Score"],
+            {[["overview", "Overview"], ["activity", "Activity"], ["financials", "Financials"], ["ownership", "Owners & directors"],
+              ["group", "Group"], ["value", "Value"], ["score", "Score"], ["charges", "Charges"], ["filings", "Filings"],
               ["research", "Research"], ["deal", "Deal"], ["changes", "History"]].map(([id, l]) => (
               <a key={id} href={`#${id}`} className={inView === id ? "on" : ""} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{l}</a>
             ))}
@@ -263,27 +264,17 @@ export default function Company() {
             <ActivitySection key={num} data={data} num={num} setState={setState} onChanged={reload} />
           </div>
         </div>
-        <OwnersDirectors data={data} flags={<Flags flags={own?.flags} address={c.address_flag} />} />
           <section id="financials">
             <Head icon="money" tone="green" title="Financials" aside={(() => { const n = fin.filter((f) => !f.period_inferred).length; return `${n} ${n === 1 ? "year" : "years"} filed`; })()} />
             <AccountsGap data={data} />
             <Financials data={data} />
             {est && est.basis !== "filed" && <p className="faint small" style={{ margin: "4px 0 0" }}>Revenue estimate: {range(est.revenue_low, est.revenue_high)} · {est.method}</p>}
           </section>
-          <div id="value">
-          <Valuation data={data} num={num} onSaved={reload} />
-
-          </div>
-          <Compare num={num} />
-          <div id="research">
-          <Enrichment key={JSON.stringify(data.enrichment)} data={data} num={num} onSaved={reload}
-                      finder={<WebsiteFinder num={num} onSaved={reload} />} />
-          </div>
-        <div className="flow2">
-            <Charges data={data} num={num} onFetched={reload} />
-            <Filings data={data} />
+        <OwnersDirectors data={data} flags={<Flags flags={own?.flags} address={c.address_flag} />} />
+        <div className="pair eq">
+          <div className="pcol">
           <section id="group">
-            <Head icon="group" tone="blue" title="Group and connections" right={<Link to={`/connections/${c.company_number}`}>Open map</Link>} />
+            <Head icon="group" tone="blue" title="Group and connections" right={<Link to={`/connections/${c.company_number}`}>Connection map →</Link>} />
             {data.links.length ? (
               <table>
                 <thead><tr><th>Company</th><th>Link</th><th>Confidence</th><th className="hide-sm">Evidence</th></tr></thead>
@@ -303,6 +294,17 @@ export default function Company() {
               </table>
             ) : <div className="faint">No links found in the data imported so far.</div>}
           </section>
+          </div>
+          <div className="pcol">
+          <Location data={data} />
+          </div>
+        </div>
+          <div id="value">
+          <Valuation data={data} num={num} onSaved={reload} />
+
+          </div>
+          <Compare num={num} />
+        <div className="flow2">
           <section id="score">
             <Head icon="target" title="Why this score" right={<Link to={`/buy-box?id=${shownId}`}>Edit {shownName}</Link>} />
             {scores.length > 1 && (
@@ -317,26 +319,35 @@ export default function Company() {
               </div>
             )}
             {score ? (
-              <table className="reasons">
-                <tbody>
-                  {score.reasons.map((r) => (
-                    <tr key={r.key}>
-                      <td style={{ width: 150 }}>
-                        <span className={`reason-mark ${r.status === "unscored" ? "unknown" : r.status}`}>{({ good: "✓", partial: "~", miss: "✕", unknown: "?", unscored: "–" } as Record<string, string>)[r.status]}</span>
-                        {r.label}
-                      </td>
-                      <td className={r.status === "unknown" ? "faint" : ""}>{r.text}</td>
-                      <td className="num pts">{r.status === "unknown" ? <span className="faint" title="No data: half points, neither a hit nor a miss">no data · {r.points} / {r.max}</span> : r.status === "unscored" ? <span className="faint">not counted</span> : `${r.points} / ${r.max}`}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="sc-grid">
+                {score.reasons.filter((r) => r.status !== "unscored").map((r) => {
+                  const mark = ({ good: "✓", partial: "~", miss: "✕", unknown: "?", unscored: "–" } as Record<string, string>)[r.status];
+                  const pct = r.max ? Math.round((100 * Number(r.points)) / Number(r.max)) : 0;
+                  return (
+                    <div key={r.key} className={`sc-r ${r.status}`} title={r.text}>
+                      <span className={`reason-mark ${r.status === "unscored" ? "unknown" : r.status}`}>{mark}</span>
+                      <span className="sc-l">{r.label}<span className="sc-t">{r.text}</span></span>
+                      <span className="sc-p">{r.status === "unscored" ? <span className="faint">–</span> : <>{r.points}<span className="faint">/{r.max}</span></>}
+                        {r.status !== "unscored" && <i style={{ width: `${pct}%` }} />}</span>
+                      {score.reasons.some((r) => r.status === "unscored") && (
+                  <div className="sc-r unscored"><span className="reason-mark unknown">–</span>
+                    <span className="sc-l">Your own scores<span className="sc-t">Not scored yet: {score.reasons.filter((r) => r.status === "unscored").map((r) => r.label).join(", ")}. <a href="#deal">Score them</a></span></span><span /></div>
+                )}
+              </div>
+                  );
+                })}
+              </div>
             ) : <div className="faint">Not scored yet.</div>}
           </section>
+            <Charges data={data} num={num} onFetched={reload} />
+            <Filings data={data} />
           <Research data={data} num={num} onAdded={reload} />
-          <Location data={data} />
           <DealSection data={data} num={num} setState={setState} onScored={reload} />
         </div>
+          <div id="research">
+          <Enrichment key={JSON.stringify(data.enrichment)} data={data} num={num} onSaved={reload}
+                      finder={<WebsiteFinder num={num} onSaved={reload} />} />
+          </div>
           <section id="changes">
             <Head icon="clock" tone="grey" title="Change history" />
             {data.changes.length ? (
