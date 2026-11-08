@@ -214,7 +214,7 @@ SORTS = {
     "score": "s.score", "name": "c.name", "staff": "l.employees", "revenue": "e.revenue_high",
     "age": "o.oldest_birth_year", "years": "c.incorporation_date", "net_assets": "l.net_assets",
     "updated": "uc.updated_at", "status": "uc.status", "value": "s.value_high",
-    "changed": "ch.last_change",
+    "changed": "ch.last_change", "profit": "l.operating_profit", "cash": "l.cash",
 }
 
 
@@ -437,7 +437,7 @@ def companies(
                    c.accounts_category, c.charges_outstanding,
                    (c.status like 'active%%' and c.accounts_next_due < current_date) as accounts_overdue,
                    (c.status like 'active%%' and c.confirmation_next_due < current_date) as confirmation_overdue,
-                   l.employees, l.net_assets, l.period_end, l.staff_trend,
+                   l.employees, l.net_assets, l.period_end, l.staff_trend, l.operating_profit, l.cash, l.da, l.bank_debt,
                    e.revenue_low, e.revenue_high, e.basis as revenue_basis, e.method as revenue_method,
                    o.ownership_type, o.oldest_birth_year, o.flags,
                    s.score, s.coverage, not ({sx}) as excluded, s.exclusion, s.value_low, s.value_high, s.value_basis,

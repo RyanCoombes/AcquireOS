@@ -1059,3 +1059,10 @@ tr:has(.rowmenu .pop) { position: relative; z-index: 60; }
 .report-grid { display: block !important; column-count: 2; column-gap: 16px; }
 .report-grid > section { break-inside: avoid; display: inline-block; width: 100%; margin: 0 0 16px; }
 @media (max-width: 1000px) { .report-grid { column-count: 1; } }
+
+/* Columns menu on lists */
+.colpicker { position: relative; display: flex; justify-content: flex-end; margin: -4px 0 6px; }
+.colpicker .cp-pop { position: absolute; right: 0; top: 34px; z-index: 40; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+                     box-shadow: var(--shadow-pop); padding: 10px 14px; display: grid; grid-template-columns: repeat(2, minmax(150px, auto)); gap: 4px 18px; }
+.colpicker .cp-pop .check { display: flex; gap: 6px; align-items: center; }
+.colpicker .cp-pop .linkish { grid-column: 1 / -1; justify-self: start; }

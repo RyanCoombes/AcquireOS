@@ -58,6 +58,7 @@ export interface Row {
   next_action_on: string | null;
   value_low: string | null;
   value_high: string | null;
+  operating_profit?: string | null; cash?: string | null; da?: string | null; bank_debt?: string | null;
   value_basis: string | null;
   last_change: string | null;
   last_kinds: string[] | null;

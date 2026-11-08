@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Row } from "../api";
 import { ErrorLine, Flags, RevenueTag, Score, Signals, StatusMark, Toast, useAsync } from "../components/bits";
@@ -6,7 +6,7 @@ import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
 import { NOT_NOW, NOT_SUITABLE, pickNote, rememberList, RuleOutMenu } from "../components/RuleOut";
 import { PresenceFilter, ActiveChips, FilterGroup, MoneyRange, NumField, NumRange, Select } from "../components/Filters";
-import { ageFrom, cap, CHANGE_KIND, date, int, isBadStatus, OWNERSHIP, range, relDays, years } from "../format";
+import { ageFrom, cap, CHANGE_KIND, date, int, isBadStatus, money, OWNERSHIP, range, relDays, years } from "../format";
 
 const PAGE = 100;
 type Mode = "directory" | "targets";
@@ -33,6 +33,26 @@ const COLS: Col[] = [
   { key: "ownership", label: "Ownership", sm: true, nosort: true },
   { key: "status", label: "My status" },
 ];
+// More you can switch on (Columns menu), placed before "My status".
+const EXTRA_COLS: Col[] = [
+  { key: "profit", label: "Operating profit", num: true, sm: true },
+  { key: "ebitda", label: "EBITDA", num: true, sm: true, nosort: true },
+  { key: "net_assets", label: "Net assets", num: true, sm: true },
+  { key: "cash", label: "Cash", num: true, sm: true },
+  { key: "debt", label: "Bank debt", num: true, sm: true, nosort: true },
+  { key: "industry", label: "Industry", sm: true, nosort: true },
+  { key: "region", label: "Region", sm: true, nosort: true },
+  { key: "website", label: "Website", sm: true, nosort: true },
+  { key: "changed", label: "Last change", sm: true },
+  { key: "next", label: "Next action", sm: true, nosort: true },
+];
+const allCols = (mode: Mode) => {
+  const base = mode === "directory" ? DIR_COLS : COLS;
+  const extras = EXTRA_COLS.filter((x) => !base.some((b) => b.key === x.key));
+  const i = base.findIndex((c) => c.key === "status");
+  return [...base.slice(0, i), ...extras, ...base.slice(i)];
+};
+const defaultCols = (mode: Mode) => (mode === "directory" ? DIR_COLS : COLS).map((c) => c.key);
 
 // The ways in. Each is just a preset of URL parameters; filters are kept
 // when you switch view.
@@ -172,7 +192,14 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const m = meta.data;
   const total = countQ.data?.total ?? 0;
   const capped = !!countQ.data?.capped;
-  const cols = mode === "directory" ? DIR_COLS : COLS;
+  const [shownCols, setShownCols] = useState<string[]>(() => {
+    try { const v = JSON.parse(localStorage.getItem(`ao.cols.${mode}`) ?? "null"); return Array.isArray(v) ? v : defaultCols(mode); } catch { return defaultCols(mode); }
+  });
+  useEffect(() => {
+    try { const v = JSON.parse(localStorage.getItem(`ao.cols.${mode}`) ?? "null"); setShownCols(Array.isArray(v) ? v : defaultCols(mode)); } catch { setShownCols(defaultCols(mode)); }
+  }, [mode]);
+  const setCols = (v: string[]) => { setShownCols(v); try { localStorage.setItem(`ao.cols.${mode}`, JSON.stringify(v)); } catch { /* ignore */ } };
+  const cols = allCols(mode).filter((c) => c.key === "name" || shownCols.includes(c.key));
   const boxName = boxId ? m?.buy_boxes.find((b) => b.id === boxId)?.name : null;
   const empty = m && m.counts.companies === 0;
   // Export exactly the list on screen: same filters and sort (up to 50,000 rows).
@@ -424,6 +451,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                 : boxName ? "Scores are from this buy box." : "Each company's best score across your buy boxes, tagged with the box."}
             </span>
           </div>
+          <ColumnPicker mode={mode} shown={shownCols} onChange={setCols} />
           {sel.size > 0 && (
             <div className="selbar" role="region" aria-label="Ticked companies">
               <b>{int(sel.size)} ticked</b>
@@ -456,7 +484,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
               </tr>
             </thead>
             <tbody>
-              {rows.filter((r) => !gone.has(r.company_number)).map((r, i) => <TargetRow key={r.company_number}
+              {rows.filter((r) => !gone.has(r.company_number)).map((r, i) => <TargetRow key={r.company_number} cols={cols.map((c) => c.key)}
                                              focus={focus} onRuledOut={(msg) => { setToast(msg); setGone((g) => new Set(g).add(r.company_number)); }} r={r} cursor={i === cursor} ticked={sel.has(r.company_number)} onTick={() => toggle(r.company_number)} showBox={!boxId} mode={mode} sics={sics} dim={!!boxId && !!r.excluded}
                                              href={`/c/${r.company_number}${boxId ? `?bb=${boxId}` : ""}`}
                                              onOpen={() => nav(`/c/${r.company_number}${boxId ? `?bb=${boxId}` : ""}`)} />)}
@@ -478,8 +506,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   );
 }
 
-function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, onTick, onRuledOut, focus }: {
-  r: Row; cursor: boolean; onOpen: () => void; showBox: boolean; mode: Mode; sics: SicOption[]; dim: boolean; href: string;
+function TargetRow({ r, cols, cursor, onOpen, showBox, mode, sics, dim, href, ticked, onTick, onRuledOut, focus }: {
+  r: Row; cols: string[]; cursor: boolean; onOpen: () => void; showBox: boolean; mode: Mode; sics: SicOption[]; dim: boolean; href: string;
   ticked: boolean; onTick: () => void; onRuledOut: (msg: string) => void; focus: string | null;
 }) {
   const closed = r.status === "rejected" || r.status === "passed";
@@ -542,47 +570,79 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
       </div>
     </td>
   );
-  if (mode === "directory") {
-    const code = r.sic_codes?.[0];
-    const label = code ? sics.find((o) => o.code === code)?.description : null;
-    return (
-      <tr className={`${cursor ? "cursor" : ""} ${dim ? "excluded" : ""} ${ticked ? "ticked" : ""}`} onClick={onOpen}>
-        {tick}
-        {nameCell}
-        <td className="hide-sm industry">
-          {code ? <><div className="clamp">{label ?? code}</div>
-            <div className="sub">{code}{r.sic_codes.length > 1 ? ` +${r.sic_codes.length - 1} more` : ""}</div></> : <span className="faint">Not given</span>}
-        </td>
-        <td className="num hide-sm">{years(r.incorporation_date)}</td>
-        {staffCell}
-        {revenueCell}
-        <td className="hide-sm nowrap">
-          {r.ownership_type ? OWNERSHIP[r.ownership_type] ?? r.ownership_type : <span className="faint">Not traced</span>}
-          {age ? <div className="sub">oldest owner {age}</div> : null}
-        </td>
-        {scoreCell}
-        {statusCell}
-      </tr>
-    );
-  }
-  return (
-    <tr className={`${cursor ? "cursor" : ""} ${dim ? "excluded" : ""} ${ticked ? "ticked" : ""}`} onClick={onOpen}>
-      {tick}
-      {scoreCell}
-      {nameCell}
-      {staffCell}
-      {revenueCell}
+  const code = r.sic_codes?.[0];
+  const label = code ? sics.find((o) => o.code === code)?.description : null;
+  const ownerCell = mode === "directory" ? (
+    <td className="hide-sm nowrap">
+      {r.ownership_type ? OWNERSHIP[r.ownership_type] ?? r.ownership_type : <span className="faint">Not traced</span>}
+      {age ? <div className="sub">oldest owner {age}</div> : null}
+    </td>) : <td className="num">{age ?? "—"}</td>;
+  const moneyCell = (v: string | number | null | undefined, sub?: string) => (
+    <td className={`num hide-sm ${v != null && Number(v) < 0 ? "neg" : ""}`}>{v == null ? "—" : money(v)}{sub ? <div className="sub">{sub}</div> : null}</td>);
+  const ebitda = r.operating_profit != null && r.da != null && Number(r.da) > 0 ? Number(r.operating_profit) + Number(r.da) : null;
+  const cells: Record<string, React.ReactNode> = {
+    score: scoreCell,
+    name: nameCell,
+    industry: (
+      <td className="hide-sm industry">
+        {code ? <><div className="clamp">{label ?? code}</div>
+          <div className="sub">{code}{r.sic_codes.length > 1 ? ` +${r.sic_codes.length - 1} more` : ""}</div></> : <span className="faint">Not given</span>}
+      </td>),
+    years: <td className="num hide-sm">{years(r.incorporation_date)}</td>,
+    staff: staffCell,
+    revenue: revenueCell,
+    value: (
       <td className="num hide-sm">
         {range(r.value_low, r.value_high)}
         {r.value_basis === "loss" ? <div className="sub">loss-making as filed</div>
           : r.value_low && r.value_basis ? <div><span className={`revtag ${r.value_basis === "filed" ? "filed" : "est"}`}
               title={r.value_basis === "filed" ? "From profit in the filed accounts" : r.value_basis === "filed_margin" ? "Revenue × the company's own margin from its last accounts with profit" : "From estimated revenue × your buy box's margin"}>
               {r.value_basis === "filed" ? "✓ Filed profit" : r.value_basis === "filed_margin" ? "≈ Own margin" : "≈ Estimate"}</span></div> : null}
-      </td>
-      <td className="num hide-sm">{years(r.incorporation_date)}</td>
-      <td className="num">{age ?? "—"}</td>
-      <td className="hide-sm nowrap">{r.ownership_type ? OWNERSHIP[r.ownership_type] ?? r.ownership_type : <span className="faint">Not traced</span>}</td>
-      {statusCell}
+      </td>),
+    age: ownerCell,
+    ownership: <td className="hide-sm nowrap">{r.ownership_type ? OWNERSHIP[r.ownership_type] ?? r.ownership_type : <span className="faint">Not traced</span>}</td>,
+    profit: moneyCell(r.operating_profit),
+    ebitda: moneyCell(ebitda),
+    net_assets: moneyCell(r.net_assets),
+    cash: moneyCell(r.cash),
+    debt: moneyCell(r.bank_debt),
+    region: <td className="hide-sm nowrap">{r.trading_region && r.trading_region !== r.region ? <>{r.trading_region}<div className="sub">registered {r.region}</div></> : r.region ?? "—"}</td>,
+    website: <td className="hide-sm">{r.website ? <a href={r.website} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{r.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}</a> : <span className="faint">—</span>}</td>,
+    changed: <td className="hide-sm nowrap">{r.last_change ? relDays(r.last_change) : <span className="faint">—</span>}</td>,
+    next: <td className="hide-sm">{r.next_action ? <>{r.next_action}{r.next_action_on ? <div className="sub">{date(r.next_action_on)}</div> : null}</> : <span className="faint">—</span>}</td>,
+    status: statusCell,
+  };
+  return (
+    <tr className={`${cursor ? "cursor" : ""} ${dim ? "excluded" : ""} ${ticked ? "ticked" : ""}`} onClick={onOpen}>
+      {tick}
+      {cols.map((k) => <Fragment key={k}>{cells[k]}</Fragment>)}
     </tr>
+  );
+}
+
+/** Choose the columns this list shows (remembered on this browser). */
+function ColumnPicker({ mode, shown, onChange }: { mode: Mode; shown: string[]; onChange: (v: string[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  const all = allCols(mode).filter((c) => c.key !== "name");
+  const toggle = (k: string) => onChange(shown.includes(k) ? shown.filter((x) => x !== k) : [...shown, k]);
+  return (
+    <div className="colpicker" ref={ref}>
+      <button className="btn quiet" onClick={() => setOpen(!open)} aria-expanded={open}>Columns ▾</button>
+      {open && (
+        <div className="cp-pop">
+          {all.map((c) => (
+            <label key={c.key} className="check small"><input type="checkbox" checked={shown.includes(c.key)} onChange={() => toggle(c.key)} />{c.label}</label>
+          ))}
+          <button className="linkish small" style={{ marginTop: 6 }} onClick={() => onChange(defaultCols(mode))}>Back to the usual columns</button>
+        </div>
+      )}
+    </div>
   );
 }
