@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
-import { ErrorLine, Flags, RevenueTag, Score, Signals, Toast, useAsync, WatchButton } from "../components/bits";
+import { ErrorLine, Flags, Hint, RevenueTag, Score, Signals, Toast, useAsync, WatchButton } from "../components/bits";
 import { AreaChart as SmallLine } from "../components/charts";
 import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
@@ -395,7 +395,7 @@ export default function Company() {
                   ))}
                 </tbody>
               </table>
-            ) : <div className="faint">No changes recorded yet. Changes show up after each monthly Companies House refresh.</div>}
+            ) : <div className="faint">No changes recorded yet.</div>}
           </section>
       </div>
       <Toast msg={toast} onDone={() => setToast(null)} />
@@ -646,7 +646,7 @@ function Research({ data, num, onAdded }: { data: CompanyDetail; num: string; on
           </div>
           <textarea placeholder="Finding" value={r.content} onChange={(e) => setR({ ...r, content: e.target.value })} />
           <div><button className="btn primary" disabled={!r.content.trim()}>Save finding</button></div>
-          <div className="faint small">Findings count towards exclusion keywords, so “van-based installers” here will exclude a company if your buy box excludes “installers”.</div>
+          <div className="faint small">Findings also count towards your buy box's exclusion keywords.</div>
         </form>
       )}
       {data.research.length ? (
@@ -661,7 +661,7 @@ function Research({ data, num, onAdded }: { data: CompanyDetail; num: string; on
             </li>
           ))}
         </ul>
-      ) : !open && <div className="faint">Nothing recorded yet. Ask Claude to research this company (see Connect Claude), or add a finding by hand.</div>}
+      ) : !open && <div className="faint">Nothing recorded yet. Ask Claude, or add a finding.</div>}
     </section>
   );
 }
@@ -764,7 +764,7 @@ function BalanceSheet({ fin }: { fin: CompanyDetail["financials"] }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.label} className={r.strong ? "strong" : ""}>
-                  <td title={r.hint}>{r.label}{r.hint ? <span className="faint"> ⓘ</span> : null}</td>
+                  <td>{r.label}{r.hint ? <Hint text={r.hint} /> : null}</td>
                   {years.map((f) => {
                     const [v, worked] = val(r, f);
                     return <td key={f.period_end} className={`num ${v !== null && v < 0 ? "neg" : ""} ${worked ? "worked" : ""}`}
@@ -777,7 +777,7 @@ function BalanceSheet({ fin }: { fin: CompanyDetail["financials"] }) {
           </table>
         </div>
       ))}
-      <p className="faint small">Only figures the accounts give. Small companies often file a balance sheet only. <i>Italic</i>: worked out from the filed totals.</p>
+      <p className="faint small">Only figures the accounts give. <i>Italic</i>: worked out from totals.<Hint text="Small companies often file a balance sheet only, so profit lines may be missing." /></p>
     </>
   );
 }
@@ -828,7 +828,7 @@ function SameBusiness({ data }: { data: CompanyDetail }) {
         <span key={o.company_number}>{i ? "; " : ""}<Link to={`/c/${o.company_number}`}>{o.name}</Link>
           <span className="faint"> ({o.employees ?? "?"} staff{o.revenue_low ? `, ${range(o.revenue_low, o.revenue_high)}` : ""})</span></span>
       ))}
-      <span className="faint small"> · same owner and address, or a director in common at the same postcode</span>
+      <Hint text="Same owner and address, or a director in common at the same postcode." />
     </div>
   );
 }

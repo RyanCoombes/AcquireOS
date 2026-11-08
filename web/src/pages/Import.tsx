@@ -3,7 +3,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { duration, elapsed, useJob } from "../components/JobBar";
 import { Link } from "react-router-dom";
 import { api, type ChSync, type PdfFailure, type PdfRead, type Preview } from "../api";
-import { ErrorLine, useAsync } from "../components/bits";
+import { ErrorLine, Hint, useAsync } from "../components/bits";
 import { dateTime, int } from "../format";
 
 const KINDS = {
@@ -290,7 +290,7 @@ function ChFeed({ onDone }: { onDone: () => void }) {
       {msg && <div className="callout" style={{ marginBottom: 12 }}>{msg}</div>}
 
       <p className="muted" style={{ maxWidth: "80ch", marginTop: 0 }}>
-        Runs itself monthly. 48 months of accounts ≈ 5 years of figures (1–2 GB a month). Loaded months are skipped.
+        Runs monthly by itself. Months already loaded are skipped.
       </p>
       <table>
         <thead><tr><th>File</th><th>What it adds</th><th>Size</th></tr></thead>
@@ -342,7 +342,7 @@ function Coverage() {
           {row("Turnover filed", data.with_turnover, "Small companies may leave out the profit and loss account, so most never file turnover; AcquireOS estimates it from staff instead.")}
         </tbody>
       </table>
-      <p className="faint small">Directors are not in the free bulk files; Companies House only provides them company by company through its API.</p>
+      <p className="faint small">Directors come from the API, company by company <Hint text="They are not in the free bulk files." /></p>
     </section>
   );
 }
@@ -390,10 +390,10 @@ function CatchUp() {
   };
   return (
     <section>
-      <div className="sechead"><h2>Catch up</h2>
+      <div className="sechead"><h2>Catch up<Hint text="Checks run in the background at the shared Companies House rate, your pipeline first. Directors are checked again every six months; new disqualifications arrive on the stream." /></h2>
         {ex && <button className="btn quiet" style={{ marginLeft: "auto" }} onClick={async () => setEx(await api.chExtrasSet(!ex.paused))}>
           {ex.paused ? "Resume checks" : "Pause checks"}</button>}</div>
-      <p className="faint small" style={{ marginTop: 0 }}>Figures and checks added since your data was first loaded, filled in for what you already have.</p>
+      <p className="faint small" style={{ marginTop: 0 }}>New figures and checks, filled in for data you already have.</p>
       <div className="syncgrid">
         {acc && (
           <div>
@@ -426,7 +426,7 @@ function CatchUp() {
         )}
       </div>
       {msg && <p className="small">{msg}</p>}
-      <p className="faint small">Checks run in the background at the shared Companies House rate, your pipeline first. Directors are checked again every six months, and new disqualifications arrive on the stream.</p>
+      
     </section>
   );
 }
@@ -459,7 +459,7 @@ function PdfReadPanel() {
       </p>
       <PdfFailures count={st.nothing_found + st.failed} onRetried={setSt} />
       {!st.ocr && <div className="callout amber" style={{ marginTop: 8 }}>OCR isn't installed here, so only PDFs with a text layer can be read. Update the stack to get the new image.</div>}
-      <p className="faint small">Accounts years with no figures here, for every company the Companies House sync (or opening it) has fetched. Read as data where Companies House has it, otherwise from the PDF. Newest year first, then back up to 5 years; your pipeline before other targets. PDF figures are marked “from PDF” or “read by OCR”.</p>
+      <p className="faint small">Years with no figures, newest first, back up to 5 years.<Hint text="For every company fetched from Companies House. Read as data where Companies House has it, otherwise from the PDF (text, or OCR for scans). Your pipeline first. PDF figures are marked on the company page." /></p>
     </section>
   );
 }
@@ -601,7 +601,7 @@ function WebsiteBatch() {
         <button className="btn quiet" onClick={() => confirm("Check every active company with 10 or more staff? This can take several days. You can stop it and it carries on later.") && run("active", 0)}>
           All active companies with 10+ staff (several days)</button>
       </div>
-      <p className="faint small">Stop it from the progress bar at the top; running it again carries on where it stopped. Companies checked in the last six months are skipped.</p>
+      <p className="faint small">Stop it from the bar at the top; it resumes where it stopped.</p>
       {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
     </section>
   );

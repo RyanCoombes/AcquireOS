@@ -235,7 +235,7 @@ function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave, directorPay, payYear, mu
         </tbody>
       </table>
       {over > 0 ? <div className="callout red">These add up to {money(named)}, which is {money(over)} more than the price. Lower one of them.</div>
-        : <p className="faint small" style={{ margin: "4px 0 0" }}>The row marked <b>fills the gap</b> takes whatever the others leave: {money(gap)} now. Pick another row to make it the one that adjusts.</p>}
+        : <p className="faint small" style={{ margin: "4px 0 0" }}><b>Fills the gap</b> takes what's left: {money(gap)}.</p>}
 
       <h4 className="dc-h">2. Adjusted profit (EBITDA)</h4>
       <table className="dc-table dc-walk">

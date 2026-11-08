@@ -145,3 +145,8 @@ export function WatchButton({ kind, refId, on, label, onChange, small }: { kind:
     </button>
   );
 }
+
+/** ⓘ with the detail on hover or tap, so helper text doesn't take up lines. */
+export function Hint({ text }: { text: string }) {
+  return <span className="hint" tabIndex={0} role="note" aria-label={text} data-tip={text}>ⓘ</span>;
+}

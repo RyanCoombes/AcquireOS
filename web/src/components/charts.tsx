@@ -152,7 +152,7 @@ export function Columns({ rows, height = 150, highlight }: { rows: { label: stri
 }
 
 export function TrendLine({ points, format, height = 170 }: { points: { x: string; y: number }[]; format: (n: number) => string; height?: number }) {
-  if (points.length < 2) return <div className="faint small" style={{ padding: "30px 0" }}>Needs at least two years of filed accounts. Load accounts data on the Data page.</div>;
+  if (points.length < 2) return <div className="faint small" style={{ padding: "30px 0" }}>Needs two or more years of filed accounts.</div>;
   const w = 600, padL = 36, padR = 12, padT = 14, padB = 22;
   const ys = points.map((p) => p.y);
   const lo = 0, hi = Math.max(...ys) * 1.15 || 1;

@@ -4,13 +4,13 @@ import type React from "react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
-import { WatchButton } from "./bits";
+import { Hint, WatchButton } from "./bits";
 import { date, money, filingLabel } from "../format";
 
 type FinSummary = NonNullable<CompanyDetail["fin_summary"]>;
 
 const fmtValue = (key: string, v: number) =>
-  key === "employees" ? Math.round(v).toLocaleString("en-GB") : key === "debt_ratio" ? `${Math.round(v)}%` : money(v, { precise: v < 1e6 });
+  key === "employees" ? Math.round(v).toLocaleString("en-GB") : key === "debt_ratio" ? `${Math.round(v)}%` : money(v);
 
 const fmtChange = (key: string, v: number) =>
   key === "employees" ? Math.abs(Math.round(v)).toLocaleString("en-GB") : key === "debt_ratio" ? `${Math.abs(Math.round(v))} pts` : money(Math.abs(v));
@@ -98,7 +98,7 @@ export function FinancialOverview({ s }: { s: FinSummary }) {
           ))}
         </tbody>
       </table>
-      <p className="faint small">Totals worked out from the filed accounts.{s.rows.some((r) => r.estimated) ? " Amber ≈ figures are estimates (staff × the company's own revenue per head); dashed on the charts." : ""}</p>
+      <p className="faint small">From the filed accounts.{s.rows.some((r) => r.estimated) ? <> ≈ is an estimate<Hint text="Staff × the company's own revenue per head. Dashed on the charts." /></> : null}</p>
     </>
   );
 }
@@ -221,7 +221,7 @@ export function WebsiteFinder({ num, onSaved }: { num: string; onSaved: () => vo
           )}
         </div>
       )}
-      <p className="faint small" style={{ marginTop: 6 }}>The check saves a site only if it shows the company number or postcode. If you know the site, "Save without checking" saves it as yours.</p>
+      <p className="faint small" style={{ marginTop: 6 }}>Saved only if the site shows the company number or postcode.</p>
     </div>
   );
 }

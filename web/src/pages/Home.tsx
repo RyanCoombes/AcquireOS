@@ -158,7 +158,7 @@ export default function Home() {
                 </li>
               ))}
             </ul>
-          ) : <div className="faint">Nothing has changed in the last 30 days. Changes appear when newer Companies House data is loaded.</div>}
+          ) : <div className="faint">Nothing changed in the last 30 days.</div>}
         </section>
 
         <section className="span-8">

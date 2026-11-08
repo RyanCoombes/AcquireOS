@@ -1044,3 +1044,18 @@ tr:has(.rowmenu .pop) { position: relative; z-index: 60; }
 @media (max-width: 1180px) { .cokpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .cokpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .secnav a.on { background: var(--teal-soft); color: var(--teal-2); font-weight: 600; }
+
+/* ⓘ hints: detail on hover or focus */
+.hint { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin-left: 4px;
+        font-size: 12px; color: var(--ink-3); cursor: help; border-radius: 50%; vertical-align: middle; font-weight: 400; }
+.hint:hover, .hint:focus { color: var(--teal-2); outline: none; }
+.hint:hover::after, .hint:focus::after {
+  content: attr(data-tip); position: absolute; z-index: 80; left: 50%; top: calc(100% + 6px); transform: translateX(-50%);
+  width: max-content; max-width: 300px; white-space: normal; text-align: left; font-size: 12.5px; line-height: 1.45; font-weight: 400;
+  color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-pop); padding: 8px 10px;
+}
+
+/* Reports: cards flow into two balanced columns rather than stretching to the tallest in a row */
+.report-grid { display: block !important; column-count: 2; column-gap: 16px; }
+.report-grid > section { break-inside: avoid; display: inline-block; width: 100%; margin: 0 0 16px; }
+@media (max-width: 1000px) { .report-grid { column-count: 1; } }
