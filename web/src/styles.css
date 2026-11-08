@@ -995,3 +995,21 @@ tr:hover .statuscell .xbtn, .statuscell .xbtn[aria-expanded="true"] { opacity: 1
 .statuscell .rowmenu { z-index: 20; }
 .statuscell .rowmenu:has(.pop) { z-index: 60; }
 tr:has(.rowmenu .pop) { position: relative; z-index: 60; }
+
+/* Company page: full width. Your call across the top; sections in two columns where they pair up. */
+.callbar { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.callbar .cb-side { display: grid; grid-template-columns: auto auto; gap: 10px 16px; align-content: start; }
+.callbar .cb-side .cb-next, .callbar .cb-side .cb-links { grid-column: 1 / -1; }
+.callbar .cb-links { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.callbar .field { display: flex; flex-direction: column; gap: 4px; }
+.company-page section[id], .company-page div[id] { scroll-margin-top: 120px; }
+.company-page .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.company-page .pair > .pcol { min-width: 0; }
+.company-page .pair > .pcol > section:last-child { margin-bottom: 0; }
+.company-page .pair { margin-bottom: 16px; }
+@media (max-width: 1180px) {
+  .callbar { grid-template-columns: minmax(0, 1fr); }
+  .company-page .pair { grid-template-columns: minmax(0, 1fr); gap: 0; margin-bottom: 0; }
+  .company-page .pair > .pcol > section:last-child { margin-bottom: 16px; }
+}
+.callbar .cb-links .linkish { border: 1px solid var(--line); border-radius: 99px; padding: 3px 12px; }

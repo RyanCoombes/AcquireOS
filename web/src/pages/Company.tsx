@@ -168,15 +168,18 @@ export default function Company() {
         </div>
       )}
 
-      <div className="company-grid">
-        <div className="main">
+      <CallBar key={num} data={data} num={num} setState={setState} />
+
+      <div className="company-page">
           <nav className="secnav" aria-label="Sections">
-            {[["overview", "Overview"], ["financials", "Financials"], ["ownership", "Owners & directors"],
-              ["charges", "Charges"], ["filings", "Filings"], ["group", "Group"], ["score", "Score"], ["value", "Value"],
-              ["research", "Research"], ["changes", "History"]].map(([id, l]) => (
+            {[["overview", "Overview"], ["ownership", "Owners & directors"], ["notes", "Notes"], ["financials", "Financials"],
+              ["value", "Value"], ["charges", "Charges"], ["filings", "Filings"], ["group", "Group"], ["score", "Score"],
+              ["research", "Research"], ["deal", "Deal"], ["changes", "History"]].map(([id, l]) => (
               <a key={id} href={`#${id}`} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{l}</a>
             ))}
           </nav>
+        <div className="pair">
+          <div className="pcol">
           <section id="overview">
             <Head icon="overview" title="Overview" />
             <p className="summary">{overviewSentence(data)}</p>
@@ -214,7 +217,13 @@ export default function Company() {
               </details>
             )}
           </section>
-
+            <NotesSection data={data} num={num} onNote={(n) => setData({ ...data, notes: [n, ...data.notes] })} />
+            <OutreachSection key={num} data={data} num={num} setState={setState} onOutreach={reload} />
+          </div>
+          <div className="pcol">
+            <OwnersDirectors data={data} flags={<Flags flags={own?.flags} address={c.address_flag} />} />
+          </div>
+        </div>
           <section id="financials">
             <Head icon="money" tone="green" title="Financials" aside={(() => { const n = fin.filter((f) => !f.period_inferred).length; return `${n} ${n === 1 ? "year" : "years"} filed`; })()} />
             <AccountsGap data={data} />
@@ -261,11 +270,13 @@ export default function Company() {
               </>
             ) : <div className="faint">No accounts imported.</div>}
           </section>
+          <div id="value">
+          <Valuation data={data} num={num} onSaved={reload} />
 
-          <OwnersDirectors data={data} flags={<Flags flags={own?.flags} address={c.address_flag} />} />
-          <Charges data={data} num={num} onFetched={reload} />
-          <Filings data={data} />
-
+          </div>
+        <div className="pair">
+          <div className="pcol">
+            <Charges data={data} num={num} onFetched={reload} />
           <section id="group">
             <Head icon="group" tone="blue" title="Group and connections" right={<Link to={`/connections/${c.company_number}`}>Open map</Link>} />
             {data.links.length ? (
@@ -287,8 +298,9 @@ export default function Company() {
               </table>
             ) : <div className="faint">No links found in the data imported so far.</div>}
           </section>
-
-          <h2 className="partline">Your assessment</h2>
+          </div>
+          <div className="pcol">
+            <Filings data={data} />
           <section id="score">
             <Head icon="target" title="Why this score" right={<Link to={`/buy-box?id=${shownId}`}>Edit {shownName}</Link>} />
             {scores.length > 1 && (
@@ -319,12 +331,8 @@ export default function Company() {
               </table>
             ) : <div className="faint">Not scored yet.</div>}
           </section>
-
-          <div id="value">
-          <Valuation data={data} num={num} onSaved={reload} />
-
           </div>
-
+        </div>
           <div id="research">
           <Enrichment key={JSON.stringify(data.enrichment)} data={data} num={num} onSaved={reload}
                       finder={<WebsiteFinder num={num} onSaved={reload} />} />
@@ -332,9 +340,10 @@ export default function Company() {
           <Research data={data} num={num} onAdded={reload} />
 
           </div>
-
-          <Location data={data} />
-
+        <div className="pair">
+          <div className="pcol"><Location data={data} /></div>
+          <div className="pcol"><DealSection data={data} num={num} setState={setState} onScored={reload} /></div>
+        </div>
           <section id="changes">
             <Head icon="clock" tone="grey" title="Change history" />
             {data.changes.length ? (
@@ -352,12 +361,6 @@ export default function Company() {
               </table>
             ) : <div className="faint">No changes recorded yet. Changes show up after each monthly Companies House refresh.</div>}
           </section>
-
-        </div>
-
-        <aside>
-          <MyCall data={data} num={num} setState={setState} onNote={(n) => setData({ ...data, notes: [n, ...data.notes] })} onOutreach={reload} onScored={reload} />
-        </aside>
       </div>
       <Toast msg={toast} onDone={() => setToast(null)} />
     </>
@@ -368,10 +371,48 @@ function FactRow({ k, v }: { k: string; v: unknown }) {
   return <><dt className="small">{k.replace(/_/g, " ")}</dt><dd className="small">{String(v)}</dd></>;
 }
 
-function MyCall({ data, num, setState, onNote, onOutreach, onScored }: {
-  data: CompanyDetail; num: string; setState: (p: Record<string, unknown>) => Promise<void>;
-  onNote: (n: CompanyDetail["notes"][number]) => void; onOutreach: () => void; onScored: () => void;
-}) {
+/** Your call, across the top: rule out in one click, or set the stage, rating and next action. */
+function CallBar({ data, num, setState }: { data: CompanyDetail; num: string; setState: (p: Record<string, unknown>) => Promise<void> }) {
+  const s = data.state;
+  const [next, setNext] = useState(s.next_action ?? "");
+  const [nextOn, setNextOn] = useState(s.next_action_on ?? "");
+  useEffect(() => { setNext(s.next_action ?? ""); setNextOn(s.next_action_on ?? ""); }, [num]); // eslint-disable-line react-hooks/exhaustive-deps
+  const go = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  return (
+    <section className="callbar">
+      <div className="cb-rule">
+        <h2 style={{ margin: "0 0 8px" }}>Your call</h2>
+        <CloseOut num={num} name={data.company.name} status={s.status} setState={setState} />
+      </div>
+      <div className="cb-side">
+        <label className="field"><span className="label">Stage</span>
+          <StageSelect value={s.status} onChange={(v) => setState({ status: v, stage_note: "Changed on the company page" })} /></label>
+        <div className="field"><span className="label">Rating <span className="faint">(keys 1–5)</span></span>
+          <div className="rating">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button key={n} className={s.rating === n ? "on" : ""} onClick={() => setState(s.rating === n ? { clear_rating: true } : { rating: n })}>{n}</button>
+            ))}
+          </div>
+        </div>
+        <div className="field cb-next"><span className="label">Next action</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input type="text" style={{ flex: 1, minWidth: 0 }} value={next} placeholder="e.g. Send approach letter" aria-label="Next action"
+                   onChange={(e) => setNext(e.target.value)} onBlur={() => next !== (s.next_action ?? "") && setState({ next_action: next || null })} />
+            <input type="date" value={nextOn ?? ""} aria-label="Next action date" onChange={(e) => { setNextOn(e.target.value); setState({ next_action_on: e.target.value || null }); }} />
+          </div>
+        </div>
+        <div className="cb-links small">
+          <button className="linkish" onClick={() => go("notes")}>Notes{data.notes.length ? ` (${data.notes.length})` : ""}</button>
+          <button className="linkish" onClick={() => go("outreach")}>Contact log{data.outreach.length ? ` (${data.outreach.length})` : ""}</button>
+          <button className="linkish" onClick={() => go("deal")}>Deal checklist</button>
+          {s.tags?.length ? <span className="faint">Tags: {s.tags.join(", ")}</span> : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function NotesSection({ data, num, onNote }: { data: CompanyDetail; num: string; onNote: (n: CompanyDetail["notes"][number]) => void }) {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [noteErr, setNoteErr] = useState<string | null>(null);
@@ -382,121 +423,98 @@ function MyCall({ data, num, setState, onNote, onOutreach, onScored }: {
     catch (e: any) { setNoteErr(`Not saved: ${e.message}`); }
     finally { setSaving(false); }
   };
-  const [next, setNext] = useState(data.state.next_action ?? "");
-  const [nextOn, setNextOn] = useState(data.state.next_action_on ?? "");
+  return (
+    <section id="notes">
+      <Head icon="file" tone="grey" title="Notes" aside="Never overwritten by a data refresh" />
+      <textarea value={note} placeholder="What do you think? Ctrl+Enter to save." onChange={(e) => setNote(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && note.trim()) addNote(); }} />
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
+        {noteErr && <span className="neg small" style={{ marginRight: 8, alignSelf: "center" }}>{noteErr}</span>}
+        <button className="btn primary" disabled={!note.trim() || saving} onClick={addNote}>Add note</button>
+      </div>
+      <ul className="notes">
+        {data.notes.map((n) => (
+          <li key={n.id}>
+            <div className="meta">{dateTime(n.created_at)}{n.source !== "app" ? ` · ${n.source.replace("import:", "from ")}` : ""}</div>
+            {n.body}
+          </li>
+        ))}
+        {!data.notes.length && <li className="faint">No notes yet.</li>}
+      </ul>
+    </section>
+  );
+}
+
+function OutreachSection({ data, num, setState, onOutreach }: {
+  data: CompanyDetail; num: string; setState: (p: Record<string, unknown>) => Promise<void>; onOutreach: () => void;
+}) {
   const owner = data.ownership?.ultimate_owners?.find((u) => !u.unresolved && u.kind !== "corporate")?.name ?? "";
   const today = new Date().toISOString().slice(0, 10);
   const [contact, setContact] = useState({ contact_name: owner, contact_role: "owner", channel: "letter", summary: "", happened_on: today, follow_up_on: "" });
   const [outErr, setOutErr] = useState<string | null>(null);
-  const s = data.state;
-
   return (
-    <>
-      <section>
-        <h2>Your call</h2>
-        <CloseOut num={num} name={data.company.name} status={s.status} setState={setState} />
-        <div className="label" style={{ margin: "0 0 4px" }}>Stage</div>
-        <StageSelect value={s.status} onChange={(v) => setState({ status: v, stage_note: "Changed on the company page" })} />
-        <div className="label" style={{ margin: "14px 0 4px" }}>Rating <span className="faint">(keys 1–5)</span></div>
-        <div className="rating">
-          {[1, 2, 3, 4, 5].map((n) => (
-            <button key={n} className={s.rating === n ? "on" : ""} onClick={() => setState(s.rating === n ? { clear_rating: true } : { rating: n })}>{n}</button>
-          ))}
+    <section id="outreach">
+      <Head icon="people" tone="grey" title="Contact log" />
+      <form onSubmit={async (e) => {
+        e.preventDefault();
+        setOutErr(null);
+        const { follow_up_on, ...c } = contact;
+        try {
+          await api.addOutreach({ ...c, contact_name: c.contact_name.trim() || "Owner", company_number: num,
+                                  next_action: follow_up_on ? `Follow up: ${c.summary || c.channel}` : null, next_action_on: follow_up_on || null });
+          if (follow_up_on) await setState({ next_action: `Follow up: ${c.summary || c.channel}`, next_action_on: follow_up_on });
+          setContact({ ...contact, summary: "", follow_up_on: "" });
+          onOutreach();
+        } catch (err: any) { setOutErr(`Not saved: ${err.message}`); }
+      }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 110px", gap: 6 }}>
+          <input type="text" placeholder="Who (blank: the owner)" aria-label="Who" value={contact.contact_name} onChange={(e) => setContact({ ...contact, contact_name: e.target.value })} />
+          <select value={contact.contact_role} onChange={(e) => setContact({ ...contact, contact_role: e.target.value })}>
+            <option value="owner">Owner</option><option value="adviser">Adviser</option><option value="broker">Broker</option>
+            <option value="investor">Investor</option><option value="other">Other</option>
+          </select>
+          <input type="text" placeholder="What happened" value={contact.summary} onChange={(e) => setContact({ ...contact, summary: e.target.value })} />
+          <select value={contact.channel} onChange={(e) => setContact({ ...contact, channel: e.target.value })}>
+            <option value="letter">Letter</option><option value="email">Email</option><option value="call">Call</option>
+            <option value="linkedin">LinkedIn</option><option value="meeting">Meeting</option>
+          </select>
         </div>
-        <div className="label" style={{ margin: "14px 0 4px" }}>Next action</div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <input type="text" style={{ flex: 1 }} value={next} placeholder="e.g. Send approach letter" aria-label="Next action" onChange={(e) => setNext(e.target.value)}
-                 onBlur={() => next !== (s.next_action ?? "") && setState({ next_action: next || null })} />
-          <input type="date" value={nextOn ?? ""} aria-label="Next action date" onChange={(e) => { setNextOn(e.target.value); setState({ next_action_on: e.target.value || null }); }} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 6, marginTop: 6, alignItems: "end" }}>
+          <label className="field"><span className="label">When</span>
+            <input type="date" value={contact.happened_on} onChange={(e) => setContact({ ...contact, happened_on: e.target.value })} /></label>
+          <label className="field"><span className="label">Follow up on</span>
+            <input type="date" value={contact.follow_up_on} onChange={(e) => setContact({ ...contact, follow_up_on: e.target.value })} /></label>
+          <button className="btn" type="submit">Log contact</button>
         </div>
-        {s.tags?.length ? <div className="faint small" style={{ marginTop: 10 }}>Tags: {s.tags.join(", ")}</div> : null}
-      </section>
-
-      <section>
-        <h2>Notes</h2>
-        <textarea value={note} placeholder="What do you think? Ctrl+Enter to save." onChange={(e) => setNote(e.target.value)}
-                  onKeyDown={async (e) => {
-                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && note.trim()) {
-                      addNote();
-                    }
-                  }} />
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
-          <button className="btn primary" disabled={!note.trim() || saving}
-                  onClick={addNote}>Add note</button>
-          {noteErr && <span className="neg small" style={{ marginLeft: 8, alignSelf: "center" }}>{noteErr}</span>}
-        </div>
-        <ul className="notes">
-          {data.notes.map((n) => (
-            <li key={n.id}>
-              <div className="meta">{dateTime(n.created_at)}{n.source !== "app" ? ` · ${n.source.replace("import:", "from ")}` : ""}</div>
-              {n.body}
-            </li>
-          ))}
-          {!data.notes.length && <li className="faint">No notes yet. Notes are never overwritten by a data refresh.</li>}
-        </ul>
-      </section>
-
-      <section>
-        <h2>Outreach</h2>
-        <form onSubmit={async (e) => {
-          e.preventDefault();
-          setOutErr(null);
-          const { follow_up_on, ...c } = contact;
-          try {
-            await api.addOutreach({ ...c, contact_name: c.contact_name.trim() || "Owner", company_number: num,
-                                    next_action: follow_up_on ? `Follow up: ${c.summary || c.channel}` : null, next_action_on: follow_up_on || null });
-            if (follow_up_on) await setState({ next_action: `Follow up: ${c.summary || c.channel}`, next_action_on: follow_up_on });
-            setContact({ ...contact, summary: "", follow_up_on: "" });
-            onOutreach();
-          } catch (err: any) { setOutErr(`Not saved: ${err.message}`); }
-        }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 110px", gap: 6 }}>
-            <input type="text" placeholder="Who (blank: the owner)" aria-label="Who" value={contact.contact_name} onChange={(e) => setContact({ ...contact, contact_name: e.target.value })} />
-            <select value={contact.contact_role} onChange={(e) => setContact({ ...contact, contact_role: e.target.value })}>
-              <option value="owner">Owner</option><option value="adviser">Adviser</option><option value="broker">Broker</option>
-              <option value="investor">Investor</option><option value="other">Other</option>
-            </select>
-            <input type="text" placeholder="What happened" value={contact.summary} onChange={(e) => setContact({ ...contact, summary: e.target.value })} />
-            <select value={contact.channel} onChange={(e) => setContact({ ...contact, channel: e.target.value })}>
-              <option value="letter">Letter</option><option value="email">Email</option><option value="call">Call</option>
-              <option value="linkedin">LinkedIn</option><option value="meeting">Meeting</option>
-            </select>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 6 }}>
-            <label className="field"><span className="label">When</span>
-              <input type="date" value={contact.happened_on} onChange={(e) => setContact({ ...contact, happened_on: e.target.value })} /></label>
-            <label className="field"><span className="label">Follow up on</span>
-              <input type="date" value={contact.follow_up_on} onChange={(e) => setContact({ ...contact, follow_up_on: e.target.value })} /></label>
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginTop: 6 }}>
-            {outErr && <span className="neg small">{outErr}</span>}
-            <button className="btn" type="submit">Log contact</button>
-          </div>
-        </form>
-        <ul className="notes">
-          {data.outreach.map((o) => (
-            <li key={o.id}>
-              <div className="meta">{date(o.happened_on)} · {o.channel} · {o.contact_role}</div>
-              <b>{o.contact_name}</b>{o.summary ? `: ${o.summary}` : ""}
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section>
-        <h2>Your scores</h2>
-        <MyScores num={num} criteria={data.manual.criteria} values={data.manual.values} onChange={() => onScored()} />
-      </section>
-
-      <section>
-        <details>
-          <summary><b>Deal stage and checklist</b></summary>
-          <div style={{ marginTop: 10 }}><DealProgress data={data} num={num} setState={setState} /></div>
-        </details>
-      </section>
-    </>
+        {outErr && <div className="neg small" style={{ marginTop: 6 }}>{outErr}</div>}
+      </form>
+      <ul className="notes">
+        {data.outreach.map((o) => (
+          <li key={o.id}>
+            <div className="meta">{date(o.happened_on)} · {o.channel} · {o.contact_role}</div>
+            <b>{o.contact_name}</b>{o.summary ? `: ${o.summary}` : ""}
+          </li>
+        ))}
+        {!data.outreach.length && <li className="faint">No contact yet.</li>}
+      </ul>
+    </section>
   );
 }
+
+function DealSection({ data, num, setState, onScored }: {
+  data: CompanyDetail; num: string; setState: (p: Record<string, unknown>) => Promise<void>; onScored: () => void;
+}) {
+  return (
+    <section id="deal">
+      <Head icon="target" tone="grey" title="Deal checklist and your scores" />
+      <DealProgress data={data} num={num} setState={setState} />
+      <h3 style={{ margin: "18px 0 6px", fontSize: 14 }}>Your scores</h3>
+      <MyScores num={num} criteria={data.manual.criteria} values={data.manual.values} onChange={() => onScored()} />
+    </section>
+  );
+}
+
+
 
 function StageSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const meta = useAsync(() => api.meta(), []);
