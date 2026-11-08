@@ -82,6 +82,10 @@ export default function Company() {
   const pickBox = (id: number) => { const p = new URLSearchParams(params); p.set("bb", String(id)); setParams(p, { replace: true }); };
   const latest = [...fin].reverse().find((f) => !f.period_inferred);
   const age = ageFrom(own?.oldest_birth_year);
+  const prof = ((data.ch?.fetched as any)?.profile ?? {}) as any;
+  const activity = [...fin].reverse().find((f) => f.principal_activity);
+  const ard = prof.accounts?.accounting_reference_date;
+  const yearEnd = ard?.day && ard?.month ? new Date(2000, Number(ard.month) - 1, Number(ard.day)).toLocaleDateString("en-GB", { day: "numeric", month: "long" }) : null;
   // Turnover with the missing years estimated from the company's own revenue per head (dashed).
   const turnoverPoints = (data.fin_summary?.series ?? []).map((r: any) => ({
     x: r.period_end, y: r.turnover ?? r.turnover_est ?? null, estimated: r.turnover == null && r.turnover_est != null,
@@ -146,6 +150,15 @@ export default function Company() {
       </div>
 
       {score?.excluded && <div className="callout red"><b>Outside {shownName}:</b> {score.exclusion}</div>}
+      {(data.ch?.disqualified ?? []).length > 0 && (
+        <div className="callout red"><b>Disqualified director:</b>{" "}
+          {[...new Set(data.ch!.disqualified!.map((d) => d.name))].join(", ")}. Matched on name and month and year of birth: check the
+          {" "}<a href="https://find-and-update.company-information.service.gov.uk/search/disqualified-officers" target="_blank" rel="noreferrer">disqualified directors register ↗</a>.</div>
+      )}
+      {(data.ch?.exemptions ?? []).length > 0 && (
+        <div className="callout"><b>Exempt from the owners register:</b> {data.ch!.exemptions!.map((e) => `${e.kind}${e.from ? ` since ${date(e.from)}` : ""}`).join("; ")}.
+          Usually a company with shares listed on a market, or owned by one.</div>
+      )}
       <SameBusiness data={data} />
       {data.changes.filter((x) => Date.now() - new Date(x.detected_at).getTime() < 30 * 864e5).length > 0 && (
         <div className="callout">
@@ -168,7 +181,17 @@ export default function Company() {
             <Head icon="overview" title="Overview" />
             <p className="summary">{overviewSentence(data)}</p>
             <dl className="facts">
-              <dt>Type</dt><dd>{companyType(c.company_type)}</dd>
+              <dt>Type</dt><dd>{companyType(c.company_type)}{prof.is_community_interest_company ? " · community interest company" : ""}</dd>
+              {activity && <><dt>What it does</dt><dd>{activity.principal_activity}<span className="faint small"> · its own words, {date(activity.period_end)} accounts</span></dd></>}
+              {yearEnd && <><dt>Year end</dt><dd>{yearEnd}{prof.accounts?.last_accounts?.type ? <span className="faint"> · last filed as {String(prof.accounts.last_accounts.type).replace(/-/g, " ")}</span> : null}</dd></>}
+              {prof.foreign_company_details && <><dt>Overseas company</dt><dd>
+                {[prof.foreign_company_details.legal_form, prof.foreign_company_details.originating_registry?.country && `registered in ${prof.foreign_company_details.originating_registry.country}`,
+                  prof.foreign_company_details.registration_number && `no. ${prof.foreign_company_details.registration_number}`].filter(Boolean).join(", ")}
+                {prof.foreign_company_details.business_activity ? <div className="faint small">{prof.foreign_company_details.business_activity}</div> : null}
+                {(data.ch?.fetched as any)?.uk_establishments?.length ? <div className="small">UK establishments: {((data.ch?.fetched as any).uk_establishments as any[]).map((u) => `${u.company_name ?? u.name} (${u.company_number})`).join(", ")}</div> : null}</dd></>}
+              {prof.branch_company_details && <><dt>Branch of</dt><dd>{prof.branch_company_details.parent_company_name ?? "an overseas company"}
+                {prof.branch_company_details.parent_company_number ? <> · <Link to={`/c/${prof.branch_company_details.parent_company_number}`}>{prof.branch_company_details.parent_company_number}</Link></> : null}
+                {prof.branch_company_details.business_activity ? <div className="faint small">{prof.branch_company_details.business_activity}</div> : null}</dd></>}
               <dt>Industry</dt><dd>{data.sics.length ? data.sics.map((x) => <div key={x.code}>{x.description} <span className="faint">· {x.code}</span></div>) : c.sic_codes.join(", ") || "—"}</dd>
               {data.enrichment?.website && <><dt>Website</dt><dd><a href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "")} ↗</a></dd></>}
               <dt>Registered office</dt><dd>{c.registered_address ?? "—"} <Flags address={c.address_flag} /></dd>
@@ -209,7 +232,7 @@ export default function Company() {
                 <details style={{ marginTop: 12 }}>
                 <summary className="muted" style={{ cursor: "pointer" }}>All figures by year</summary>
                 <table style={{ marginTop: 10 }}>
-                  <thead><tr><th>Period end</th><th className="num">Staff</th><th className="num">Turnover</th><th className="num">Profit</th><th className="num">Net assets</th><th className="num">Cash</th><th className="num hide-sm">Debtors</th></tr></thead>
+                  <thead><tr><th>Period end</th><th className="num">Staff</th><th className="num">Turnover</th><th className="num hide-sm">Operating profit</th><th className="num">Profit after tax</th><th className="num">Net assets</th><th className="num">Cash</th><th className="num hide-sm">Debtors</th><th className="num hide-sm">Dividends</th></tr></thead>
                   <tbody>
                     {[...fin].reverse().map((f) => (
                       <tr key={f.period_end}>
@@ -219,15 +242,20 @@ export default function Company() {
                         <td className="num">{int(f.employees)}</td>
                         <td className="num">{f.turnover != null ? money(f.turnover, { precise: true })
                           : estByEnd.has(String(f.period_end).slice(0, 10)) ? <span className="estval" title="Estimate: staff × the company's own revenue per head">≈{money(estByEnd.get(String(f.period_end).slice(0, 10))!)} est.</span> : "—"}</td>
+                        <td className={`num hide-sm ${Number(f.operating_profit) < 0 ? "neg" : ""}`}>{money(f.operating_profit, { precise: true })}</td>
                         <td className={`num ${Number(f.profit_loss) < 0 ? "neg" : ""}`}>{money(f.profit_loss, { precise: true })}</td>
                         <td className={`num ${Number(f.net_assets) < 0 ? "neg" : ""}`}>{money(f.net_assets, { precise: true })}</td>
                         <td className="num">{money(f.cash, { precise: true })}</td>
                         <td className="num hide-sm">{money(f.debtors, { precise: true })}</td>
+                        <td className="num hide-sm">{money(f.dividends, { precise: true })}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 {est && <p className="muted small">Revenue: {range(est.revenue_low, est.revenue_high)}. Method: {est.method}.</p>}
+                </details>
+                <details style={{ marginTop: 8 }} open>
+                <summary className="muted" style={{ cursor: "pointer" }}>Profit, debt and working capital</summary>
                 <BalanceSheet fin={fin} />
                 </details>
               </>
@@ -565,47 +593,84 @@ function accountsChip(cat: string) {
 /** Balance sheet and cost detail, where the accounts include it. Creditors
     are worked out from the totals the accounts state. */
 function BalanceSheet({ fin }: { fin: CompanyDetail["financials"] }) {
-  const n = (v: string | null | undefined) => (v === null || v === undefined ? null : Number(v));
-  const rows = [...fin].reverse().filter((f) => !f.period_inferred).map((f) => {
-    const ca = n(f.current_assets), nca = n(f.net_current_assets), tal = n(f.total_assets_less_cl), na = n(f.net_assets);
-    // Worked out from totals; a negative result means the filing's totals do not add up, so show nothing.
-    const short = ca !== null && nca !== null && ca - nca >= 0 ? ca - nca : null;
-    const long = tal !== null && na !== null && tal - na >= 0 ? tal - na : null;
-    return { f, short, long };
-  }).filter(({ f, short, long }) => [f.fixed_assets, f.intangible_assets, f.current_assets, f.gross_profit, f.director_pay, f.staff_costs]
-    .some((v) => v !== null && v !== undefined) || short !== null || long !== null);
-  if (!rows.length) return null;
-  type Col = { label: string; get: (r: (typeof rows)[number]) => number | string | null | undefined; sub?: (r: (typeof rows)[number]) => string | null };
-  const all: Col[] = [
-    { label: "Fixed assets", get: (r) => r.f.fixed_assets,
-      sub: (r) => (r.f.intangible_assets != null && Number(r.f.intangible_assets) !== 0 ? `${money(r.f.intangible_assets)} intangible` : null) },
-    { label: "Owed within a year", get: (r) => r.short },
-    { label: "Owed after a year", get: (r) => r.long },
-    { label: "Gross profit", get: (r) => r.f.gross_profit },
-    { label: "Staff costs", get: (r) => r.f.staff_costs },
-    { label: "Directors' pay", get: (r) => r.f.director_pay },
+  // Years as columns (newest first), figures as rows; only rows the accounts give.
+  const n = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
+  const years = [...fin].reverse().filter((f) => !f.period_inferred).slice(0, 4);
+  if (!years.length) return null;
+  type F = (typeof years)[number];
+  const da = (f: F) => n(f.depreciation_amortisation) ?? (n(f.depreciation) !== null || n(f.amortisation) !== null ? (n(f.depreciation) ?? 0) + (n(f.amortisation) ?? 0) : null);
+  const ebitda = (f: F) => (n(f.operating_profit) !== null && da(f) !== null ? n(f.operating_profit)! + da(f)! : null);
+  // Owed within / after a year: as filed, else worked out from the totals (shown in italics).
+  const within = (f: F): [number | null, boolean] => {
+    if (n(f.creditors_within) !== null) return [n(f.creditors_within), false];
+    const ca = n(f.current_assets), nca = n(f.net_current_assets);
+    return ca !== null && nca !== null && ca - nca >= 0 ? [ca - nca, true] : [null, false];
+  };
+  const after = (f: F): [number | null, boolean] => {
+    if (n(f.creditors_after) !== null) return [n(f.creditors_after), false];
+    const tal = n(f.total_assets_less_cl), na = n(f.net_assets);
+    return tal !== null && na !== null && tal - na >= 0 ? [tal - na, true] : [null, false];
+  };
+  const bank = (f: F) => (n(f.bank_loans) !== null || n(f.bank_overdrafts) !== null ? (n(f.bank_loans) ?? 0) + (n(f.bank_overdrafts) ?? 0) : null);
+  type Row = { label: string; get: (f: F) => number | null | [number | null, boolean]; hint?: string; strong?: boolean };
+  const groups: [string, Row[]][] = [
+    ["Profit", [
+      { label: "Turnover", get: (f) => n(f.turnover) },
+      { label: "Gross profit", get: (f) => n(f.gross_profit) },
+      { label: "Staff costs", get: (f) => n(f.staff_costs) },
+      { label: "Directors' pay", get: (f) => n(f.director_pay) },
+      { label: "Operating profit", get: (f) => n(f.operating_profit) },
+      { label: "Depreciation and amortisation", get: da },
+      { label: "EBITDA", get: ebitda, strong: true, hint: "Operating profit + depreciation and amortisation, both filed" },
+      { label: "Interest paid", get: (f) => n(f.interest_payable) },
+      { label: "Tax", get: (f) => n(f.tax) },
+      { label: "Profit after tax", get: (f) => n(f.profit_loss) },
+      { label: "Dividends paid", get: (f) => n(f.dividends), hint: "Often how owners pay themselves: check against directors' pay" },
+    ]],
+    ["Balance sheet", [
+      { label: "Fixed assets", get: (f) => n(f.fixed_assets) },
+      { label: "of which intangible", get: (f) => n(f.intangible_assets) },
+      { label: "Stock", get: (f) => n(f.stock) },
+      { label: "Trade debtors", get: (f) => n(f.trade_debtors), hint: "Owed by customers" },
+      { label: "Cash", get: (f) => n(f.cash) },
+      { label: "Trade creditors", get: (f) => n(f.trade_creditors), hint: "Owed to suppliers" },
+      { label: "Owed within a year", get: within },
+      { label: "Owed after a year", get: after },
+      { label: "Bank loans and overdrafts", get: bank, strong: true, hint: "Repaid from the price on a cash-free, debt-free deal" },
+      { label: "Retained earnings", get: (f) => n(f.retained_earnings), hint: "Profits kept in the business: the most that could be paid out as dividends" },
+      { label: "Share capital", get: (f) => n(f.share_capital) },
+      { label: "Net assets", get: (f) => n(f.net_assets), strong: true },
+    ]],
   ];
-  // Only the columns these accounts actually give.
-  const cols = all.filter((c) => rows.some((r) => c.get(r) !== null && c.get(r) !== undefined));
+  const val = (r: Row, f: F): [number | null, boolean] => { const v = r.get(f); return Array.isArray(v) ? v : [v, false]; };
+  const shown = groups.map(([g, rows]) => [g, rows.filter((r) => years.some((f) => val(r, f)[0] !== null))] as const)
+    .filter(([, rows]) => rows.length > 1);
+  if (!shown.length) return null;
   return (
     <>
-      <h3 style={{ margin: "18px 0 6px", fontSize: 14 }}>Balance sheet and costs</h3>
-      <table>
-        <thead><tr><th>Period end</th>{cols.map((c) => <th key={c.label} className="num">{c.label}</th>)}</tr></thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.f.period_end}>
-              <td className="nowrap">{date(r.f.period_end)}</td>
-              {cols.map((c) => {
-                const v = c.get(r); const sub = c.sub?.(r);
-                return <td key={c.label} className={`num ${Number(v) < 0 ? "neg" : ""}`}>
-                  {v === null || v === undefined ? "—" : money(v, { precise: true })}{sub && <div className="sub">{sub}</div>}</td>;
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="faint small">Owed figures worked out from the filed totals.</p>
+      {shown.map(([g, rows]) => (
+        <div key={g} style={{ overflowX: "auto" }}>
+          <h3 style={{ margin: "18px 0 6px", fontSize: 14 }}>{g}</h3>
+          <table className="yeartable">
+            <thead><tr><th />{years.map((f) => <th key={f.period_end} className="num" title={date(f.period_end)}>
+              {new Date(f.period_end).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</th>)}</tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.label} className={r.strong ? "strong" : ""}>
+                  <td title={r.hint}>{r.label}{r.hint ? <span className="faint"> ⓘ</span> : null}</td>
+                  {years.map((f) => {
+                    const [v, worked] = val(r, f);
+                    return <td key={f.period_end} className={`num ${v !== null && v < 0 ? "neg" : ""} ${worked ? "worked" : ""}`}
+                               title={worked ? "Worked out from the filed totals" : undefined}>
+                      {v === null ? "—" : money(v, { precise: true })}</td>;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+      <p className="faint small">Only figures the accounts give. Small companies often file a balance sheet only. <i>Italic</i>: worked out from the filed totals.</p>
     </>
   );
 }

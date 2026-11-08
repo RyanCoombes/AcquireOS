@@ -115,3 +115,28 @@ def test_download_dir_falls_back_when_not_writable(tmp_path):
         os.chmod(locked, 0o700)
     ok = tmp_path / "ok"
     assert fetch._writable_dir(ok) == ok
+
+
+def test_accounts_debt_working_capital_and_activity():
+    """Creditors and bank loans tagged once with a within / after one year
+    breakdown, depreciation shown as a negative, and the principal activity text."""
+    from datetime import date
+
+    from acquireos.importers import accounts
+    ctx = lambda cid, d, mem="": (f'<xbrli:context id="{cid}"><xbrli:entity><xbrli:identifier scheme="x">01</xbrli:identifier>'
+        + (f'<xbrli:segment><xbrldi:explicitMember dimension="core:MaturitiesOrExpirationPeriodsDimension">core:{mem}</xbrldi:explicitMember></xbrli:segment>' if mem else "")
+        + f'</xbrli:entity><xbrli:period><xbrli:instant>{d}</xbrli:instant></xbrli:period></xbrli:context>')
+    f = lambda n, c, v, extra="": f'<ix:nonFraction name="core:{n}" contextRef="{c}" unitRef="GBP" decimals="0"{extra}>{v}</ix:nonFraction>'
+    doc = ("<html><body>" + ctx("i", "2025-03-31") + ctx("w", "2025-03-31", "WithinOneYear") + ctx("a", "2025-03-31", "AfterOneYear")
+           + ctx("x", "2025-03-31", "SomethingElse")
+           + f("NetAssetsLiabilities", "i", "500,000") + f("Creditors", "w", "120,000") + f("Creditors", "a", "80,000")
+           + f("Creditors", "x", "999") + f("BankBorrowings", "w", "10,000") + f("BankBorrowings", "a", "40,000")
+           + f("DepreciationExpensePropertyPlantEquipment", "i", "(15,000)", ' sign="-"') + f("Stocks", "i", "30,000")
+           + f("RetainedEarningsAccumulatedLosses", "i", "(20,000)", ' sign="-"')
+           + '<ix:nonNumeric name="core:DescriptionPrincipalActivities" contextRef="i">The provision of <b>IT managed services</b>.</ix:nonNumeric>'
+           + "</body></html>")
+    r = accounts.parse(doc)[date(2025, 3, 31)]
+    assert r["creditors_within"] == 120_000 and r["creditors_after"] == 80_000 and r["bank_loans"] == 50_000
+    assert r["depreciation"] == 15_000 and r["stock"] == 30_000 and r["retained_earnings"] == -20_000
+    assert r["principal_activity"] == "The provision of IT managed services." and r["net_assets"] == 500_000
+

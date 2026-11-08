@@ -4,13 +4,14 @@ This is a screening estimate, not a valuation. Every result says which
 figures it used and which were assumed, so it can be checked and overridden.
 
 Method:
-  1. Profit (EBITDA proxy): filed operating profit when the latest accounts
-     include it; otherwise revenue × a margin: the company's own margin from
+  1. Profit (EBITDA): filed operating profit when the latest accounts include
+     it, plus depreciation and amortisation where those are filed too (true
+     EBITDA); otherwise revenue × a margin: the company's own margin from
      the most recent accounts that showed profit (if any), else the buy box's
      assumed range.
   2. Enterprise value: profit × an assumed multiple range.
-  3. Cash on the balance sheet is reported separately. Small-company
-     accounts rarely show debt clearly, so it is not netted off.
+  3. Cash and bank debt on the balance sheet are reported separately, not
+     netted off: on a cash-free, debt-free deal they are settled from the price.
 """
 from __future__ import annotations
 
@@ -36,9 +37,16 @@ def value(f: dict, a: dict, use_filed_margin: bool = True) -> dict:
     steps: list[str] = []
     op = f.get("operating_profit")
     if op is not None and op > 0:
-        e_lo = e_hi = float(op)
+        da = f.get("da")
         basis = "filed"
-        steps.append(f"Profit: filed operating profit of {_m(op)}. Depreciation is not added back, so true EBITDA is likely higher.")
+        if da:
+            e_lo = e_hi = float(op) + float(da)
+            steps.append(f"Profit: filed operating profit of {_m(op)} + depreciation and amortisation of {_m(da)} "
+                         f"= EBITDA of {_m(e_lo)}, all from the latest accounts.")
+        else:
+            e_lo = e_hi = float(op)
+            steps.append(f"Profit: filed operating profit of {_m(op)}. Depreciation isn't in these accounts, "
+                         "so true EBITDA may be higher.")
     elif op is not None and op <= 0:
         # Filed as loss-making: an earnings multiple does not apply, and an
         # assumed margin would invent profit the accounts say is not there.
@@ -76,6 +84,9 @@ def value(f: dict, a: dict, use_filed_margin: bool = True) -> dict:
     steps.append(f"Value: {_m(e_lo)}–{_m(e_hi)} × {a['multiple_low']:g}–{a['multiple_high']:g} times = {_m(v_lo)}–{_m(v_hi)}.")
     if f.get("cash"):
         steps.append(f"Cash on the balance sheet: {_m(f['cash'])}. Not included above; it would normally be priced separately.")
+    if f.get("bank_debt"):
+        steps.append(f"Bank loans and overdrafts: {_m(f['bank_debt'])}. Not taken off above; on a cash-free, debt-free deal "
+                     "they are repaid from the price, so the seller receives less.")
     return {"ebitda_low": e_lo, "ebitda_high": e_hi, "value_low": v_lo, "value_high": v_hi, "basis": basis, "steps": steps}
 
 

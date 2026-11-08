@@ -170,14 +170,22 @@ def list_unreadable_accounts(limit: int = 50) -> str:
     "the filing (its Companies House filing-history page). The company is rescored. Figures are marked as read "
     "from a PDF. Fields: turnover, gross_profit, operating_profit, profit_loss (after tax), employees (average), "
     "net_assets, cash, debtors, fixed_assets, current_assets, net_current_assets, total_assets_less_cl, staff_costs, "
-    "director_pay, dividends."))
+    "director_pay, dividends, depreciation, amortisation, interest_payable, tax, creditors_within, creditors_after "
+    "(amounts falling due within / after one year), bank_loans (loans and overdrafts), stock, trade_debtors, "
+    "trade_creditors, retained_earnings, share_capital, principal_activity (text, the company's own words)."))
 def save_financials(company_number: str, period_end: str, source_url: str, turnover: float | None = None,
                     gross_profit: float | None = None, operating_profit: float | None = None,
                     profit_loss: float | None = None, employees: int | None = None, net_assets: float | None = None,
                     cash: float | None = None, debtors: float | None = None, fixed_assets: float | None = None,
                     current_assets: float | None = None, net_current_assets: float | None = None,
                     total_assets_less_cl: float | None = None, staff_costs: float | None = None,
-                    director_pay: float | None = None, dividends: float | None = None) -> str:
+                    director_pay: float | None = None, dividends: float | None = None,
+                    depreciation: float | None = None, amortisation: float | None = None,
+                    interest_payable: float | None = None, tax: float | None = None,
+                    creditors_within: float | None = None, creditors_after: float | None = None,
+                    bank_loans: float | None = None, stock: float | None = None, trade_debtors: float | None = None,
+                    trade_creditors: float | None = None, retained_earnings: float | None = None,
+                    share_capital: float | None = None, principal_activity: str | None = None) -> str:
     from datetime import date as _date
 
     from . import scoring
@@ -188,7 +196,12 @@ def save_financials(company_number: str, period_end: str, source_url: str, turno
                                     profit_loss=profit_loss, employees=employees, net_assets=net_assets, cash=cash,
                                     debtors=debtors, fixed_assets=fixed_assets, current_assets=current_assets,
                                     net_current_assets=net_current_assets, total_assets_less_cl=total_assets_less_cl,
-                                    staff_costs=staff_costs, director_pay=director_pay, dividends=dividends).items()
+                                    staff_costs=staff_costs, director_pay=director_pay, dividends=dividends,
+                                    depreciation=depreciation, amortisation=amortisation, interest_payable=interest_payable,
+                                    tax=tax, creditors_within=creditors_within, creditors_after=creditors_after,
+                                    bank_loans=bank_loans, stock=stock, trade_debtors=trade_debtors,
+                                    trade_creditors=trade_creditors, retained_earnings=retained_earnings,
+                                    share_capital=share_capital, principal_activity=principal_activity).items()
             if v is not None}
     if not vals:
         raise ValueError("Give at least one figure")

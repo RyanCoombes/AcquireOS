@@ -22,7 +22,8 @@ import subprocess
 import tempfile
 from datetime import date
 
-FIELDS = ("turnover", "gross_profit", "operating_profit", "profit_loss", "net_assets", "cash", "debtors")
+FIELDS = ("turnover", "gross_profit", "operating_profit", "profit_loss", "net_assets", "cash", "debtors",
+          "creditors_within", "creditors_after", "stock")
 
 # Labels at the start of a line (lower-cased, punctuation simplified).
 # Bump when reading improves: years that couldn't be read are tried again.
@@ -40,6 +41,9 @@ LABELS: list[tuple[str, re.Pattern]] = [
     ("equity", re.compile(r"^(total equity|(total )?capital and reserves|(total )?(shareholders|members)'?\s*(funds|\(deficit\)\s*/\s*funds|funds\s*/\s*\(deficit\)|deficit))\b")),
     ("cash", re.compile(r"^(cash at bank( and in hand)?|cash and cash equivalents|cash in hand|cash)\b(?!\s*flow)")),
     ("debtors", re.compile(r"^(debtors|trade and other receivables)\b")),
+    ("creditors_within", re.compile(r"^creditors:?\s*(amounts )?falling due within one year\b")),
+    ("creditors_after", re.compile(r"^creditors:?\s*(amounts )?falling due after (more than )?one year\b")),
+    ("stock", re.compile(r"^(stocks?|inventories)\b(?!\s*(exchange|market))")),
 ]
 _NUM = re.compile(r"\(?-?£?\s?\d[\d,]*\)?|(?<![\w.])-(?![\w.])")
 _NOTE = re.compile(r"^\d{1,2}$")  # a plain one- or two-digit number: usually a note reference
@@ -139,6 +143,9 @@ def extract(text: str) -> dict:
         if v is not None and t and abs(v) > abs(t) * lim:
             dropped.append(f"{f.replace('_', ' ')} (larger than turnover)")
             del found[f]
+    for f in ("creditors_within", "creditors_after", "stock"):  # sizes: shown in brackets on balance sheets
+        if f in found:
+            found[f] = [abs(v) if v is not None else None for v in found[f]]
     for f in list(found):
         if any(v is not None and abs(v) > 1e11 for v in found[f]):
             dropped.append(f"{f.replace('_', ' ')} (implausible)")

@@ -981,3 +981,17 @@ td.rowx { width: 36px; text-align: right; padding-right: 4px; }
 .undo { display: flex; gap: 10px; align-items: center; }
 
 .pdfsample { max-height: 260px; overflow: auto; font-size: 11.5px; background: var(--bg, #f6f7f8); padding: 8px; border-radius: 8px; white-space: pre-wrap; margin: 0; }
+
+.yeartable td:first-child { white-space: nowrap; }
+.yeartable tr.strong td { font-weight: 650; }
+.yeartable td.worked { font-style: italic; color: var(--ink-2); }
+.list th.rowx, .list td.rowx { width: 34px; padding-left: 0 !important; padding-right: 6px !important; }
+.yeartable { font-size: 13px; }
+.yeartable th, .yeartable td { padding-left: 8px; padding-right: 8px; }
+.statuscell { position: relative; }
+.statuscell .rowmenu { position: absolute; right: -17px; top: 50%; transform: translateY(-50%); }
+.statuscell .xbtn { width: 24px; height: 24px; font-size: 12px; opacity: .55; }
+tr:hover .statuscell .xbtn, .statuscell .xbtn[aria-expanded="true"] { opacity: 1; }
+.statuscell .rowmenu { z-index: 20; }
+.statuscell .rowmenu:has(.pop) { z-index: 60; }
+tr:has(.rowmenu .pop) { position: relative; z-index: 60; }

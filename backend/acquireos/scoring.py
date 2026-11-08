@@ -192,7 +192,7 @@ ACCOUNT_TYPES = {
 
 UNKNOWN_SHARE = 0.5
 # Bump when the scoring rules change, so every company is scored again.
-SCORING_VERSION = 2
+SCORING_VERSION = 3  # 3: EBITDA adds back filed depreciation and amortisation
 
 
 def score_company(c: dict, criteria: dict, today: date | None = None, scope=None,
@@ -397,7 +397,7 @@ with research_text as (
 )
 select c.company_number, c.name, c.status, c.review_tier, c.incorporation_date, c.sic_codes,
        c.nature_of_business, c.region, c.address_flag, c.postcode, c.accounts_category,
-       l.employees, l.net_assets, l.operating_profit, l.cash, l.net_assets_prev,
+       l.employees, l.net_assets, l.operating_profit, l.cash, l.net_assets_prev, l.da, l.bank_debt,
        e.revenue_low, e.revenue_high, e.basis as revenue_basis,
        o.ownership_type, o.flags as ownership_flags, o.oldest_birth_year,
        concat_ws(' ', rt.txt, en.summary, en.business_type) as research_text, en.field_service,
@@ -439,7 +439,7 @@ def refresh_latest(conn, company_numbers: list[str] | None = None, from_table: s
     conn.execute(f"delete from company_latest {where}", params)
     conn.execute(
         f"""insert into company_latest (company_number, period_end, employees, turnover, operating_profit,
-                net_assets, cash, net_assets_prev, staff_trend)
+                net_assets, cash, net_assets_prev, staff_trend, da, bank_debt)
             select company_number, (array_agg(period_end order by period_end desc))[1],
                    (array_agg(employees order by period_end desc))[1],
                    (array_agg(turnover order by period_end desc))[1],
@@ -447,14 +447,22 @@ def refresh_latest(conn, company_numbers: list[str] | None = None, from_table: s
                    (array_agg(net_assets order by period_end desc))[1],
                    (array_agg(cash order by period_end desc))[1],
                    (array_agg(net_assets order by period_end desc) filter (where net_assets is not null))[2],
-                   (array_agg(employees order by period_end) filter (where employees is not null))[greatest(1, count(employees) - 5):]
+                   (array_agg(employees order by period_end) filter (where employees is not null))[greatest(1, count(employees) - 5):],
+                   -- the same (latest) year as the operating profit, or nothing
+                   (array_agg(coalesce(depreciation_amortisation,
+                                       case when depreciation is not null or amortisation is not null
+                                            then coalesce(depreciation, 0) + coalesce(amortisation, 0) end)
+                              order by period_end desc))[1],
+                   (array_agg(case when bank_loans is not null or bank_overdrafts is not null
+                                   then coalesce(bank_loans, 0) + coalesce(bank_overdrafts, 0) end order by period_end desc))[1]
             from financial_period where not period_inferred {fw}
             group by company_number""",
         params,
     )
 
 
-_FLOATS = ("net_assets", "net_assets_prev", "revenue_low", "revenue_high", "operating_profit", "cash", "filed_margin")
+_FLOATS = ("net_assets", "net_assets_prev", "revenue_low", "revenue_high", "operating_profit", "cash", "filed_margin",
+           "da", "bank_debt")
 
 
 def _fact(r) -> dict:

@@ -168,6 +168,7 @@ export default function Import() {
       )}
 
       <ChFeed onDone={history.reload} />
+      <CatchUp />
       <ChSyncPanel />
       <PdfReadPanel />
       <WebsiteBatch />
@@ -360,6 +361,73 @@ function StreamLine({ s }: { s: ChSync["stream"] }) {
       {" "}{int(events)} events, {int(s.status_changes ?? 0)} status changes, {int(s.waiting)} companies waiting for a re-fetch
       {err && <span className="neg"> · {err}</span>}
     </p>
+  );
+}
+
+/** Data collected since some of it was loaded: what still needs reading again, with progress. */
+function CatchUp() {
+  const [acc, setAcc] = useState<Awaited<ReturnType<typeof api.catchUp>> | null>(null);
+  const [ex, setEx] = useState<Awaited<ReturnType<typeof api.chExtras>> | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const { job, refresh } = useJob();
+  useEffect(() => {
+    let live = true;
+    const load = () => {
+      api.catchUp().then((d) => live && setAcc(d)).catch(() => {});
+      api.chExtras().then((d) => live && setEx(d)).catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 30_000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
+  if (!acc && !ex) return null;
+  const bar = (done: number, total: number) => (
+    <div className="syncbar"><i style={{ width: `${total ? Math.min(100, (100 * done) / total) : 0}%` }} /></div>);
+  const reread = async () => {
+    setMsg(null);
+    try { await api.startRefresh(Math.min(72, Math.max(1, acc!.accounts_months_total)), true); refresh(); setMsg("Started: progress shows under Companies House bulk data above."); }
+    catch (e: any) { setMsg(e.message); }
+  };
+  return (
+    <section>
+      <div className="sechead"><h2>Catch up</h2>
+        {ex && <button className="btn quiet" style={{ marginLeft: "auto" }} onClick={async () => setEx(await api.chExtrasSet(!ex.paused))}>
+          {ex.paused ? "Resume checks" : "Pause checks"}</button>}</div>
+      <p className="faint small" style={{ marginTop: 0 }}>Figures and checks added since your data was first loaded, filled in for what you already have.</p>
+      <div className="syncgrid">
+        {acc && (
+          <div>
+            <div className="small"><b>Accounts: depreciation, debt, working capital, reserves, activity</b></div>
+            {bar(acc.accounts_months_current, acc.accounts_months_total)}
+            <div className="faint small">
+              {acc.accounts_months_total === 0 ? "No accounts loaded yet."
+                : acc.accounts_months_old === 0 ? `✓ All ${acc.accounts_months_total} ${acc.accounts_months_total === 1 ? "month" : "months"} read with the latest figures`
+                : <>{int(acc.accounts_months_current)} of {int(acc.accounts_months_total)} months read with them.{" "}
+                    {job?.running ? "A load is running." : <button className="linkish small" onClick={reread}>Re-read the other {acc.accounts_months_old} now</button>}
+                    <span> (each month is downloaded again; on the Pi this can take hours)</span></>}
+            </div>
+          </div>
+        )}
+        {ex && (
+          <>
+            <div>
+              <div className="small"><b>Directors checked for disqualification</b></div>
+              {bar(ex.directors_checked, ex.directors_total)}
+              <div className="faint small">{int(ex.directors_checked)} of {int(ex.directors_total)} checked
+                {ex.disqualified_found ? <> · <span className="neg">{int(ex.disqualified_found)} disqualified</span></> : " · none disqualified so far"}
+                {ex.disqualified_known ? ` · ${int(ex.disqualified_known)} disqualification records held` : ""}</div>
+            </div>
+            <div>
+              <div className="small"><b>Year end, overseas parents, PSC exemptions</b></div>
+              {bar(ex.companies_done, ex.companies_total)}
+              <div className="faint small">{int(ex.companies_done)} of {int(ex.companies_total)} fetched companies</div>
+            </div>
+          </>
+        )}
+      </div>
+      {msg && <p className="small">{msg}</p>}
+      <p className="faint small">Checks run in the background at the shared Companies House rate, your pipeline first. Directors are checked again every six months, and new disqualifications arrive on the stream.</p>
+    </section>
   );
 }
 

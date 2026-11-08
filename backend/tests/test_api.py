@@ -1024,3 +1024,63 @@ def test_pdf_read_and_save(loaded, monkeypatch):
         d = cl.get("/api/companies/01000003").json()
         assert d["pdf_reads"][0]["method"] == "ocr" and d["estimate"]["basis"] == "filed"
         assert cl.get("/api/pdf-read").json()["done"] == 1
+
+
+def test_disqualified_directors_exemptions_and_stream(loaded, monkeypatch):
+    from acquireos import chapi, chextras, chstream
+
+    loaded.commit()
+    with db.conn() as c:
+        num = "01000001"
+        c.execute("insert into ch_fetch (company_number, checked_at, profile, psc) values (%s, now(), '{}', '[]') "
+                  "on conflict (company_number) do update set psc = '[]'", (num,))
+        c.execute("delete from officer where company_number = %s", (num,))
+        c.execute("""insert into officer (company_number, officer_key, name, role, birth_year, birth_month)
+                     values (%s, 'k1', 'SMITH, John Paul', 'director', 1970, 5),
+                            (%s, 'k2', 'SMITH, Jane', 'director', 1970, 5)""", (num, num))
+        calls = []
+
+        def fake_get(path):
+            calls.append(path)
+            if path.startswith("/search/disqualified-officers"):
+                return {"items": [{"title": "John Paul SMITH", "date_of_birth": "1970-05-12",
+                                   "links": {"self": "/disqualified-officers/natural/abc"}},
+                                  {"title": "John SMITH", "date_of_birth": "1981-02-01",
+                                   "links": {"self": "/disqualified-officers/natural/other"}}]}
+            if path == "/disqualified-officers/natural/abc":
+                return {"forename": "John", "other_forenames": "Paul", "surname": "Smith", "date_of_birth": "1970-05-12",
+                        "disqualifications": [{"disqualified_from": "2022-01-01", "disqualified_until": "2030-01-01",
+                                               "reason": {"description_identifier": "misconduct", "act": "company-directors-disqualification-act-1986"},
+                                               "company_names": ["OLD CO LIMITED"]}]}
+            if path.endswith("/exemptions"):
+                return {"exemptions": {"psc_exempt_as_trading_on_regulated_market": {
+                    "exemption_type": "psc-exempt-as-trading-on-regulated-market", "items": [{"exempt_from": "2019-01-01"}]}}}
+            return {}
+        monkeypatch.setattr(chapi, "_get", fake_get)
+        assert chextras.check_director(c, "k1", "SMITH, John Paul", 1970, 5) == 1  # the 1981 one is not him
+        d = chextras.disqualified_for(c, num)
+        # matched on surname, first name and month and year of birth: John, not Jane
+        assert [x["officer_key"] for x in d] == ["k1"] and d[0]["company_names"] == ["OLD CO LIMITED"]
+        assert "misconduct" in d[0]["reason"]
+        chextras.company_extras(c, num)
+        ex = c.execute("select exemptions, extras_version from ch_fetch where company_number = %s", (num,)).fetchone()
+        assert ex["exemptions"][0]["from"] == "2019-01-01" and ex["extras_version"] == chextras.EXTRAS_VERSION
+        st = chextras.status(c)
+        assert st["disqualified_found"] >= 1 and st["directors_checked"] >= 1
+        # a new disqualification on the stream is stored and matched
+        chstream.process(c, [("disqualified", {"resource_uri": "/disqualified-officers/natural/xyz", "event": {"type": "changed"},
+                                               "data": {"forename": "Jane", "surname": "SMITH", "date_of_birth": "1970-05-03",
+                                                        "disqualifications": [{"disqualified_from": "2026-01-01"}]}})])
+        assert {x["officer_key"] for x in chextras.disqualified_for(c, num)} == {"k1", "k2"}
+        c.rollback()
+
+
+def test_ebitda_adds_back_filed_depreciation():
+    from acquireos import valuation
+
+    a = valuation.assumptions(None)
+    with_da = valuation.value({"operating_profit": 200_000, "da": 50_000, "bank_debt": 120_000}, a)
+    assert with_da["ebitda_low"] == 250_000 and "EBITDA of £250k" in with_da["steps"][0]
+    assert any("Bank loans" in x for x in with_da["steps"])
+    without = valuation.value({"operating_profit": 200_000}, a)
+    assert without["ebitda_low"] == 200_000 and "may be higher" in without["steps"][0]

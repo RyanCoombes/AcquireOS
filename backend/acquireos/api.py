@@ -1696,6 +1696,38 @@ def pdf_read_pause(body: SyncIn):
         return pdfaccounts.status(c)
 
 
+@app.get("/api/ch-extras")
+def ch_extras_status():
+    from . import chextras
+
+    with db.conn() as c:
+        return chextras.status(c)
+
+
+@app.put("/api/ch-extras")
+def ch_extras_pause(body: SyncIn):
+    from . import chextras, chsync
+
+    with db.conn() as c:
+        chsync.set_setting(c, "extras_paused", body.paused)
+        return chextras.status(c)
+
+
+@app.get("/api/catch-up")
+def catch_up():
+    """What was loaded before newer figures were collected, and so needs reading again."""
+    from .importers.accounts import LOADER_VERSION
+
+    with db.conn() as c:
+        r = c.execute("""select count(*) filter (where loader_version < %s) as old, count(*) as total,
+                                count(*) filter (where loader_version >= %s) as current
+                         from (select distinct on (filename) filename, loader_version from import_run
+                               where kind = 'accounts' and finished_at is not null
+                               order by filename, loader_version desc) x""", (LOADER_VERSION, LOADER_VERSION)).fetchone()
+    return {"accounts_months_old": r["old"], "accounts_months_current": r["current"], "accounts_months_total": r["total"],
+            "loader_version": LOADER_VERSION}
+
+
 @app.get("/api/pdf-read/failures")
 def pdf_read_failures(limit: int = 200):
     """Years that couldn't be read: why, and the lines that were read."""
@@ -1732,6 +1764,14 @@ def refresh_company(num: str):
         except chapi.NoKey as e:
             raise HTTPException(400, str(e))
         c.execute("delete from pdf_read where company_number = %s and status <> 'done'", (num,))
+        from . import chextras
+        for o in c.execute("""select officer_key, name, birth_year, birth_month from officer where company_number = %s
+                              and resigned_on is null and birth_year is not null and coalesce(role, '') like '%%director%%'
+                              and coalesce(role, '') not like 'corporate%%'""", (num,)).fetchall():
+            try:
+                chextras.check_director(c, o["officer_key"], o["name"], o["birth_year"], o["birth_month"])
+            except Exception:
+                pass
         c.commit()
         todo = pdfaccounts.todo_for(c, num)
     if todo:

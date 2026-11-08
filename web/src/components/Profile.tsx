@@ -254,6 +254,9 @@ export function Head({ icon, tone, title, aside, right }: { icon: string; tone?:
   );
 }
 
+const cap1 = (t: string) => t.toLowerCase().replace(/(^|[\s-])\w/g, (m) => m.toUpperCase());
+const niceClass = (c: string) => cap1(c.replace(/\bSHARES?\b/i, "").trim()) || "Ordinary";
+
 const yearsSince = (d: string | null) => (d ? Math.floor((Date.now() - new Date(d).getTime()) / 3.156e10) : null);
 
 export function Filings({ data }: { data: CompanyDetail }) {
@@ -355,6 +358,8 @@ type Who = {
   personId?: number; birthYear: number | null; since: string | null; boards: number; officerKey?: string; regNo?: string | null;
   ultimately: string[]; colour?: string; left?: string | null; note?: { warn: boolean; text: string };
   control?: string | null; est?: number;
+  occupation?: string | null; residence?: string | null; nationality?: string | null; classes?: Set<string>;
+  disq?: { from: string | null; until: string | null; reason: string | null; companies: string[] }[];
 };
 
 export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: React.ReactNode }) {
@@ -378,10 +383,13 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
   const shareholders = ch?.shareholders ?? [];
   const asAt = shareholders[0]?.as_at ?? null;
   const stmt = new Map<string, { name: string; pct: number }>();
+  const classesOf = new Map<string, Set<string>>();
   for (const s of shareholders) {
     const k = keyOf(s.name, isCo(s.name));
     stmt.set(k, { name: s.name, pct: Math.round(((stmt.get(k)?.pct ?? 0) + (s.pct ?? 0)) * 10) / 10 });
+    if (s.share_class) classesOf.set(k, (classesOf.get(k) ?? new Set()).add(niceClass(s.share_class)));
   }
+  const allClasses = [...new Set(shareholders.map((s) => s.share_class).filter(Boolean).map((c) => niceClass(c!)))];
   const pk = (p: { name: string; kind: string }) => keyOf(p.name, p.kind !== "individual");
   // The owners register from the API when fetched (fresher than the monthly
   // file); links to the Owners page come from the matching bulk record.
@@ -425,6 +433,7 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
     const w = get(s.name, k.startsWith("C:"));
     w.roles.add("Shareholder");
     w.pct = s.pct;
+    w.classes = classesOf.get(k);
     stillHolding.add(k);
     const gone = ceased.find((p) => pk(p) === k);
     if (gone) {
@@ -443,6 +452,9 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
     w.since = o.appointed_on && (!w.since || o.appointed_on < w.since) ? o.appointed_on : w.since;
     w.boards = Math.max(w.boards, o.other_current);
     w.officerKey = o.officer_key;
+    w.occupation = w.occupation ?? o.occupation; w.residence = w.residence ?? o.residence; w.nationality = w.nationality ?? o.nationality;
+    const dq = (ch?.disqualified ?? []).filter((d) => d.officer_key === o.officer_key);
+    if (dq.length) w.disq = dq.map((d) => ({ from: d.disqualified_from, until: d.disqualified_until, reason: d.reason, companies: d.company_names ?? [] }));
   }
   for (const u of own?.ultimate_owners ?? []) {
     if (!u.via.length) continue;
@@ -487,7 +499,8 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
       )}
       {useStatement ? (
         <p style={{ margin: "0 0 4px" }}><b>{stmt.size} {stmt.size === 1 ? "shareholder" : "shareholders"}
-          {owners[0] ? `; largest ${owners[0].name} with ${owners[0].pct}%` : ""}.</b></p>
+          {owners[0] ? `; largest ${owners[0].name} with ${owners[0].pct}%` : ""}.</b>
+          {allClasses.length > 1 && <span className="faint"> {allClasses.length} share classes: {allClasses.join(", ")}. Different classes can carry different votes or dividends: check the articles.</span>}</p>
       ) : own && own.ownership_type !== "unknown" && <p style={{ margin: "0 0 4px" }}><b>{ownSentence(own.explanation)}</b></p>}
       {lastChange && (joined.length > 0 || leftOn.length > 0) && (
         <p className="small" style={{ margin: "0 0 10px" }}>
@@ -548,6 +561,19 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                       : showAge ? <>{age ? `Age ${age}` : "Age not known"}{yrs !== null ? ` · ${yrs} ${yrs === 1 ? "yr" : "yrs"}` : ""}
                           {w.roles.has("Director") ? ` · ${w.boards} other ${w.boards === 1 ? "board" : "boards"}` : ""}</> : "Shareholder"}
                   </div>
+                  {(w.occupation || w.residence || w.nationality) && !w.company && (
+                    <div className="wmeta">
+                      {w.occupation ? <span className={/retired/i.test(w.occupation) ? "role owner" : ""}>{cap1(w.occupation)}</span> : null}
+                      {w.residence ? `${w.occupation ? " · " : ""}lives in ${cap1(w.residence)}` : ""}
+                      {w.nationality ? ` · ${cap1(w.nationality)}` : ""}
+                    </div>
+                  )}
+                  {w.classes && (allClasses.length > 1 || [...w.classes].some((c) => !/^ordinary$/i.test(c))) &&
+                    <div className="wmeta">Shares: {[...w.classes].join(", ")}</div>}
+                  {w.disq?.map((d, i) => (
+                    <div key={i} className="wnote warn"><b>Disqualified director</b> {d.from ? `from ${date(d.from)}` : ""}{d.until ? ` to ${date(d.until)}` : ""}
+                      {d.reason ? `: ${d.reason}` : ""}{d.companies.length ? ` (${d.companies.slice(0, 3).join(", ")})` : ""}</div>
+                  ))}
                   {w.control && (!w.band || w.pct == null) && <div className="wnote">Control: {w.control}</div>}
                   {w.note && <div className={`wnote ${w.note.warn ? "warn" : ""}`}>{w.note.text}</div>}
                   {theirs.length > 0 && (

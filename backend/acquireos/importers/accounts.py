@@ -53,10 +53,45 @@ CONCEPTS: dict[str, list[str]] = {
     "director_pay": ["DirectorRemuneration", "DirectorsRemuneration", "DirectorRemunerationBenefitsIncludingPayments",
                      "DirectorsRemunerationAndOtherBenefits"],
     "staff_costs": ["StaffCostsEmployeeBenefitsExpense", "StaffCosts", "WagesSalaries"],
+    # For EBITDA: depreciation and amortisation charged in the year (P&L or
+    # the fixed-asset notes' totals).
+    "depreciation": ["DepreciationExpensePropertyPlantEquipment", "IncreaseFromDepreciationChargeForYearPropertyPlantEquipment",
+                     "DepreciationImpairmentExpensePropertyPlantEquipment", "DepreciationTangibleFixedAssets",
+                     "DepreciationOwnedTangibleFixedAssets", "DepreciationChargeForPeriodTangibleFixedAssets"],
+    "amortisation": ["AmortisationExpenseIntangibleAssets", "IncreaseFromAmortisationChargeForYearIntangibleAssets",
+                     "AmortisationImpairmentExpenseIntangibleAssets", "AmortisationIntangibleFixedAssets",
+                     "AmortisationGoodwill"],
+    "depreciation_amortisation": ["DepreciationAmortisationImpairmentExpense", "DepreciationAmortisationExpense"],
+    "interest_payable": ["InterestPayableSimilarChargesFinanceCosts", "InterestPayableSimilarCharges",
+                         "InterestPayableAndSimilarCharges"],
+    "tax": ["TaxTaxCreditOnProfitOrLossOnOrdinaryActivities", "TaxOnProfitOrLossOnOrdinaryActivities",
+            "IncomeTaxExpenseCredit", "TaxExpenseCreditApplicableTaxRate"],
+    # Debt and working capital. Creditors are usually tagged once with a
+    # "within one year" / "after one year" breakdown, read below (_SPLIT).
+    "creditors_within": ["CreditorsDueWithinOneYear", "CreditorsAmountsFallingDueWithinOneYear", "TotalCreditorsDueWithinOneYear"],
+    "creditors_after": ["CreditorsDueAfterOneYear", "CreditorsAmountsFallingDueAfterMoreThanOneYear", "TotalCreditorsDueAfterOneYear"],
+    "bank_loans": ["BankBorrowingsOverdrafts", "BankBorrowings", "BankLoansOverdrafts", "BankLoans", "LoansFromBanks"],
+    "bank_overdrafts": ["BankOverdrafts"],
+    "stock": ["Stocks", "Inventories", "StocksInventory", "TotalInventories"],
+    "trade_debtors": ["TradeDebtorsTradeReceivables", "TradeDebtors"],
+    "trade_creditors": ["TradeCreditorsTradePayables", "TradeCreditors"],
+    "retained_earnings": ["RetainedEarningsAccumulatedLosses", "ProfitLossAccountReserve", "ProfitLossReserve"],
+    "share_capital": ["CalledUpShareCapital", "CalledUpShareCapitalPaid", "ShareCapital"],
 }
+# Figures that are a size, never negative whatever the sign in the filing.
+POSITIVE = {"depreciation", "amortisation", "depreciation_amortisation", "interest_payable", "creditors_within",
+            "creditors_after", "bank_loans", "bank_overdrafts", "stock", "trade_debtors", "trade_creditors"}
+# Tagged once with a maturity breakdown: Creditors[WithinOneYear] and so on.
+# A total with no breakdown wins; otherwise within + after are added up.
+_SPLIT = {"Creditors": {"WithinOneYear": "creditors_within", "AfterOneYear": "creditors_after"},
+          "BankBorrowingsOverdrafts": {"WithinOneYear": "bank_loans", "AfterOneYear": "bank_loans"},
+          "BankBorrowings": {"WithinOneYear": "bank_loans", "AfterOneYear": "bank_loans"}}
+# Text kept as well as figures.
+TEXT_CONCEPTS = {"principal_activity": ["DescriptionPrincipalActivities", "PrincipalActivities", "DescriptionPrincipalActivity"]}
 # Bumped when new figures are read, so months read earlier can be read again.
-LOADER_VERSION = 2
+LOADER_VERSION = 3
 _LOCAL_TO_FIELD = {local: (field, rank) for field, names in CONCEPTS.items() for rank, local in enumerate(names)}
+_WANTED_LOCALS = set(_LOCAL_TO_FIELD) | set(_SPLIT)
 
 NAME_RE = re.compile(r"_(?P<num>[A-Z0-9]{8})_(?P<date>\d{8})\.(?:html|xhtml|xml)$", re.I)
 
@@ -109,7 +144,7 @@ def _number(text: str, attrs: dict) -> float | None:
 # Fast path (bytes, no decoding): only <ix:nonFraction> tags whose name is one
 # of the concepts we keep are matched at all, so the hundreds of other
 # figures in a filing are skipped by the regex engine.
-_WANTED = "|".join(sorted(_LOCAL_TO_FIELD, key=len, reverse=True))
+_WANTED = "|".join(sorted(_WANTED_LOCALS, key=len, reverse=True))
 _IX_WANTED_B = re.compile(
     rb'<ix:nonFraction\b(?=[^>]*\bname="[\w.-]+:(?:' + _WANTED.encode() + rb')")([^>]*)>(.*?)</ix:nonFraction>',
     re.S | re.I)
@@ -149,26 +184,40 @@ def _facts_fast(raw: bytes, low: bytes | None = None):
     return out
 
 
+_MEMBER_B = re.compile(rb'<(?:\w+:)?explicitMember\b[^>]*>\s*[\w.-]*:?(\w+)\s*<', re.I)
+
+
 def _context_date(raw: bytes, low: bytes, cid: str):
     """Period end for one context id, or None if it is a breakdown/missing."""
+    d, member = _context(raw, low, cid)
+    return None if member else d
+
+
+def _context(raw: bytes, low: bytes, cid: str):
+    """(period end, maturity member or None). A breakdown other than a single
+    "within / after one year" member gives (None, None)."""
     needle = b'id="' + cid.encode() + b'"'
     pos = 0
     while True:
         i = raw.find(needle, pos)
         if i == -1:
-            return None
+            return None, None
         lt = raw.rfind(b"<", 0, i)
         head = low[lt:i]
         if b"context" in head.split(b" ", 1)[0]:
             close = low.find(b"context>", i)
             body = raw[i:close] if close != -1 else raw[i:i + 4000]
+            member = None
             if _SEGMENT_B.search(body):
-                return None
+                members = _MEMBER_B.findall(body)
+                if len(members) != 1 or members[0].decode() not in ("WithinOneYear", "AfterOneYear"):
+                    return None, None
+                member = members[0].decode()
             ends = _END_B.findall(body)
             try:
-                return date.fromisoformat(ends[-1].decode()) if ends else None
+                return (date.fromisoformat(ends[-1].decode()) if ends else None), member
             except ValueError:
-                return None
+                return None, None
         pos = i + len(needle)
 
 
@@ -179,21 +228,31 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
     found: dict[date, dict[str, tuple[int, float]]] = {}
     low = raw.lower()
     facts = _facts_fast(raw, low)
+    split: dict[date, dict[str, dict[tuple[str, str], float]]] = {}
     if facts:
-        contexts: dict[str, date | None] = {}
+        contexts: dict[str, tuple] = {}
 
-        def ctx_date(cid: str):
+        def ctx(cid: str):
             if cid not in contexts:
-                contexts[cid] = _context_date(raw, low, cid)
+                contexts[cid] = _context(raw, low, cid)
             return contexts[cid]
 
         for attrs_b, val_b in facts:
             attrs = {k.decode(): v.decode("utf-8", "replace") for k, v in _ATTR_B.findall(attrs_b)}
-            hit = _LOCAL_TO_FIELD.get(attrs.get("name", "").split(":")[-1])
-            if not hit:
-                continue
-            d = ctx_date(attrs.get("contextRef", ""))
+            local = attrs.get("name", "").split(":")[-1]
+            d, member = ctx(attrs.get("contextRef", ""))
             if d is None:
+                continue
+            if member:
+                field = _SPLIT.get(local, {}).get(member)
+                if not field:
+                    continue
+                v = _number(_TAG_B.sub(b"", val_b).decode("utf-8", "replace"), attrs)
+                if v is not None:
+                    split.setdefault(d, {}).setdefault(field, {})[(local, member)] = abs(v)
+                continue
+            hit = _LOCAL_TO_FIELD.get(local)
+            if not hit:
                 continue
             v = _number(_TAG_B.sub(b"", val_b).decode("utf-8", "replace"), attrs)
             if v is None:
@@ -202,13 +261,29 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
             slot = found.setdefault(d, {})
             if field not in slot or rank < slot[field][0]:
                 slot[field] = (rank, v)
+        # Maturity breakdowns, where there is no plain total.
+        for d, fields in split.items():
+            slot = found.setdefault(d, {})
+            for field, parts in fields.items():
+                if field in slot:
+                    continue
+                by_concept: dict[str, float] = {}
+                for (local, _), v in parts.items():
+                    by_concept[local] = by_concept.get(local, 0.0) + v
+                # one concept only (BankBorrowingsOverdrafts before BankBorrowings), never both added
+                best = next(c for c in ("Creditors", "BankBorrowingsOverdrafts", "BankBorrowings") if c in by_concept)
+                slot[field] = (99, by_concept[best])
     else:
         # Older plain-XBRL filings (.xml): the original, more general parser.
         found = _parse_plain(raw.decode("utf-8", "replace"))
 
     out = {}
+    texts = _texts(raw, low) if facts else {}
     for d, fields in found.items():
-        vals = {f: v for f, (_, v) in fields.items()}
+        vals = {f: (abs(v) if f in POSITIVE else v) for f, (_, v) in fields.items()}
+        for f, by_date in texts.items():
+            if d in by_date:
+                vals[f] = by_date[d]
         if "employees" in vals:
             # Mis-tagged filings sometimes put a money figure in the staff
             # field; no UK company has a million employees.
@@ -218,6 +293,30 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
             else:
                 del vals["employees"]
         out[d] = vals
+    return out
+
+
+_NONNUM_B = re.compile(rb'<ix:nonNumeric\b(?=[^>]*\bname="[\w.-]+:(' +
+                       "|".join(n for v in TEXT_CONCEPTS.values() for n in v).encode() + rb')")([^>]*)>(.*?)</ix:nonNumeric>',
+                       re.S | re.I)
+
+
+def _texts(raw: bytes, low: bytes) -> dict[str, dict[date, str]]:
+    """Tagged text (principal activity) by period end."""
+    out: dict[str, dict[date, str]] = {}
+    if b"nonnumeric" not in low:
+        return out
+    for m in _NONNUM_B.finditer(raw):
+        local = m.group(1).decode()
+        field = next(f for f, names in TEXT_CONCEPTS.items() if local in names)
+        attrs = {k.decode(): v.decode("utf-8", "replace") for k, v in _ATTR_B.findall(m.group(2))}
+        d, member = _context(raw, low, attrs.get("contextRef", ""))
+        if d is None or member:
+            continue
+        text = " ".join(html.unescape(_TAG_B.sub(b" ", m.group(3)).decode("utf-8", "replace")).split())
+        text = re.sub(r"\s+([.,;:])", r"\1", text)
+        if 8 <= len(text):
+            out.setdefault(field, {}).setdefault(d, text[:600])
     return out
 
 
@@ -283,6 +382,8 @@ def _parse_member(item):
 
 
 FIELDS = list(CONCEPTS.keys())
+TEXT_FIELDS = list(TEXT_CONCEPTS.keys())
+ALL_FIELDS = FIELDS + TEXT_FIELDS
 
 
 def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_changes: bool = True,
@@ -317,7 +418,7 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
     conn.execute("drop table if exists acc_stage; drop table if exists acc_touched")
     conn.execute("create temp table acc_touched (company_number text primary key)")
     conn.execute(f"""create temp table acc_stage (company_number text, period_end date, balance_date date,
-                    source text, {", ".join(f"{f} numeric" for f in FIELDS)})""")
+                    source text, {", ".join([f"{f} numeric" for f in FIELDS] + [f"{f} text" for f in TEXT_FIELDS])})""")
 
     seen = matched = periods = changes = 0
     buf: list[tuple] = []
@@ -329,7 +430,7 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
         if not buf:
             return
         with conn.cursor().copy(
-            f"copy acc_stage (company_number, period_end, balance_date, source, {', '.join(FIELDS)}) from stdin"
+            f"copy acc_stage (company_number, period_end, balance_date, source, {', '.join(ALL_FIELDS)}) from stdin"
         ) as cp:
             for r in buf:
                 cp.write_row(r)
@@ -337,13 +438,13 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
             changes += _batch_changes(conn, run_id)
         periods += conn.execute(f"""
             insert into financial_period as fp (company_number, period_end, period_inferred, source,
-                source_balance_date, {', '.join(FIELDS)})
+                source_balance_date, {', '.join(ALL_FIELDS)})
             select distinct on (company_number, period_end) company_number, period_end, false, source, balance_date,
-                   {', '.join(FIELDS)}
+                   {', '.join(ALL_FIELDS)}
             from acc_stage order by company_number, period_end, balance_date desc, source desc
             on conflict (company_number, period_end) do update set
                 period_inferred = false, source = excluded.source, source_balance_date = excluded.source_balance_date,
-                {', '.join(f"{f} = coalesce(excluded.{f}, fp.{f})" for f in FIELDS)}
+                {', '.join(f"{f} = coalesce(excluded.{f}, fp.{f})" for f in ALL_FIELDS)}
             where fp.period_inferred or fp.source_balance_date is null
                or excluded.source_balance_date >= fp.source_balance_date""").rowcount
         conn.execute("insert into acc_touched select distinct company_number from acc_stage on conflict do nothing")
@@ -373,7 +474,7 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
             return
         matched += 1
         for pe, vals in data.items():
-            buf.append((num, pe, bdate, f"accounts:{fname}", *[vals.get(f) for f in FIELDS]))
+            buf.append((num, pe, bdate, f"accounts:{fname}", *[vals.get(f) for f in ALL_FIELDS]))
         if len(buf) >= batch:
             flush()
             if progress:
@@ -446,7 +547,7 @@ def _batch_changes(conn, run_id) -> int:
 
 
 def _upsert(conn, num, period_end, vals, source, balance_date=None):
-    cols = [k for k in CONCEPTS if vals.get(k) is not None]
+    cols = [k for k in ALL_FIELDS if vals.get(k) is not None]
     if not cols:
         return
     params = {"num": num, "pe": period_end, "src": source, "bd": balance_date or period_end, **{c: vals[c] for c in cols}}

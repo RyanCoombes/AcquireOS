@@ -454,6 +454,13 @@ def scheduler():
 
         # Companies House API sync in the background (does nothing without CH_API_KEY).
         threading.Thread(target=chsync.run_forever, daemon=True, name="ch-sync").start()
+    if os.environ.get("CH_EXTRAS", "on").lower() not in ("off", "0", "false", "no"):
+        import threading
+
+        from . import chextras
+
+        # Disqualified directors, PSC exemptions and overseas details: catch up in the background.
+        threading.Thread(target=chextras.run_forever, daemon=True, name="ch-extras").start()
     if os.environ.get("PDF_READER", "on").lower() not in ("off", "0", "false", "no"):
         import threading
 

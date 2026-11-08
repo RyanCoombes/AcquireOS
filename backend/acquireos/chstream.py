@@ -35,6 +35,9 @@ STREAMS = {
     "owners": "/persons-with-significant-control",
     "charges": "/charges",
     "insolvency": "/insolvency-cases",
+    "disqualified": "/disqualified-officers",
+    "exemptions": "/company-exemptions",
+    "owner_statements": "/persons-with-significant-control-statements",
 }
 _NUM = re.compile(r"/company/([A-Za-z0-9]{8})(?:/|$)")
 
@@ -76,7 +79,16 @@ def process(conn, batch: list[tuple[str, dict]]) -> dict:
     """Apply a batch of (stream, event). Returns counts."""
     statuses: dict[str, str] = {}
     touched: dict[str, set[str]] = {}
+    disq = 0
     for stream, ev in batch:
+        if stream == "disqualified":
+            # A disqualified officer's record: stored for matching against directors.
+            uri = (ev.get("resource_uri") or "").strip("/")
+            if "disqualified-officers/" in uri and (ev.get("event") or {}).get("type") != "deleted" and ev.get("data"):
+                from . import chextras
+                chextras.save_disqualified(conn, uri.split("disqualified-officers/", 1)[1], ev["data"], "stream")
+                disq += 1
+            continue
         num = company_number(ev)
         if not num:
             continue
@@ -85,7 +97,7 @@ def process(conn, batch: list[tuple[str, dict]]) -> dict:
             st = register_status(ev.get("data") or {})
             if st:
                 statuses[num] = st
-    out = {"status_changes": 0, "marked": 0}
+    out = {"status_changes": 0, "marked": 0, "disqualified": disq}
     if statuses:
         nums, sts = list(statuses), [statuses[n] for n in statuses]
         out["status_changes"] = conn.execute(
@@ -118,7 +130,7 @@ class Streamer:
         self.q: queue.Queue = queue.Queue(maxsize=20000)
         self.state = {name: {"connected": False, "events": 0, "last_at": None, "error": None, "tp": None}
                       for name in STREAMS}
-        self.totals = {"status_changes": 0, "marked": 0, "since": datetime.now(timezone.utc).isoformat()}
+        self.totals = {"status_changes": 0, "marked": 0, "disqualified": 0, "since": datetime.now(timezone.utc).isoformat()}
         self.lock = threading.Lock()
 
     # -- reading ------------------------------------------------------------
@@ -179,7 +191,7 @@ class Streamer:
                     with db.conn(dedicated=True) as c:
                         got = process(c, batch)
                     with self.lock:
-                        for k in ("status_changes", "marked"):
+                        for k in ("status_changes", "marked", "disqualified"):
                             self.totals[k] += got[k]
                         now = datetime.now(timezone.utc).isoformat()
                         for name, ev in batch:

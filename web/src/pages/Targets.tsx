@@ -453,7 +453,6 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                     {sort === c.key && <span className="arrow">{dir === "asc" ? "↑" : "↓"}</span>}
                   </th>
                 ))}
-                <th className="rowx" aria-label="Rule out" />
               </tr>
             </thead>
             <tbody>
@@ -484,7 +483,7 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
   ticked: boolean; onTick: () => void; onRuledOut: (msg: string) => void; focus: string | null;
 }) {
   const closed = r.status === "rejected" || r.status === "passed";
-  const xCell = <td className="rowx">{!closed && <RuleOutMenu num={r.company_number} name={r.name} onDone={onRuledOut} />}</td>;
+  const xBtn = !closed ? <RuleOutMenu num={r.company_number} name={r.name} onDone={onRuledOut} /> : null;
   const tick = (
     <td className="tick" onClick={(e) => e.stopPropagation()}>
       <input type="checkbox" checked={ticked} onChange={onTick} aria-label={`Tick ${r.name}`} />
@@ -537,8 +536,10 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
   );
   const statusCell = (
     <td>
-      <StatusMark s={r.status} />
-      {r.rating ? <span className="faint"> · {r.rating}/5</span> : null}
+      <div className="statuscell">
+        <span><StatusMark s={r.status} />{r.rating ? <span className="faint"> · {r.rating}/5</span> : null}</span>
+        {xBtn}
+      </div>
     </td>
   );
   if (mode === "directory") {
@@ -561,7 +562,6 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
         </td>
         {scoreCell}
         {statusCell}
-        {xCell}
       </tr>
     );
   }
@@ -583,7 +583,6 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
       <td className="num">{age ?? "—"}</td>
       <td className="hide-sm nowrap">{r.ownership_type ? OWNERSHIP[r.ownership_type] ?? r.ownership_type : <span className="faint">Not traced</span>}</td>
       {statusCell}
-      {xCell}
     </tr>
   );
 }

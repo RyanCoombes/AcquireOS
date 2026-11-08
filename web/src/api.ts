@@ -152,6 +152,10 @@ export interface CompanyDetail {
     fixed_assets?: string | null; intangible_assets?: string | null; current_assets?: string | null;
     net_current_assets?: string | null; total_assets_less_cl?: string | null; gross_profit?: string | null;
     director_pay?: string | null; staff_costs?: string | null;
+    depreciation?: string | null; amortisation?: string | null; depreciation_amortisation?: string | null;
+    interest_payable?: string | null; tax?: string | null; creditors_within?: string | null; creditors_after?: string | null;
+    bank_loans?: string | null; bank_overdrafts?: string | null; stock?: string | null; trade_debtors?: string | null;
+    trade_creditors?: string | null; retained_earnings?: string | null; share_capital?: string | null; principal_activity?: string | null;
   }[];
   pdf_waiting?: string[];
   pdf_reads?: { made_up: string; status: "done" | "nothing_found" | "failed"; method: string | null; note: string | null; read_at: string }[];
@@ -207,12 +211,14 @@ export interface CompanyDetail {
                        birth_year: number | null; birth_month: number | null; registration_number: string | null;
                        country_registered: string | null }[] | null } | null;
     officers: { officer_key: string; name: string; role: string | null; appointed_on: string | null; resigned_on: string | null;
-                birth_year: number | null; birth_month: number | null; occupation: string | null; nationality: string | null;
+                birth_year: number | null; birth_month: number | null; occupation: string | null; nationality: string | null; residence?: string | null;
                 other_current: number; other_total: number }[];
     other_appointments: { officer_key: string; officer_name: string; company_number: string; company_name: string | null;
                           company_status: string | null; role: string | null; appointed_on: string | null; resigned_on: string | null;
                           name_on_register: string | null; score: string | null }[];
     shareholders: { name: string; shares: number | null; share_class: string | null; as_at: string | null; source: string | null; pct: number | null }[];
+    disqualified?: { officer_key: string; name: string; disqualified_from: string | null; disqualified_until: string | null; reason: string | null; company_names: string[] | null }[];
+    exemptions?: { kind: string; from: string | null; to: string | null }[];
     late_filings: { made_up_to: string; filed_on: string; days_late: number }[];
     charges: { charge_id: string; status: string | null; classification: string | null; holders: string[]; created_on: string | null;
                satisfied_on: string | null; particulars: string | null }[];
@@ -275,6 +281,9 @@ export const api = {
       { method: "POST", body: JSON.stringify({ url: url ?? null }) }),
   chCheck: (n: string) => req<NonNullable<CompanyDetail["ch"]> & { changed: boolean; changes: number }>(
     `/api/companies/${encodeURIComponent(n)}/ch-check`, { method: "POST" }),
+  catchUp: () => req<{ accounts_months_old: number; accounts_months_current: number; accounts_months_total: number; loader_version: number }>("/api/catch-up"),
+  chExtras: () => req<ChExtras>("/api/ch-extras"),
+  chExtrasSet: (paused: boolean) => req<ChExtras>("/api/ch-extras", { method: "PUT", body: JSON.stringify({ paused }) }),
   pdfRead: () => req<PdfRead>("/api/pdf-read"),
   pdfFailures: () => req<PdfFailure[]>("/api/pdf-read/failures"),
   pdfRetry: (num?: string) => req<PdfRead & { requeued: number }>(`/api/pdf-read/retry${num ? `?company_number=${encodeURIComponent(num)}` : ""}`, { method: "POST" }),
@@ -392,3 +401,6 @@ export type PdfFailure = { company_number: string; name: string; made_up: string
   note: string | null; read_at: string; tries: number; sample: string | null };
 export type PdfRead = { done: number; by_ocr: number; by_data?: number; nothing_found: number; failed: number; last_at: string | null;
   queue: number; ocr: boolean; paused: boolean };
+
+export type ChExtras = { directors_total: number; directors_checked: number; disqualified_found: number; disqualified_known: number;
+  companies_total: number; companies_done: number; paused: boolean };

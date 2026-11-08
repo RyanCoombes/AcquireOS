@@ -393,7 +393,9 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
     keep = {k: profile.get(k) for k in ("has_charges", "has_insolvency_history", "has_been_liquidated", "can_file",
                                          "date_of_cessation", "jurisdiction", "type", "subtype", "accounts",
                                          "confirmation_statement", "registered_office_is_in_dispute",
-                                         "undeliverable_registered_office_address", "sic_codes") if k in profile}
+                                         "undeliverable_registered_office_address", "sic_codes",
+                                         "foreign_company_details", "branch_company_details",
+                                         "is_community_interest_company", "has_super_secure_pscs") if k in profile}
     conn.execute(
         """insert into ch_fetch (company_number, fetched_at, checked_at, error, profile, insolvency, psc_statements,
                                  shareholders_from, etag, psc, accounts_pdf)
@@ -407,6 +409,11 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
         (num, "; ".join(errors) or None, json.dumps(keep), json.dumps(insolvency), json.dumps(statements), shareholders_from,
          profile.get("etag"), None if any(e.startswith("owners:") for e in errors) else json.dumps(psc),
          json.dumps(accounts_pdf)))
+    try:  # PSC exemptions and UK establishments (a request each, only where they apply)
+        from . import chextras
+        chextras.company_extras(conn, num, profile, psc)
+    except Exception as e:
+        errors.append(f"extras: {str(e)[:120]}")
     if accounts_added and before:
         conn.execute("""insert into company_change (company_number, kind, field, new_value, source)
                         values (%s, 'accounts', 'period_end', %s, 'api')""",
@@ -593,7 +600,16 @@ def details(conn, company_number: str) -> dict:
         s["pct"] = round(100 * float(s["shares"] or 0) / total_shares, 1) if total_shares else None
     return {"enabled": enabled(), "fetched": fetched, "charges": charges, "filings": filings,
             "officers": officers, "other_appointments": other, "shareholders": shareholders,
-            "late_filings": _late_filings(filings), "signals": signals(conn, num, charges, filings, shareholders)}
+            "late_filings": _late_filings(filings), "signals": signals(conn, num, charges, filings, shareholders),
+            "disqualified": _disq(conn, num), "exemptions": (fetched or {}).get("exemptions") or []}
+
+
+def _disq(conn, num: str) -> list[dict]:
+    try:
+        from . import chextras
+        return chextras.disqualified_for(conn, num)
+    except Exception:  # before the migration
+        return []
 
 
 def signals(conn, num: str, charges=None, filings=None, shareholders=None) -> list[dict]:
