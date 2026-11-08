@@ -2,9 +2,9 @@ import type React from "react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { duration, elapsed, useJob } from "../components/JobBar";
 import { Link } from "react-router-dom";
-import { api, type ChSync, type PdfFailure, type PdfRead, type Preview } from "../api";
+import { api, type ChSync, type PdfFailure, type PdfRead, type Preview, type Suspicious } from "../api";
 import { ErrorLine, Hint, useAsync } from "../components/bits";
-import { dateTime, int } from "../format";
+import { dateTime, int, money } from "../format";
 
 const KINDS = {
   companies: {
@@ -459,9 +459,66 @@ function PdfReadPanel() {
         {" · "}<b>{int(st.queue)}</b> waiting{st.last_at ? <> · last {dateTime(st.last_at)}</> : null}
       </p>
       <PdfFailures count={st.nothing_found + st.failed} onRetried={setSt} />
+      <PdfSuspicious count={st.suspicious ?? 0} />
+      <PdfRedo onDone={setSt} />
       {!st.ocr && <div className="callout amber" style={{ marginTop: 8 }}>OCR isn't installed here, so only PDFs with a text layer can be read. Update the stack to get the new image.</div>}
       <p className="faint small">Years with no figures, newest first, back up to 10 years.<Hint text="For every company fetched from Companies House. Read as data where Companies House has it, otherwise from the PDF (text, or OCR for scans). Your pipeline first. PDF figures are marked on the company page." /></p>
     </section>
+  );
+}
+
+function PdfRedo({ onDone }: { onDone: (s: PdfRead) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const go = async () => {
+    if (!confirm("Clear every figure the PDF reader produced and read those years again?\n\nFigures saved by you or Claude, and accounts read as data, are kept.")) return;
+    setBusy(true);
+    try {
+      const r = await api.pdfRedo();
+      onDone(r);
+      setMsg(`Cleared ${int(r.figures_cleared)} years across ${int(r.companies)} companies. They're queued to be read again.`);
+    } catch (e: any) { setMsg(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+      <button className="btn quiet" disabled={busy} onClick={go}>{busy ? "Clearing…" : "Redo PDF readings"}</button>
+      {msg ? <span className="small">{msg}</span>
+        : <span className="faint small">Reads every PDF year again with the current reader.<Hint text="Only figures the reader produced are cleared. Anything saved by you or Claude stays." /></span>}
+    </div>
+  );
+}
+
+function PdfSuspicious({ count }: { count: number }) {
+  const [rows, setRows] = useState<Suspicious[] | null>(null);
+  if (!count) return null;
+  const checked = async (r: Suspicious) => {
+    await api.pdfChecked(r.company_number, String(r.period_end).slice(0, 10));
+    setRows((xs) => (xs ?? []).filter((x) => x !== r));
+  };
+  return (
+    <details style={{ marginTop: 8 }} onToggle={(e) => { if ((e.target as HTMLDetailsElement).open && !rows) api.pdfSuspicious().then(setRows); }}>
+      <summary className="small" style={{ cursor: "pointer" }}><b>{int(count)}</b> PDF years worth checking</summary>
+      <p className="faint small" style={{ margin: "6px 0" }}>Figures that look wrong. Check them against the PDF, or ask Claude to (list_suspicious_figures).</p>
+      {!rows ? <div className="faint small">Loading…</div> : (
+        <table className="small">
+          <thead><tr><th>Company</th><th>Year end</th><th>Turnover</th><th>Why</th><th /></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={`${r.company_number}-${r.period_end}`}>
+                <td><Link to={`/c/${r.company_number}`}>{r.name}</Link></td>
+                <td className="nowrap">{String(r.period_end).slice(0, 10)}</td>
+                <td className="nowrap">{r.turnover != null ? money(r.turnover) : "—"}</td>
+                <td>{r.why.join("; ")}</td>
+                <td className="nowrap">
+                  <button className="linkish small" onClick={() => checked(r)}>It's right</button>{" "}
+                  <a className="small" href={`https://find-and-update.company-information.service.gov.uk/company/${r.company_number}/filing-history`} target="_blank" rel="noreferrer">PDF ↗</a>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </details>
   );
 }
 

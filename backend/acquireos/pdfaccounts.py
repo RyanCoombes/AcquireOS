@@ -482,5 +482,97 @@ def status(conn) -> dict:
                                max(read_at) as last_at from pdf_read""").fetchone()
     from . import chsync
 
-    return {**r, "queue": queue_size(conn), "ocr": ocr_available(),
+    return {**r, "queue": queue_size(conn), "ocr": ocr_available(), "suspicious": suspicious_count(conn),
             "paused": bool(chsync.get_setting(conn, "pdf_paused", False))}
+
+
+# Figures the reader produced (not ones saved by you or Claude, nor read as data).
+_READER = "(fp.source like 'pdf:%%' and fp.source <> 'pdf:claude')"
+
+
+def redo(conn) -> dict:
+    """Clear every figure the PDF reader produced and queue those years to be
+    read again by the current reader. Saved figures (yours, Claude's) and
+    accounts read as data are kept."""
+    gone = conn.execute(f"""delete from financial_period fp where {_READER}
+                            returning company_number, period_end""").fetchall()
+    conn.execute("""delete from figure_check k using (select unnest(%s::text[]) as n, unnest(%s::date[]) as p) g
+                    where k.company_number = g.n and k.period_end = g.p""",
+                 ([r["company_number"] for r in gone], [r["period_end"] for r in gone]))
+    years = conn.execute("delete from pdf_read where coalesce(method, '') <> 'data' or status <> 'done'").rowcount
+    nums = sorted({r["company_number"] for r in gone})
+    # Rescore with rescore_later(nums) once this is committed.
+    return {"figures_cleared": len(gone), "companies": len(nums), "years_queued": years, "_nums": nums}
+
+
+def rescore_later(nums: list[str]) -> None:
+    if nums:
+        import threading
+
+        threading.Thread(target=_rescore, args=(nums,), daemon=True, name="pdf-redo").start()
+
+
+def _rescore(nums: list[str]) -> None:
+    from . import db, scoring
+    from .importers.companies import refresh_estimates
+
+    with db.conn(dedicated=True) as c:
+        c.execute("create temp table if not exists redo_touched (company_number text)")
+        c.execute("delete from redo_touched")
+        c.execute("insert into redo_touched select unnest(%s::text[])", (nums,))
+        refresh_estimates(c, from_table="redo_touched")
+        scoring.refresh_latest(c, from_table="redo_touched")
+        c.commit()
+        for n in nums:
+            scoring.rescore(c, company_number=n)
+            c.commit()
+
+
+SUSPICIOUS_SQL = f"""
+with mine as (select distinct company_number from financial_period fp where {_READER}),
+f as (
+    select fp.*, lag(fp.turnover) over w as prev_t, lead(fp.turnover) over w as next_t
+    from financial_period fp join mine using (company_number)
+    where not fp.period_inferred
+    window w as (partition by fp.company_number order by fp.period_end)
+),
+flagged as (
+    select f.company_number, f.period_end, f.source, f.turnover, f.gross_profit, f.operating_profit,
+           f.net_assets, f.cash, f.employees,
+           array_remove(array[
+             case when f.turnover > 0 and f.prev_t > 0 and (f.turnover > 10 * f.prev_t or 10 * f.turnover < f.prev_t)
+                  then 'turnover ' || round(f.turnover / f.prev_t, 1) || '× the year before' end,
+             case when f.turnover > 0 and f.next_t > 0 and (f.next_t > 10 * f.turnover or 10 * f.next_t < f.turnover)
+                  then 'turnover ' || round(f.turnover / f.next_t, 1) || '× the year after' end,
+             case when f.turnover > 0 and f.gross_profit > f.turnover then 'gross profit bigger than turnover' end,
+             case when f.turnover > 0 and abs(f.operating_profit) > f.turnover then 'operating profit bigger than turnover' end,
+             case when f.turnover >= 100000 and (abs(f.gross_profit) between 0.01 and 99 or abs(f.operating_profit) between 0.01 and 99
+                       or abs(f.net_assets) between 0.01 and 99 or abs(f.cash) between 0.01 and 99)
+                  then 'a figure under £100 beside turnover of ' || round(f.turnover / 1000) || 'k' end,
+             case when f.turnover > 0 and f.employees > 0 and f.turnover / f.employees > 5000000
+                  then 'over £5m turnover per employee' end,
+             case when f.turnover > 0 and f.employees >= 5 and f.turnover / f.employees < 5000
+                  then 'under £5k turnover per employee' end
+           ], null) as why
+    from f
+    where f.source like 'pdf:%%' and f.source <> 'pdf:claude'
+      and not exists (select 1 from figure_check k where k.company_number = f.company_number and k.period_end = f.period_end)
+)
+select x.*, c.name from flagged x join company c using (company_number)
+where cardinality(x.why) > 0
+"""
+
+
+def suspicious(conn, limit: int = 500) -> list[dict]:
+    """Years read from a PDF whose figures look wrong, worth checking against the PDF."""
+    return conn.execute(SUSPICIOUS_SQL + " order by cardinality(x.why) desc, x.turnover desc nulls last limit %(limit)s",
+                        {"limit": limit}).fetchall()
+
+
+def suspicious_count(conn) -> int:
+    return conn.execute("select count(*) as n from (" + SUSPICIOUS_SQL + ") s", {}).fetchone()["n"]
+
+
+def mark_checked(conn, company_number: str, period_end: str) -> None:
+    conn.execute("insert into figure_check (company_number, period_end) values (%s, %s) on conflict do nothing",
+                 (company_number.strip().upper(), period_end))

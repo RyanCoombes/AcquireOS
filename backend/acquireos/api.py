@@ -1746,6 +1746,42 @@ def pdf_read_retry(company_number: str | None = None):
         return {"requeued": n, **pdfaccounts.status(c)}
 
 
+@app.post("/api/pdf-read/redo")
+def pdf_read_redo():
+    """Clear the figures the PDF reader produced and read those years again."""
+    from . import pdfaccounts
+
+    with db.conn() as c:
+        r = pdfaccounts.redo(c)
+    pdfaccounts.rescore_later(r.pop("_nums"))
+    with db.conn() as c:
+        return {**r, **pdfaccounts.status(c)}
+
+
+@app.get("/api/pdf-read/suspicious")
+def pdf_read_suspicious(limit: int = 500):
+    """Years read from a PDF whose figures look wrong."""
+    from . import pdfaccounts
+
+    with db.conn() as c:
+        return pdfaccounts.suspicious(c, min(max(limit, 1), 2000))
+
+
+class CheckedIn(BaseModel):
+    company_number: str
+    period_end: str
+
+
+@app.post("/api/pdf-read/checked")
+def pdf_read_checked(body: CheckedIn):
+    """Mark a year's PDF figures as checked and right."""
+    from . import pdfaccounts
+
+    with db.conn() as c:
+        pdfaccounts.mark_checked(c, body.company_number, body.period_end)
+        return {"ok": True}
+
+
 @app.post("/api/companies/{num}/refresh")
 def refresh_company(num: str):
     """Everything from Companies House now (profile, filings, owners, officers,

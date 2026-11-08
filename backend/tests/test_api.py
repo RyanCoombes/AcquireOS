@@ -1177,3 +1177,41 @@ def test_pdf_reader_never_replaces_figures_and_rejects_tiny_ones(loaded, monkeyp
         assert float(row["gross_profit"]) == 300_000         # the gap is filled
         assert "already held" in (r["note"] or "")
         c.rollback()
+
+
+def test_pdf_redo_keeps_saves_and_flags_suspicious_years(loaded, monkeypatch):
+    from datetime import date
+
+    from acquireos import pdfaccounts
+    from acquireos.api import app
+
+    monkeypatch.setattr(pdfaccounts, "rescore_later", lambda nums: None)
+    loaded.commit()
+    client = TestClient(app)
+    from acquireos.importers.accounts import _upsert
+
+    with db.conn() as c:
+        num = "01000003"
+        c.execute("delete from financial_period where company_number = %s", (num,))
+        c.execute("delete from pdf_read where company_number = %s", (num,))
+        _upsert(c, num, date(2022, 3, 31), {"turnover": 2_000_000}, "accounts:x", balance_date=date(2022, 3, 31))
+        _upsert(c, num, date(2023, 3, 31), {"turnover": 40_000_000, "gross_profit": 8}, "pdf:ocr", balance_date=date(2023, 3, 31))
+        _upsert(c, num, date(2024, 3, 31), {"turnover": 2_200_000}, "pdf:claude", balance_date=date(2024, 3, 31))
+        c.execute("insert into pdf_read (company_number, made_up, status, method, figures) values (%s, '2023-03-31', 'done', 'ocr', '{}')", (num,))
+    sus = client.get("/api/pdf-read/suspicious").json()
+    mine = [s for s in sus if s["company_number"] == num]
+    assert len(mine) == 1 and str(mine[0]["period_end"]).startswith("2023")
+    assert any("year before" in w for w in mine[0]["why"]) and any("under £100" in w for w in mine[0]["why"])
+    assert client.get("/api/pdf-read").json()["suspicious"] >= 1
+    # marking it checked takes it off the list
+    client.post("/api/pdf-read/checked", json={"company_number": num, "period_end": "2023-03-31"})
+    assert not [s for s in client.get("/api/pdf-read/suspicious").json() if s["company_number"] == num]
+    # redo clears only the reader's figures and requeues the year
+    r = client.post("/api/pdf-read/redo").json()
+    assert r["figures_cleared"] >= 1
+    with db.conn() as c:
+        left = {str(x["period_end"]): x["source"] for x in c.execute(
+            "select period_end, source from financial_period where company_number = %s", (num,))}
+        assert left == {"2022-03-31": "accounts:x", "2024-03-31": "pdf:claude"}
+        assert not c.execute("select 1 from pdf_read where company_number = %s", (num,)).fetchone()
+        assert not c.execute("select 1 from figure_check where company_number = %s", (num,)).fetchone()

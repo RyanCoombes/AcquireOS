@@ -165,6 +165,29 @@ def list_unreadable_accounts(limit: int = 50) -> str:
 
 
 @server.tool(description=(
+    "Years whose figures were read automatically from a PDF and look wrong (e.g. turnover 10x the year before, "
+    "profit bigger than turnover, a figure under £100 beside large turnover). Check each against the PDF with "
+    "read_accounts_pdf: if wrong, save the right figures with save_financials (that clears the flag); if right, "
+    "call mark_figures_checked. Work through them only when the user asks."))
+def list_suspicious_figures(limit: int = 50) -> str:
+    from . import pdfaccounts
+
+    with db.conn() as c:
+        return _j(pdfaccounts.suspicious(c, min(max(limit, 1), 500)))
+
+
+@server.tool(description=(
+    "Mark a year's PDF-read figures as checked against the PDF and correct, so it leaves list_suspicious_figures. "
+    "Only after you have actually compared them with the filed accounts."))
+def mark_figures_checked(company_number: str, period_end: str) -> str:
+    from . import pdfaccounts
+
+    with db.conn() as c:
+        pdfaccounts.mark_checked(c, company_number, period_end)
+    return "Marked as checked."
+
+
+@server.tool(description=(
     "Save figures you read from a company's filed accounts (e.g. a PDF via read_accounts_pdf), for one year end "
     "(period_end YYYY-MM-DD). Give only figures printed in the accounts, in pounds; never estimates. source_url is "
     "the filing (its Companies House filing-history page). The company is rescored. Figures are marked as read "

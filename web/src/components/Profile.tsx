@@ -308,11 +308,6 @@ export function Filings({ data }: { data: CompanyDetail }) {
       {(ch?.fetched?.insolvency ?? []).length > 0 && (
         <div className="callout red">Insolvency: {(ch!.fetched!.insolvency as any[]).map((x) => (x.type ?? "").replace(/-/g, " ")).join(", ")}</div>
       )}
-      {(ch?.late_filings ?? []).length > 0 && (
-        <div className="chips" style={{ marginBottom: 8 }}>
-          {ch!.late_filings.map((l, i) => <span key={i} className="chip red">Accounts to {date(l.made_up_to)} filed {l.days_late} days late</span>)}
-        </div>
-      )}
       {ch?.filings?.length ? (() => {
         const row = (f: (typeof ch.filings)[number]) => (
           <div key={f.transaction_id} className="tl">
@@ -320,18 +315,21 @@ export function Filings({ data }: { data: CompanyDetail }) {
             <span className="tdesc"><b>{filingLabel(f.type, f.description)}</b></span>
           </div>);
         // Accounts on time or late, year by year (late = after the 9-month deadline).
-        const late = new Set((ch.late_filings ?? []).map((l) => String(l.made_up_to).slice(0, 10)));
+        const late = new Map((ch.late_filings ?? []).map((l) => [String(l.made_up_to).slice(0, 10), l.days_late] as const));
+        const seen = new Set<string>();
         const accts = ch.filings.filter((f) => (f.type ?? "").toUpperCase() === "AA" && (f as any).detail?.made_up_date)
           .map((f) => ({ mu: String((f as any).detail.made_up_date).slice(0, 10), filed: f.filed_on }))
-          .sort((a, b) => a.mu.localeCompare(b.mu)).slice(-10);
+          .filter((a) => !seen.has(a.mu) && !!seen.add(a.mu))
+          .sort((a, b) => a.mu.localeCompare(b.mu)).slice(-20);
+        const nLate = accts.filter((a) => late.has(a.mu)).length;
         return (
           <>
             {accts.length > 1 && (
               <div className="frecord">
-                <div className="label">Accounts filed</div>
+                <div className="label">Accounts filed{nLate ? <span className="faint"> · {nLate} late</span> : null}</div>
                 <div className="fr-dots">
                   {accts.map((a) => (
-                    <span key={a.mu} className={late.has(a.mu) ? "late" : "ok"} title={`Year to ${date(a.mu)}: filed ${date(a.filed)}${late.has(a.mu) ? " (late)" : " (on time)"}`}>
+                    <span key={a.mu} className={late.has(a.mu) ? "late" : "ok"} title={`Year to ${date(a.mu)}: filed ${date(a.filed)}${late.has(a.mu) ? `, ${late.get(a.mu)} days late` : ", on time"}`}>
                       <i />{a.mu.slice(0, 4)}
                     </span>
                   ))}

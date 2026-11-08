@@ -290,6 +290,9 @@ export const api = {
   pdfRetry: (num?: string) => req<PdfRead & { requeued: number }>(`/api/pdf-read/retry${num ? `?company_number=${encodeURIComponent(num)}` : ""}`, { method: "POST" }),
   refreshCompany: (n: string) => req<{ changes: number; accounts_added: number; error: string | null; pdf_reading: string[] }>(
     `/api/companies/${encodeURIComponent(n)}/refresh`, { method: "POST" }),
+  pdfRedo: () => req<PdfRead & { figures_cleared: number; companies: number; years_queued: number }>("/api/pdf-read/redo", { method: "POST" }),
+  pdfSuspicious: () => req<Suspicious[]>("/api/pdf-read/suspicious"),
+  pdfChecked: (company_number: string, period_end: string) => req<{ ok: boolean }>("/api/pdf-read/checked", { method: "POST", body: JSON.stringify({ company_number, period_end }) }),
   pdfReadSet: (paused: boolean) => req<PdfRead>("/api/pdf-read", { method: "PUT", body: JSON.stringify({ paused }) }),
   chSync: () => req<ChSync>("/api/ch-sync"),
   chSyncSet: (paused: boolean) => req<ChSync>("/api/ch-sync", { method: "PUT", body: JSON.stringify({ paused }) }),
@@ -406,7 +409,10 @@ export interface OwnerDetail {
 export type PdfFailure = { company_number: string; name: string; made_up: string; status: string; method: string | null;
   note: string | null; read_at: string; tries: number; sample: string | null };
 export type PdfRead = { done: number; by_ocr: number; by_data?: number; nothing_found: number; failed: number; last_at: string | null;
-  queue: number; ocr: boolean; paused: boolean };
+  queue: number; ocr: boolean; paused: boolean; suspicious?: number };
+export type Suspicious = { company_number: string; name: string; period_end: string; source: string; turnover: number | null;
+  gross_profit: number | null; operating_profit: number | null; net_assets: number | null; cash: number | null;
+  employees: number | null; why: string[] };
 
 export type ChExtras = { directors_total: number; directors_checked: number; disqualified_found: number; disqualified_known: number;
   companies_total: number; companies_done: number; paused: boolean };
