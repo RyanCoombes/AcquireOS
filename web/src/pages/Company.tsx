@@ -168,7 +168,7 @@ export default function Company() {
         </div>
       )}
 
-      <CallBar key={num} data={data} num={num} setState={setState} />
+      <CallBar key={num} data={data} num={num} setState={setState} onNote={(n) => setData({ ...data, notes: [n, ...data.notes] })} />
 
       <div className="company-page">
           <nav className="secnav" aria-label="Sections">
@@ -178,8 +178,7 @@ export default function Company() {
               <a key={id} href={`#${id}`} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{l}</a>
             ))}
           </nav>
-        <div className="pair">
-          <div className="pcol">
+        <div className="flow2">
           <section id="overview">
             <Head icon="overview" title="Overview" />
             <p className="summary">{overviewSentence(data)}</p>
@@ -217,12 +216,9 @@ export default function Company() {
               </details>
             )}
           </section>
+            <OwnersDirectors data={data} flags={<Flags flags={own?.flags} address={c.address_flag} />} />
             <NotesSection data={data} num={num} onNote={(n) => setData({ ...data, notes: [n, ...data.notes] })} />
             <OutreachSection key={num} data={data} num={num} setState={setState} onOutreach={reload} />
-          </div>
-          <div className="pcol">
-            <OwnersDirectors data={data} flags={<Flags flags={own?.flags} address={c.address_flag} />} />
-          </div>
         </div>
           <section id="financials">
             <Head icon="money" tone="green" title="Financials" aside={(() => { const n = fin.filter((f) => !f.period_inferred).length; return `${n} ${n === 1 ? "year" : "years"} filed`; })()} />
@@ -274,9 +270,13 @@ export default function Company() {
           <Valuation data={data} num={num} onSaved={reload} />
 
           </div>
-        <div className="pair">
-          <div className="pcol">
+          <div id="research">
+          <Enrichment key={JSON.stringify(data.enrichment)} data={data} num={num} onSaved={reload}
+                      finder={<WebsiteFinder num={num} onSaved={reload} />} />
+          </div>
+        <div className="flow2">
             <Charges data={data} num={num} onFetched={reload} />
+            <Filings data={data} />
           <section id="group">
             <Head icon="group" tone="blue" title="Group and connections" right={<Link to={`/connections/${c.company_number}`}>Open map</Link>} />
             {data.links.length ? (
@@ -298,9 +298,6 @@ export default function Company() {
               </table>
             ) : <div className="faint">No links found in the data imported so far.</div>}
           </section>
-          </div>
-          <div className="pcol">
-            <Filings data={data} />
           <section id="score">
             <Head icon="target" title="Why this score" right={<Link to={`/buy-box?id=${shownId}`}>Edit {shownName}</Link>} />
             {scores.length > 1 && (
@@ -331,18 +328,9 @@ export default function Company() {
               </table>
             ) : <div className="faint">Not scored yet.</div>}
           </section>
-          </div>
-        </div>
-          <div id="research">
-          <Enrichment key={JSON.stringify(data.enrichment)} data={data} num={num} onSaved={reload}
-                      finder={<WebsiteFinder num={num} onSaved={reload} />} />
-
           <Research data={data} num={num} onAdded={reload} />
-
-          </div>
-        <div className="pair">
-          <div className="pcol"><Location data={data} /></div>
-          <div className="pcol"><DealSection data={data} num={num} setState={setState} onScored={reload} /></div>
+          <Location data={data} />
+          <DealSection data={data} num={num} setState={setState} onScored={reload} />
         </div>
           <section id="changes">
             <Head icon="clock" tone="grey" title="Change history" />
@@ -371,43 +359,96 @@ function FactRow({ k, v }: { k: string; v: unknown }) {
   return <><dt className="small">{k.replace(/_/g, " ")}</dt><dd className="small">{String(v)}</dd></>;
 }
 
-/** Your call, across the top: rule out in one click, or set the stage, rating and next action. */
-function CallBar({ data, num, setState }: { data: CompanyDetail; num: string; setState: (p: Record<string, unknown>) => Promise<void> }) {
+/** Your call, in one row: rule out (with a reason), move on a stage, set the stage
+    or rating; a note and the next action fold away. */
+function CallBar({ data, num, setState, onNote }: {
+  data: CompanyDetail; num: string; setState: (p: Record<string, unknown>) => Promise<void>;
+  onNote: (n: CompanyDetail["notes"][number]) => void;
+}) {
   const s = data.state;
+  const nav = useNavigate();
+  const meta = useAsync(() => api.meta(), []);
+  const stages = meta.data?.stages ?? [];
+  const idx = stages.findIndex((x) => x.value === s.status);
+  const nextStage = stages[idx + 1] && !["passed", "rejected"].includes(stages[idx + 1].value) ? stages[idx + 1] : null;
+  const [pop, setPop] = useState<null | "rejected" | "passed">(null);
+  const [more, setMore] = useState(false);
+  const [note, setNote] = useState("");
   const [next, setNext] = useState(s.next_action ?? "");
   const [nextOn, setNextOn] = useState(s.next_action_on ?? "");
-  useEffect(() => { setNext(s.next_action ?? ""); setNextOn(s.next_action_on ?? ""); }, [num]); // eslint-disable-line react-hooks/exhaustive-deps
-  const go = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const [advance, setAdvance] = useState(() => { try { return localStorage.getItem("ao.ruleout.next") !== "0"; } catch { return true; } });
+  const popRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!pop) return;
+    const close = (e: MouseEvent) => { if (popRef.current && !popRef.current.contains(e.target as Node)) setPop(null); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setPop(null); };
+    document.addEventListener("mousedown", close); document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+  }, [pop]);
+  const listNext = nextInList(num);
+  const withNote = (t: string) => (note.trim() ? `${t}. ${note.trim()}` : t);
+  const ruleOut = async (p: RuleOutPick) => {
+    setPop(null);
+    await setState({ ...p, stage_note: withNote(p.stage_note) });
+    setNote("");
+    if (advance && listNext) {
+      try { sessionStorage.setItem("ao.undo", JSON.stringify({ num, name: data.company.name, prev: s.status, note: p.stage_note })); } catch { /* ignore */ }
+      nav(`/c/${listNext}${window.location.search}`);
+    }
+  };
+  const move = async (to: string) => { await setState({ status: to, stage_note: withNote("Changed on the company page") }); setNote(""); };
+  const saveNote = async () => {
+    if (!note.trim()) return;
+    onNote(await api.addNote(num, note.trim())); setNote("");
+  };
+  const closed = s.status === "rejected" || s.status === "passed";
   return (
     <section className="callbar">
-      <div className="cb-rule">
-        <h2 style={{ margin: "0 0 8px" }}>Your call</h2>
-        <CloseOut num={num} name={data.company.name} status={s.status} setState={setState} />
-      </div>
-      <div className="cb-side">
-        <label className="field"><span className="label">Stage</span>
-          <StageSelect value={s.status} onChange={(v) => setState({ status: v, stage_note: "Changed on the company page" })} /></label>
-        <div className="field"><span className="label">Rating <span className="faint">(keys 1–5)</span></span>
-          <div className="rating">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button key={n} className={s.rating === n ? "on" : ""} onClick={() => setState(s.rating === n ? { clear_rating: true } : { rating: n })}>{n}</button>
-            ))}
+      <div className="cb-row">
+        <b className="cb-title">Your call</b>
+        {closed ? (
+          <span className="small">{s.status === "rejected" ? "✕ Ruled out" : "Not now"}: hidden from targets.{" "}
+            <button className="linkish small" onClick={() => move("watching")}>Bring back</button>
+            {listNext && <> · <Link to={`/c/${listNext}`}>Next in list →</Link></>}</span>
+        ) : (
+          <div className="cb-pops" ref={popRef}>
+            <button className={`btn cb-x ${pop === "rejected" ? "on" : ""}`} onClick={() => setPop(pop === "rejected" ? null : "rejected")} aria-expanded={pop === "rejected"}>✕ Not suitable</button>
+            <button className={`btn ${pop === "passed" ? "on" : ""}`} onClick={() => setPop(pop === "passed" ? null : "passed")} aria-expanded={pop === "passed"}>Not now</button>
+            {pop && (
+              <div className="cb-pop">
+                <div className="label" style={{ marginBottom: 6 }}>{pop === "rejected" ? "Not suitable because…" : "Not now because…"}</div>
+                <RuleOutChips onPick={ruleOut} compact only={pop} />
+                {listNext && (
+                  <label className="faint small" style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8 }}>
+                    <input type="checkbox" checked={advance} onChange={(e) => { setAdvance(e.target.checked); try { localStorage.setItem("ao.ruleout.next", e.target.checked ? "1" : "0"); } catch { /* ignore */ } }} />
+                    Then open the next company in the list
+                  </label>
+                )}
+              </div>
+            )}
           </div>
+        )}
+        {nextStage && !closed && <button className="btn primary" onClick={() => move(nextStage.value)}>Move to {nextStage.label} →</button>}
+        <div className="cb-stage"><StageSelect value={s.status} onChange={(v) => move(v)} /></div>
+        <div className="rating small" title="Rating (keys 1–5)">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button key={n} className={s.rating === n ? "on" : ""} onClick={() => setState(s.rating === n ? { clear_rating: true } : { rating: n })}>{n}</button>
+          ))}
         </div>
-        <div className="field cb-next"><span className="label">Next action</span>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input type="text" style={{ flex: 1, minWidth: 0 }} value={next} placeholder="e.g. Send approach letter" aria-label="Next action"
-                   onChange={(e) => setNext(e.target.value)} onBlur={() => next !== (s.next_action ?? "") && setState({ next_action: next || null })} />
-            <input type="date" value={nextOn ?? ""} aria-label="Next action date" onChange={(e) => { setNextOn(e.target.value); setState({ next_action_on: e.target.value || null }); }} />
-          </div>
-        </div>
-        <div className="cb-links small">
-          <button className="linkish" onClick={() => go("notes")}>Notes{data.notes.length ? ` (${data.notes.length})` : ""}</button>
-          <button className="linkish" onClick={() => go("outreach")}>Contact log{data.outreach.length ? ` (${data.outreach.length})` : ""}</button>
-          <button className="linkish" onClick={() => go("deal")}>Deal checklist</button>
-          {s.tags?.length ? <span className="faint">Tags: {s.tags.join(", ")}</span> : null}
-        </div>
+        <button className={`btn quiet ${more ? "on" : ""}`} onClick={() => setMore(!more)} aria-expanded={more}>
+          {more ? "− Note" : "+ Note"}{s.next_action ? " · next action" : ""}</button>
+        {s.next_action && !more && <span className="faint small cb-nextsum">Next: {s.next_action}{s.next_action_on ? ` · ${date(s.next_action_on)}` : ""}</span>}
       </div>
+      {more && (
+        <div className="cb-more">
+          <input type="text" value={note} placeholder="A quick note: saved to notes, and kept with any stage change you make next"
+                 onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") saveNote(); }} />
+          <button className="btn" disabled={!note.trim()} onClick={saveNote}>Save note</button>
+          <input type="text" value={next} placeholder="Next action, e.g. send approach letter" aria-label="Next action"
+                 onChange={(e) => setNext(e.target.value)} onBlur={() => next !== (s.next_action ?? "") && setState({ next_action: next || null })} />
+          <input type="date" value={nextOn ?? ""} aria-label="Next action date" onChange={(e) => { setNextOn(e.target.value); setState({ next_action_on: e.target.value || null }); }} />
+        </div>
+      )}
     </section>
   );
 }
@@ -426,7 +467,7 @@ function NotesSection({ data, num, onNote }: { data: CompanyDetail; num: string;
   return (
     <section id="notes">
       <Head icon="file" tone="grey" title="Notes" aside="Never overwritten by a data refresh" />
-      <textarea value={note} placeholder="What do you think? Ctrl+Enter to save." onChange={(e) => setNote(e.target.value)}
+      <textarea rows={2} value={note} placeholder="What do you think? Ctrl+Enter to save." onChange={(e) => setNote(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && note.trim()) addNote(); }} />
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
         {noteErr && <span className="neg small" style={{ marginRight: 8, alignSelf: "center" }}>{noteErr}</span>}
@@ -744,42 +785,6 @@ function SameBusiness({ data }: { data: CompanyDetail }) {
   );
 }
 
-
-/** One click to rule a company out, with a reason kept in its history; then on
-    to the next company in the list you came from (you can undo it there). */
-function CloseOut({ num, name, status, setState }: { num: string; name: string; status: string; setState: (p: Record<string, unknown>) => Promise<void> | void }) {
-  const nav = useNavigate();
-  const [advance, setAdvance] = useState(() => { try { return localStorage.getItem("ao.ruleout.next") !== "0"; } catch { return true; } });
-  const closed = status === "rejected" || status === "passed";
-  const next = nextInList(num);
-  const pick = async (p: RuleOutPick) => {
-    await setState(p);
-    if (advance && next) {
-      try { sessionStorage.setItem("ao.undo", JSON.stringify({ num, name, prev: status, note: p.stage_note })); } catch { /* ignore */ }
-      nav(`/c/${next}${window.location.search}`);
-    }
-  };
-  if (closed) {
-    return (
-      <div className="faint small" style={{ margin: "0 0 10px" }}>
-        {status === "rejected" ? "Ruled out: hidden from targets." : "Not now: hidden from targets."}{" "}
-        <button className="linkish small" onClick={() => setState({ status: "watching", stage_note: "Brought back" })}>Bring back to Watching</button>
-        {next && <> · <Link to={`/c/${next}`}>Next in list →</Link></>}
-      </div>
-    );
-  }
-  return (
-    <div style={{ margin: "0 0 12px" }}>
-      <RuleOutChips onPick={pick} />
-      {next && (
-        <label className="faint small" style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
-          <input type="checkbox" checked={advance} onChange={(e) => { setAdvance(e.target.checked); try { localStorage.setItem("ao.ruleout.next", e.target.checked ? "1" : "0"); } catch { /* ignore */ } }} />
-          Then open the next company in the list
-        </label>
-      )}
-    </div>
-  );
-}
 
 /** After ruling one out and moving on: say so, with Undo. */
 function UndoBar() {

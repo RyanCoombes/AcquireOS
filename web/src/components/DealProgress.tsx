@@ -15,7 +15,6 @@ export default function DealProgress({ data, num, setState }: {
   const [view, setView] = useState<Status | null>(null);
   const [custom, setCustom] = useState("");
   const stages: Stage[] = meta.data?.stages ?? [];
-  const phases = meta.data?.phases ?? [];
   const status = data.state.status;
   const idx = stages.findIndex((s) => s.value === status);
   const shown = (view ?? status) as Status;
@@ -42,40 +41,27 @@ export default function DealProgress({ data, num, setState }: {
 
   return (
     <>
-      <div className="sechead" style={{ marginBottom: 6 }}>
-        <h2 style={{ margin: 0 }}>Deal stage</h2>
-        {inStage !== null && status !== "new" && <span className="faint small">{inStage} days in stage</span>}
+      <div className="dealtrack" role="list" aria-label="Deal stages">
+        {active.map((st) => {
+          const i = stages.indexOf(st);
+          const cls = st.value === status ? "current" : idx >= 0 && i < idx && !["passed", "rejected"].includes(status) ? "past" : "";
+          const when = entered(st.value);
+          return (
+            <button key={st.value} role="listitem" className={`dt ${cls} ${st.value === shown && view ? "viewing" : ""}`}
+                    title={`${st.label}${when ? ` · ${date(when)}` : ""}${st.description ? ` · ${st.description}` : ""}. Click for its checklist.`}
+                    onClick={() => setView(st.value === status ? null : st.value)}>
+              <span className="dot" /><span className="lab">{st.label}</span>
+            </button>
+          );
+        })}
       </div>
-      <ul className="stepper">
-        {phases.filter((p) => p.value !== "closed").map((p) => (
-          <li key={p.value} style={{ listStyle: "none" }}>
-            <div className="phase">{p.label}</div>
-            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-              {active.filter((s) => s.phase === p.value).map((s) => {
-                const i = stages.indexOf(s);
-                const cls = s.value === status ? "current" : idx >= 0 && i < idx && !["passed", "rejected"].includes(status) ? "past" : "";
-                const when = entered(s.value);
-                return (
-                  <li key={s.value} className={`step ${cls}`} title={s.description}
-                      onClick={() => setView(s.value)} onDoubleClick={() => move(s.value)}>
-                    <span className="dot" />{s.label}
-                    <span className="when">{when ? date(when).replace(/ \d{4}$/, "") : ""}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          </li>
-        ))}
-      </ul>
-      <div className="closed">
-        {next && <button className="btn primary" onClick={() => move(next.value)}>Move to {next.label}</button>}
-        <button className={`btn ${status === "passed" ? "primary" : ""}`} onClick={() => move("passed")}>Pass</button>
-        <button className={`btn ${status === "rejected" ? "primary" : ""}`} onClick={() => move("rejected")}>Reject</button>
+      <div className="faint small" style={{ margin: "4px 0 0" }}>
+        {stages.find((x) => x.value === status)?.label ?? status}{inStage !== null && status !== "new" ? ` · ${inStage} days in this stage` : ""}
+        {next ? ` · next: ${next.label}` : ""}
       </div>
-      <div className="faint small" style={{ marginTop: 6 }}>Click a stage to see its checklist; double-click to move there.</div>
 
       {shownStage && shownStage.checklist.length + tasks.filter((t) => t.custom).length > 0 && (
-        <div style={{ marginTop: 16 }}>
+        <div style={{ marginTop: 12 }}>
           <div className="label">
             {shown === status ? "Checklist" : `Checklist: ${shownStage.label}`} · {done} of {tasks.length}
             {view && view !== status && <button className="btn quiet" style={{ height: 22, marginLeft: 6 }} onClick={() => move(view)}>Move here</button>}
@@ -101,7 +87,7 @@ export default function DealProgress({ data, num, setState }: {
       )}
 
       {deal.history.length > 0 && (
-        <details style={{ marginTop: 16 }} open={deal.history.length <= 4}>
+        <details style={{ marginTop: 12 }}>
           <summary className="label" style={{ cursor: "pointer" }}>History ({deal.history.length})</summary>
           <ul className="timeline">
             {[...deal.history].reverse().map((h, i) => (

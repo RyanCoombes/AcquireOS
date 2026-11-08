@@ -26,19 +26,20 @@ export function listFrom(): string | null {
 }
 
 /** One click: each reason is a button. */
-export function RuleOutChips({ onPick, compact }: { onPick: (p: RuleOutPick) => void; compact?: boolean }) {
+export function RuleOutChips({ onPick, compact, only }: { onPick: (p: RuleOutPick) => void; compact?: boolean; only?: "rejected" | "passed" }) {
   const [other, setOther] = useState("");
+  const otherAs = only ?? "rejected";
   return (
     <div className={`ruleout ${compact ? "compact" : ""}`}>
-      <div className="grp"><span className="lbl red">✕ Not suitable</span>
+      {only !== "passed" && <div className="grp">{!only && <span className="lbl red">✕ Not suitable</span>}
         {NOT_SUITABLE.map((r) => <button key={r} className="chipbtn" onClick={() => onPick(pickNote("rejected", r))}>{r}</button>)}
-      </div>
-      <div className="grp"><span className="lbl">⏸ Not now</span>
+      </div>}
+      {only !== "rejected" && <div className="grp">{!only && <span className="lbl">Not now</span>}
         {NOT_NOW.map((r) => <button key={r} className="chipbtn" onClick={() => onPick(pickNote("passed", r))}>{r}</button>)}
-      </div>
-      <form className="grp" onSubmit={(e) => { e.preventDefault(); if (other.trim()) { onPick(pickNote("rejected", other.trim())); setOther(""); } }}>
-        <input type="text" value={other} placeholder="Other reason…" aria-label="Other reason for ruling it out" onChange={(e) => setOther(e.target.value)} />
-        {other.trim() && <button className="chipbtn" type="submit">Not suitable</button>}
+      </div>}
+      <form className="grp" onSubmit={(e) => { e.preventDefault(); if (other.trim()) { onPick(pickNote(otherAs, other.trim())); setOther(""); } }}>
+        <input type="text" value={other} placeholder="Other reason…" aria-label="Other reason" onChange={(e) => setOther(e.target.value)} />
+        {other.trim() && <button className="chipbtn" type="submit">Save</button>}
       </form>
     </div>
   );
