@@ -122,7 +122,7 @@ export default function Company() {
             {c.accounts_category && <span className="chip" title={`Accounts filed: ${accountsLabel(c.accounts_category)}`}>{accountsChip(c.accounts_category)}</span>}
             {data.enrichment?.ownership ? <span className="chip teal" title={data.enrichment.ownership_note ?? "From research"}>{OWNERSHIP[data.enrichment.ownership]} · research</span>
               : own && own.ownership_type !== "unknown" && <span className="chip teal">{OWNERSHIP[own.ownership_type]}</span>}
-            <Signals s={data.signals} />
+            <Signals s={data.signals} region={c.region} />
             {data.sold?.sold_to && <span className="chip" title="From the owners register or your research">Sold{data.sold.sold_on ? ` ${date(data.sold.sold_on)}` : ""} to {data.sold.sold_to}</span>}
             {data.enrichment?.website && <a className="chip link" href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")} ↗</a>}
           </div>

@@ -1,14 +1,21 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { ErrorLine, useAsync } from "../components/bits";
 import MapView, { type MapLink, type MapPoint } from "../components/MapView";
 import SicPicker from "../components/SicPicker";
-import { FilterGroup, MoneyRange, NumField, NumRange, Select } from "../components/Filters";
+import { FilterGroup, MoneyRange, NumField, NumRange, PresenceFilter, Select } from "../components/Filters";
 import { int, OWNERSHIP } from "../format";
 
 export default function MapPage() {
   const [params, setParams] = useSearchParams();
+  // Older saved searches: "wales=..." is now presence in a nation.
+  useEffect(() => {
+    if (!params.has("wales")) return;
+    const p = new URLSearchParams(params); const w = p.get("wales")!; p.delete("wales");
+    p.set("nation", "Wales"); if (w !== "any") p.set("presence", w);
+    setParams(p, { replace: true });
+  }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
   const nav = useNavigate();
   const meta = useAsync(() => api.meta(), []);
   const [showLinks, setShowLinks] = useState(false);
@@ -29,7 +36,7 @@ export default function MapPage() {
   const m = meta.data;
   const saved = useAsync(() => api.searches(), []);
   const [more, setMore] = useState(false);
-  const MORE = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "wales", "revenue", "sold", "sic", "company_status", "status", "min_years", "accounts_size", "overdue", "charges", "min_value", "max_value", "changed_days", "flag"];
+  const MORE = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "nation", "presence", "revenue", "sold", "sic", "company_status", "status", "min_years", "accounts_size", "overdue", "charges", "min_value", "max_value", "changed_days", "flag"];
   const moreActive = MORE.filter((k) => query[k]).length;
   const active = Object.keys(query).length;
   // A saved search from the lists: its filters, on the map (all companies unless it was a targets search).
@@ -116,8 +123,8 @@ export default function MapPage() {
                 ["investor", "Investor"], ["trust", "Trust"], ["eot", "EOT"], ["mass_address", "Shared address"],
               ]} />
             </FilterGroup>
-            <FilterGroup title="Location" icon="⌖" query={query} keys={["wales"]}>
-              <Select label="Presence in Wales" k="wales" query={query} set={set} options={[["any", "Any presence (registered, office or Welsh funding)"], ["registered", "Registered office in Wales"], ["office", "Office in Wales, registered elsewhere"], ["funding", "Welsh public funding (DBW, Finance Wales)"], ["director", "A director lives in Wales (hint only)"]]} />
+            <FilterGroup title="Location" icon="⌖" query={query} keys={["nation", "presence"]}>
+              <PresenceFilter query={query} set={set} />
             </FilterGroup>
             <FilterGroup title="Company" icon="▤" query={query} keys={["company_status", "min_years", "overdue", "charges", "sic"]}>
               <Select label="Company status" k="company_status" query={query} set={set} options={(m?.status_groups ?? []).map((g) => [g.value, g.label])} />

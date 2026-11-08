@@ -5,7 +5,7 @@ import { ErrorLine, Flags, RevenueTag, Score, Signals, StatusMark, Toast, useAsy
 import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
 import { NOT_NOW, NOT_SUITABLE, pickNote, rememberList, RuleOutMenu } from "../components/RuleOut";
-import { ActiveChips, FilterGroup, MoneyRange, NumField, NumRange, Select } from "../components/Filters";
+import { PresenceFilter, ActiveChips, FilterGroup, MoneyRange, NumField, NumRange, Select } from "../components/Filters";
 import { ageFrom, cap, CHANGE_KIND, date, int, isBadStatus, OWNERSHIP, range, relDays, years } from "../format";
 
 const PAGE = 100;
@@ -51,13 +51,20 @@ const DEFAULTS: Record<Mode, Record<string, string>> = {
   directory: { sort: "name", dir: "asc" },
   targets: { sort: "score", dir: "desc", in_box: "true", mine: "hide_closed" },
 };
-const FILTER_KEYS = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "wales", "revenue", "sold", "signal", "mine", "accounts_size", "overdue", "charges", "bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
+const FILTER_KEYS = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "nation", "presence", "revenue", "sold", "signal", "mine", "accounts_size", "overdue", "charges", "bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
   "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
-const MORE_KEYS = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "wales", "revenue", "sold", "signal", "overdue", "charges", "business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
+const MORE_KEYS = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "nation", "presence", "revenue", "sold", "signal", "overdue", "charges", "business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
 
 export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const base = mode === "directory" ? "/companies" : "/targets";
   const [params, setParams] = useSearchParams();
+  // Older saved searches: "wales=..." is now presence in a nation.
+  useEffect(() => {
+    if (!params.has("wales")) return;
+    const p = new URLSearchParams(params); const w = p.get("wales")!; p.delete("wales");
+    p.set("nation", "Wales"); if (w !== "any") p.set("presence", w);
+    setParams(p, { replace: true });
+  }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
   const nav = useNavigate();
   const meta = useAsync(() => api.meta(), []);
   const saved = useAsync(() => api.searches(), []);
@@ -144,6 +151,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   });
 
   const rows = list.data?.rows ?? [];
+  const focus = query.nation ?? null;
   // Remember this list, so ruling a company out on its page can open the next one.
   useEffect(() => { if (rows.length) rememberList(rows.map((r) => r.company_number), window.location.pathname + window.location.search); }, [list.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const [gone, setGone] = useState<Set<string>>(new Set());
@@ -372,8 +380,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                     ["formation_agent", "Formation-agent address"], ["mass_address", "Shared address"],
                   ]} />
                 </FilterGroup>
-                <FilterGroup title="Location" icon="⌖" query={query} keys={["wales"]}>
-                  <Select label="Presence in Wales" k="wales" query={query} set={set} options={[["any", "Any presence (registered, office or Welsh funding)"], ["registered", "Registered office in Wales"], ["office", "Office in Wales, registered elsewhere"], ["funding", "Welsh public funding (DBW, Finance Wales)"], ["director", "A director lives in Wales (hint only)"]]} />
+                <FilterGroup title="Location" icon="⌖" query={query} keys={["nation", "presence"]}>
+                  <PresenceFilter query={query} set={set} />
                 </FilterGroup>
                 <FilterGroup title="Company" icon="▤" query={query}
                              keys={["overdue", "charges", "business_type", "has_website", "tier", ...(mode === "targets" ? ["company_status", "sic", "min_years"] : [])]}>
@@ -450,7 +458,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
             </thead>
             <tbody>
               {rows.filter((r) => !gone.has(r.company_number)).map((r, i) => <TargetRow key={r.company_number}
-                                             onRuledOut={(msg) => { setToast(msg); setGone((g) => new Set(g).add(r.company_number)); }} r={r} cursor={i === cursor} ticked={sel.has(r.company_number)} onTick={() => toggle(r.company_number)} showBox={!boxId} mode={mode} sics={sics} dim={!!boxId && !!r.excluded}
+                                             focus={focus} onRuledOut={(msg) => { setToast(msg); setGone((g) => new Set(g).add(r.company_number)); }} r={r} cursor={i === cursor} ticked={sel.has(r.company_number)} onTick={() => toggle(r.company_number)} showBox={!boxId} mode={mode} sics={sics} dim={!!boxId && !!r.excluded}
                                              href={`/c/${r.company_number}${boxId ? `?bb=${boxId}` : ""}`}
                                              onOpen={() => nav(`/c/${r.company_number}${boxId ? `?bb=${boxId}` : ""}`)} />)}
             </tbody>
@@ -471,9 +479,9 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   );
 }
 
-function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, onTick, onRuledOut }: {
+function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, onTick, onRuledOut, focus }: {
   r: Row; cursor: boolean; onOpen: () => void; showBox: boolean; mode: Mode; sics: SicOption[]; dim: boolean; href: string;
-  ticked: boolean; onTick: () => void; onRuledOut: (msg: string) => void;
+  ticked: boolean; onTick: () => void; onRuledOut: (msg: string) => void; focus: string | null;
 }) {
   const closed = r.status === "rejected" || r.status === "passed";
   const xCell = <td className="rowx">{!closed && <RuleOutMenu num={r.company_number} name={r.name} onDone={onRuledOut} />}</td>;
@@ -501,7 +509,7 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
         <Link className="rowlink" to={href} onClick={(e) => e.stopPropagation()}>{r.name}</Link>
         {bad && <span className="tag red">{cap(r.company_status)}</span>}
         {recent && r.last_kinds?.length ? <span className="tag" title={`Changed ${relDays(r.last_change)}`}>{r.last_kinds.map((k) => CHANGE_KIND[k] ?? k).join(", ")}</span> : null}
-        <Signals s={r.signals} />
+        <Signals s={r.signals} region={r.region} focus={focus} />
         {r.sold_to && r.signals?.includes("recently_sold") ? <span className="sub" style={{ display: "block" }}>
           Sold{r.sold_on ? ` ${date(r.sold_on)}` : ""} to {r.sold_to}</span> : null}
         {r.same_business?.length ? <Link className="sig grey" to={`/c/${r.same_business[0]}`} onClick={(e) => e.stopPropagation()}

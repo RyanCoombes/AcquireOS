@@ -218,6 +218,9 @@ SORTS = {
 }
 
 
+NATIONS = ("England", "Scotland", "Wales", "Northern Ireland")
+
+
 @app.get("/api/companies")
 def companies(
     q: str | None = None, region: str | None = None, tier: str | None = None, status: str | None = None,
@@ -231,6 +234,7 @@ def companies(
     accounts_size: str | None = None, overdue: str | None = None, charges: str | None = None,
     numbers: str | None = None, count: bool = True, mine: str | None = None, sold: str | None = None,
     signal: str | None = None, revenue: str | None = None, wales: str | None = None,
+    presence: str | None = None, nation: str | None = None,
     min_revenue: float | None = None, max_revenue: float | None = None, min_profit: float | None = None,
     max_profit: float | None = None, min_net_assets: float | None = None, max_net_assets: float | None = None,
     min_cash: float | None = None,
@@ -321,18 +325,23 @@ def companies(
             params["rbasis"] = revenue
         elif revenue == "none":
             where.append("not exists (select 1 from estimate re where re.company_number = c.company_number)")
-        if wales:  # presence in Wales, from the register, research, websites and funders
-            sig = "exists (select 1 from company_signal sg where sg.company_number = c.company_number and sg.signals && %(wsig)s)"
-            if wales == "registered":
-                where.append("c.region = 'Wales'")
-            elif wales == "office":
-                where.append("coalesce(c.region, '') <> 'Wales' and " + sig); params["wsig"] = ["wales_office"]
-            elif wales == "funding":
-                where.append(sig); params["wsig"] = ["wales_funding"]
-            elif wales == "director":
-                where.append(sig); params["wsig"] = ["wales_director"]
-            elif wales == "any":
-                where.append(f"(c.region = 'Wales' or {sig})"); params["wsig"] = ["wales_office", "wales_funding"]
+        if wales and not presence:  # older saved searches: presence in Wales
+            presence, nation = wales, "Wales"
+        if nation in NATIONS and not presence:
+            presence = "any"
+        if presence and nation in NATIONS:  # presence in a nation: register, research, websites, funders
+            sig = "exists (select 1 from company_signal sg where sg.company_number = c.company_number and sg.signals && %(psig)s)"
+            params["pnation"] = nation
+            if presence == "registered":
+                where.append("c.region = %(pnation)s")
+            elif presence == "office":
+                where.append("coalesce(c.region, '') <> %(pnation)s and " + sig); params["psig"] = [f"office:{nation}"]
+            elif presence == "funding":
+                where.append(sig); params["psig"] = [f"funding:{nation}"]
+            elif presence == "director":
+                where.append(sig); params["psig"] = [f"director:{nation}"]
+            elif presence == "any":
+                where.append(f"(c.region = %(pnation)s or {sig})"); params["psig"] = [f"office:{nation}", f"funding:{nation}"]
         if sold in ("hide", "only"):  # recently sold to another company (register or research)
             where.append(("" if sold == "only" else "not ") +
                          "exists (select 1 from company_signal sg where sg.company_number = c.company_number and 'recently_sold' = any(sg.signals))")

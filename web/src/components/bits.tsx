@@ -99,15 +99,30 @@ export const SIGNALS: Record<string, [string, string, string]> = {
   recently_sold: ["Recently sold", "red", "A company became the owner as the previous owners left, in the last 3 years"],
   possible_buyer: ["Possible buyer", "blue", "Has taken control of established companies in the last 3 years: may be buying, not selling"],
   many_shareholders: ["Many shareholders", "amber", "10 or more shareholders on its latest statement: usually investor or employee-owned"],
-  wales_office: ["Office in Wales", "green", "An office or site in Wales, from research or the company's own website"],
-  wales_funding: ["Welsh funding", "green", "Lending or investment from Welsh public funders (DBW, Finance Wales), who only fund businesses in Wales"],
-  wales_director: ["Director in Wales", "grey", "A current director gives Wales as their country (a hint, not proof of an office)"],
 };
 
-export function Signals({ s }: { s?: string[] | null }) {
+const FUNDERS: Record<string, string> = {
+  Wales: "Development Bank of Wales, Finance Wales or the Welsh Government",
+  Scotland: "Scottish Enterprise, the Scottish National Investment Bank or HIE",
+  "Northern Ireland": "Invest NI",
+  England: "a regional fund such as NPIF, Midlands Engine or South West Investment Fund",
+};
+
+/** A place signal (office:, funding:, director: and a nation) as [label, tone, explanation], or null if not worth showing.
+    Offices only where the company isn't registered; directors' homes only when you filter by them. */
+export function placeSignal(k: string, region?: string | null, focus?: string | null): [string, string, string] | null {
+  const [kind, nation] = k.split(":");
+  if (!nation) return null;
+  if (kind === "office") return nation === region ? null : [`Office in ${nation}`, "green", `An office or site in ${nation}, from research or the company's own website`];
+  if (kind === "funding") return [`${nation} public funding`, "green", `Lending or investment from ${FUNDERS[nation] ?? "public funders"}, who only back businesses in ${nation}`];
+  if (kind === "director") return focus === nation ? [`Director in ${nation}`, "grey", `A current director gives ${nation} as their country (a hint, not proof of an office)`] : null;
+  return null;
+}
+
+export function Signals({ s, region, focus }: { s?: string[] | null; region?: string | null; focus?: string | null }) {
   if (!s?.length) return null;
-  return <>{s.filter((k) => SIGNALS[k]).map((k) => (
-    <span key={k} className={`sig ${SIGNALS[k][1]}`} title={SIGNALS[k][2]}>{SIGNALS[k][0]}</span>))}</>;
+  const shown = s.map((k) => [k, SIGNALS[k] ?? placeSignal(k, region, focus)] as const).filter(([, v]) => v);
+  return <>{shown.map(([k, v]) => <span key={k} className={`sig ${v![1]}`} title={v![2]}>{v![0]}</span>)}</>;
 }
 
 /** ☆ Watch / ★ Watching toggle for a company, owner or director. */

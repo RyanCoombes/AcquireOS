@@ -60,8 +60,9 @@ def dataset_overview() -> str:
     "sold: hide|only (sold to another company in the last 3 years). signal: possible_buyer|many_shareholders. "
     "mine: hide_closed|pipeline|untouched. has_website: true|false. "
     "revenue: filed (confirmed in the accounts)|estimated|none. "
-    "wales: presence in Wales: registered (registered office)|office (an office there, registered elsewhere)|"
-    "funding (Welsh public funders such as DBW)|director (a director living in Wales; a hint)|any (registered, office or funding). "
+    "nation: England|Scotland|Wales|Northern Ireland, with presence: registered (registered office there)|"
+    "office (an office there, registered elsewhere)|funding (public funders that only back businesses there, e.g. DBW in Wales)|"
+    "director (a director living there; a hint)|any (registered, office or funding; the default). "
     "min_revenue/max_revenue (filed or estimated; combine with revenue=filed for confirmed only), "
     "min_profit/max_profit (operating profit, latest filed accounts), min_net_assets, min_cash: pounds."))
 def search_companies(query: str | None = None, region: str | None = None, min_score: float | None = None,
@@ -69,7 +70,7 @@ def search_companies(query: str | None = None, region: str | None = None, min_sc
                      max_staff: int | None = None, min_owner_age: int | None = None, sic: str | None = None,
                      changed_days: int | None = None, include_excluded: bool = False, sort: str | None = None,
                      limit: int = 25, sold: str | None = None, signal: str | None = None, mine: str | None = None,
-                     has_website: bool | None = None, revenue: str | None = None, wales: str | None = None,
+                     has_website: bool | None = None, revenue: str | None = None, nation: str | None = None, presence: str | None = None,
                      min_revenue: float | None = None, max_revenue: float | None = None, min_profit: float | None = None,
                      max_profit: float | None = None, min_net_assets: float | None = None, min_cash: float | None = None) -> str:
     r = _api().companies(q=query, region=region, min_score=min_score, ownership=ownership, status=status,
@@ -77,7 +78,7 @@ def search_companies(query: str | None = None, region: str | None = None, min_sc
                          changed_days=changed_days, include_excluded=include_excluded,
                          sort=sort or ("relevance" if query else "score"),
                          limit=max(1, min(limit, 200)), sold=sold, signal=signal, mine=mine, has_website=has_website,
-                         revenue=revenue, wales=wales, min_revenue=min_revenue, max_revenue=max_revenue,
+                         revenue=revenue, nation=nation, presence=presence, min_revenue=min_revenue, max_revenue=max_revenue,
                          min_profit=min_profit, max_profit=max_profit, min_net_assets=min_net_assets, min_cash=min_cash)
     keep = ("company_number", "name", "region", "trading_region", "postcode", "sic_codes", "employees", "revenue_low",
             "revenue_high", "revenue_basis", "revenue_method", "value_low", "value_high", "value_basis", "ownership_type",

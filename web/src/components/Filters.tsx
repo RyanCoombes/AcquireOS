@@ -15,6 +15,20 @@ export function Select({ label, k, query, set, options }: { label: string; k: st
   );
 }
 
+/** Presence in a nation: registered there, an office there, its public funding, or a director living there. */
+export const NATIONS = ["England", "Scotland", "Wales", "Northern Ireland"];
+export function PresenceFilter({ query, set }: { query: Record<string, string>; set: SetFn }) {
+  const n = query.nation;
+  return (
+    <>
+      <Select label="Presence in" k="nation" query={query} set={set} options={NATIONS.map((x) => [x, x])} />
+      {n && <Select label={`How, in ${n}`} k="presence" query={query} set={set} options={[
+        ["registered", "Registered office there"], ["office", "An office there, registered elsewhere"],
+        ["funding", "Public funding only given there"], ["director", "A director lives there (hint only)"]]} />}
+    </>
+  );
+}
+
 export function NumField({ label, k, placeholder, query, set }: { label: string; k: string; placeholder?: string; query: Record<string, string>; set: SetFn }) {
   return (
     <div className="field">
@@ -78,13 +92,13 @@ const LABELS: Record<string, string> = {
   sic: "Industry", min_years: "Years trading ≥", accounts_size: "Accounts", overdue: "Overdue", charges: "Charges",
   business_type: "Business type", has_website: "Website", tier: "Tier", changed_days: "Changed in (days)",
   change_kind: "Change", flag: "Flag", sold: "Recently sold", signal: "Signal", revenue: "Revenue source",
-  wales: "Wales", min_revenue: "Revenue ≥", max_revenue: "Revenue ≤", min_profit: "Profit ≥", max_profit: "Profit ≤",
+  wales: "Wales", nation: "Presence in", presence: "How", min_revenue: "Revenue ≥", max_revenue: "Revenue ≤", min_profit: "Profit ≥", max_profit: "Profit ≤",
   min_net_assets: "Net assets ≥", min_cash: "Cash ≥", min_value: "Value ≥", max_value: "Value ≤",
 };
 const MONEY = new Set(["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "min_value", "max_value"]);
 const VALUE_LABELS: Record<string, string> = {
   hide_closed: "hide not suitable / not now", pipeline: "my pipeline", untouched: "not looked at", all: "everything",
-  any: "any presence", registered: "registered there", office: "office there", funding: "Welsh funding", director: "director there",
+  any: "any presence", registered: "registered there", office: "office there", funding: "public funding", director: "director lives there",
   filed: "filed", estimated: "estimate", none: "none", hide: "hide", only: "only", true: "yes", false: "no",
 };
 
