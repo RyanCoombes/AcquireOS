@@ -124,15 +124,19 @@ export function Charges({ data, num, onFetched }: { data: CompanyDetail; num: st
           : <><b>{c.charges_outstanding ?? 0} outstanding</b>{c.charges_part_satisfied ? `, ${c.charges_part_satisfied} part repaid` : ""}
               {c.charges_satisfied ? `, ${c.charges_satisfied} repaid` : ""}, {c.charges_total} registered in total.</>}
       </p>
-      {ch?.signals?.length ? (
-        <div className="signals">
-          {ch.signals.map((s, i) => (
-            <div key={i} className={`signal ${s.strength}`}>
-              <b>{s.strength === "strong" ? "Investor" : "Possible investment"}</b> {s.text}{s.date ? <span className="faint"> · {date(s.date)}</span> : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      {(() => {
+        // Investment signals: tied to a charge holder they show as a tag on that row; anything else as one short line.
+        const sigs = ch?.signals ?? [];
+        const other = sigs.filter((sg) => !(ch?.charges ?? []).some((x) => x.holders.some((h) => sg.text.toUpperCase().includes(h.toUpperCase()))));
+        const n = sigs.length;
+        if (!n) return null;
+        return (
+          <p className="invline">
+            <span className="invtag">Investor</span> {n === 1 ? "One sign" : `${n} signs`} of outside investment: they may hold shares as well as lend.
+            {other.map((sg, i) => <span key={i} className="faint" title={sg.text}> · {sg.text.length > 70 ? sg.text.slice(0, 68) + "…" : sg.text}</span>)}
+          </p>
+        );
+      })()}
       {ch?.charges?.length ? (() => {
         const live = ch.charges.filter((x) => x.status !== "fully-satisfied");
         const repaid = ch.charges.filter((x) => x.status === "fully-satisfied");
@@ -142,7 +146,10 @@ export function Charges({ data, num, onFetched }: { data: CompanyDetail; num: st
             <tbody>
               {rows.map((x) => (
                 <tr key={x.charge_id}>
-                  <td>{x.holders.join(", ") || "—"}{x.particulars ? <div className="sub">{x.particulars.slice(0, 140)}</div> : null}</td>
+                  <td>{x.holders.join(", ") || "—"}
+                    {(() => { const sg = (ch.signals ?? []).find((g) => x.holders.some((h) => g.text.toUpperCase().includes(h.toUpperCase())));
+                              return sg ? <span className="invtag" title={`${sg.text}${sg.date ? ` · ${date(sg.date)}` : ""}`}>Investor</span> : null; })()}
+                    {x.particulars ? <div className="sub">{x.particulars.slice(0, 140)}</div> : null}</td>
                   <td>{x.status === "outstanding" ? <b className="neg">Outstanding</b> : x.status === "part-satisfied" ? "Part repaid" : "Repaid"}</td>
                   <td className="hide-sm small">{x.classification ?? ""}</td>
                   <td>{date(x.created_on)}</td>
