@@ -21,7 +21,8 @@ export function Location({ data }: { data: CompanyDetail }) {
   if (data.geo) {
     points.push({ company_number: c.company_number, name: c.name, lat: data.geo.lat, lon: data.geo.lon, focus: true,
                   precision: data.geo.precision, label: `${c.postcode} · registered office` });
-    for (const l of data.links) {
+    // Only this company's own places here; group and same-owner companies are on the map's focus view.
+    for (const l of [] as typeof data.links) {
       if (l.lat == null || l.lon == null || l.kind === "shared_address") continue;
       points.push({ company_number: l.other, name: l.other_name ?? l.other, lat: l.lat, lon: l.lon,
                     label: l.kind === "owned_by" ? (l.direction === "parent" ? "Parent company" : "Subsidiary") : `Same owner: ${l.via}` });
@@ -32,7 +33,7 @@ export function Location({ data }: { data: CompanyDetail }) {
   return (
     <section>
       <div className="sechead"><h2>{offices.length ? "Locations and industry" : "Location and industry"}</h2>
-        <span className="right"><a href={`https://www.openstreetmap.org/search?query=${encodeURIComponent(c.postcode ?? c.registered_address ?? "")}`} target="_blank" rel="noreferrer">Open in OpenStreetMap ↗</a></span></div>
+        <span className="right"><a href={`/map?focus=c:${c.company_number}`}>Connected places on the map</a> · <a href={`https://www.openstreetmap.org/search?query=${encodeURIComponent(c.postcode ?? c.registered_address ?? "")}`} target="_blank" rel="noreferrer">OpenStreetMap ↗</a></span></div>
       <div className="loc-grid">
         <div>
           {data.geo && meta.data ? (

@@ -1119,3 +1119,18 @@ def test_network_companies_and_people(loaded):
     with TestClient(app) as cl:
         assert cl.get(f"/api/network/c:{num}").status_code == 200
         assert cl.get("/api/network/c:NOPE0000").status_code == 404
+
+
+def test_compare_with_similar_companies(loaded):
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        num = "01000001"
+        r = cl.get(f"/api/companies/{num}/compare")
+        assert r.status_code == 200
+        d = r.json()
+        assert set(d) == {"peers", "group", "metrics"}
+        # too few similar companies in the test data to rank against: no percentile is made up
+        assert all(m["pct"] is None for m in d["metrics"])
+        assert cl.get("/api/companies/NOPE0000/compare").status_code == 404

@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
-import { ErrorLine, Flags, Hint, RevenueTag, Score, Signals, Toast, useAsync, WatchButton } from "../components/bits";
-import { AreaChart as SmallLine } from "../components/charts";
+import { ErrorLine, Flags, Hint, RevenueTag, Score, Signals, StatusMark, Toast, useAsync, WatchButton } from "../components/bits";
 import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
 import MyScores from "../components/MyScores";
+import Financials from "../components/Financials";
 import { listFrom, nextInList, RuleOutChips, type RuleOutPick } from "../components/RuleOut";
 import { Enrichment, Location } from "../components/CompanyExtras";
-import { Charges, Filings, FinancialOverview, Head, OwnersDirectors, WebsiteFinder } from "../components/Profile";
-import { ageFrom, CHANGE_KIND, chUrl, date, dateTime, describeChange, int, isBadStatus, LINK_KIND, money, OWNERSHIP, range, relDays, toNum, years } from "../format";
+import { Charges, Filings, Fold, Head, OwnersDirectors, WebsiteFinder } from "../components/Profile";
+import { ageFrom, CHANGE_KIND, chUrl, date, describeChange, int, isBadStatus, LINK_KIND, money, OWNERSHIP, range, relDays, years } from "../format";
 
 
 export default function Company() {
@@ -76,7 +76,7 @@ export default function Company() {
   const [inView, setInView] = useState("overview");
   useEffect(() => {
     if (!data) return;
-    const ids = ["overview", "ownership", "notes", "financials", "value", "charges", "filings", "group", "score", "research", "deal", "changes"];
+    const ids = ["overview", "ownership", "activity", "financials", "value", "compare", "charges", "filings", "group", "score", "research", "deal", "changes"];
     const els = ids.map((id) => document.getElementById(id)).filter(Boolean) as HTMLElement[];
     const io = new IntersectionObserver((entries) => {
       const vis = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
@@ -111,16 +111,6 @@ export default function Company() {
   const activity = [...fin].reverse().find((f) => f.principal_activity);
   const ard = prof.accounts?.accounting_reference_date;
   const yearEnd = ard?.day && ard?.month ? new Date(2000, Number(ard.month) - 1, Number(ard.day)).toLocaleDateString("en-GB", { day: "numeric", month: "long" }) : null;
-  // Turnover with the missing years estimated from the company's own revenue per head (dashed).
-  const turnoverPoints = (data.fin_summary?.series ?? []).map((r: any) => ({
-    x: r.period_end, y: r.turnover ?? r.turnover_est ?? null, estimated: r.turnover == null && r.turnover_est != null,
-    note: r.turnover_est_from ? `staff × revenue per head from the ${String(r.turnover_est_from).slice(0, 4)} accounts` : undefined,
-  }));
-  const estByEnd = new Map((data.fin_summary?.series ?? []).filter((r: any) => r.turnover == null && r.turnover_est != null)
-    .map((r: any) => [String(r.period_end).slice(0, 10), r.turnover_est as number]));
-  const series = (k: keyof (typeof fin)[number]) =>
-    fin.map((f) => ({ x: f.period_end, y: toNum(f[k] as string | number | null), inferred: f.period_inferred }));
-
   // Refresh: everything from Companies House now, then its PDF accounts read in the background.
   const refresh = async () => {
     setChCheck("Refreshing from Companies House…");
@@ -143,17 +133,17 @@ export default function Company() {
             {chCheck && <span className="chcheck"> · {chCheck}</span>}
           </div>
           <h1 className="coname">{c.name}</h1>
-          <div className="chips">
+          {/* Two chips (company status, your stage); the rest as plain text. Region, accounts and ownership are in the profile. */}
+          <div className="chips metaline">
             <span className={`chip ${isBadStatus(c.status) ? "red" : "green"}`}>{c.status ? cap(c.status) : "Status unknown"}{c.dissolution_date ? ` ${date(c.dissolution_date)}` : ""}</span>
-            <span className="chip">No. {c.company_number}</span>
-            {c.incorporation_date && <span className="chip">Since {c.incorporation_date.slice(0, 4)} · {years(c.incorporation_date)} yrs</span>}
-            {c.region && <span className="chip">{c.postcode ? `${c.postcode.split(" ")[0]} · ` : ""}{c.region}</span>}
-            {c.accounts_category && <span className="chip" title={`Accounts filed: ${accountsLabel(c.accounts_category)}`}>{accountsChip(c.accounts_category)}</span>}
-            {data.enrichment?.ownership ? <span className="chip teal" title={data.enrichment.ownership_note ?? "From research"}>{OWNERSHIP[data.enrichment.ownership]} · research</span>
-              : own && own.ownership_type !== "unknown" && <span className="chip teal">{OWNERSHIP[own.ownership_type]}</span>}
+            {data.state.status !== "new" && <StatusMark s={data.state.status} />}
+            <span className="mt">No. {c.company_number}</span>
+            {c.incorporation_date && <span className="mt">Since {c.incorporation_date.slice(0, 4)} ({years(c.incorporation_date)} yrs)</span>}
+            {data.sics[0] && <span className="mt">{data.sics[0].description}</span>}
+            {townOf(c.registered_address, c.postcode) && <span className="mt">{townOf(c.registered_address, c.postcode)}</span>}
+            {data.enrichment?.website && <a className="mt" href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")} ↗</a>}
             <Signals s={data.signals} region={c.region} />
-            {data.sold?.sold_to && <span className="chip" title="From the owners register or your research">Sold{data.sold.sold_on ? ` ${date(data.sold.sold_on)}` : ""} to {data.sold.sold_to}</span>}
-            {data.enrichment?.website && <a className="chip link" href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")} ↗</a>}
+            {data.sold?.sold_to && <span className="chip red" title="From the owners register or your research">Sold{data.sold.sold_on ? ` ${date(data.sold.sold_on)}` : ""} to {data.sold.sold_to}</span>}
           </div>
         </div>
         <div className="right">
@@ -220,7 +210,7 @@ export default function Company() {
 
       <div className="company-page">
           <nav className="secnav" aria-label="Sections">
-            {[["overview", "Overview"], ["ownership", "Owners & directors"], ["notes", "Notes"], ["financials", "Financials"],
+            {[["overview", "Overview"], ["ownership", "Owners & directors"], ["activity", "Activity"], ["financials", "Financials"],
               ["value", "Value"], ["charges", "Charges"], ["filings", "Filings"], ["group", "Group"], ["score", "Score"],
               ["research", "Research"], ["deal", "Deal"], ["changes", "History"]].map(([id, l]) => (
               <a key={id} href={`#${id}`} className={inView === id ? "on" : ""} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{l}</a>
@@ -245,6 +235,9 @@ export default function Company() {
               <dt>Industry</dt><dd>{data.sics.length ? data.sics.map((x) => <div key={x.code}>{x.description} <span className="faint">· {x.code}</span></div>) : c.sic_codes.join(", ") || "—"}</dd>
               {data.enrichment?.website && <><dt>Website</dt><dd><a href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "")} ↗</a></dd></>}
               <dt>Registered office</dt><dd>{c.registered_address ?? "—"} <Flags address={c.address_flag} /></dd>
+              {c.region && <><dt>Region</dt><dd>{c.region}</dd></>}
+              {(data.enrichment?.ownership || (own && own.ownership_type !== "unknown")) && <><dt>Ownership</dt><dd>
+                {data.enrichment?.ownership ? <>{OWNERSHIP[data.enrichment.ownership]} <span className="faint small">· from research</span></> : OWNERSHIP[own!.ownership_type]}</dd></>}
               {c.review_tier && <><dt>Review tier</dt><dd>{c.review_tier}</dd></>}
               {c.last_accounts_date && <><dt>Last accounts</dt><dd>Made up to {date(c.last_accounts_date)}
                 {c.accounts_category ? <span className="faint"> · {accountsLabel(c.accounts_category)}</span> : null}</dd></>}
@@ -265,59 +258,19 @@ export default function Company() {
             )}
           </section>
             <OwnersDirectors data={data} flags={<Flags flags={own?.flags} address={c.address_flag} />} />
-            <NotesSection data={data} num={num} onNote={(n) => setData({ ...data, notes: [n, ...data.notes] })} />
-            <OutreachSection key={num} data={data} num={num} setState={setState} onOutreach={reload} />
+            <ActivitySection key={num} data={data} num={num} setState={setState} onChanged={reload} />
         </div>
           <section id="financials">
             <Head icon="money" tone="green" title="Financials" aside={(() => { const n = fin.filter((f) => !f.period_inferred).length; return `${n} ${n === 1 ? "year" : "years"} filed`; })()} />
             <AccountsGap data={data} />
-            {fin.length ? (
-              <>
-                {data.fin_summary && <FinancialOverview s={data.fin_summary} />}
-                <div className="multiples" style={{ marginTop: 14 }}>
-                  <SmallLine title="Staff" points={series("employees")} format={(n) => int(n)} />
-                  <SmallLine title="Net assets" points={series("net_assets")} format={(n) => money(n)} />
-                  <SmallLine title="Cash" points={series("cash")} format={(n) => money(n)} />
-                  <SmallLine title="Debtors" points={series("debtors")} format={(n) => money(n)} />
-                  {fin.some((f) => f.turnover) && <SmallLine title="Turnover" points={turnoverPoints} format={(n) => money(n)} />}
-                  {fin.some((f) => f.profit_loss) && <SmallLine title="Profit" points={series("profit_loss")} format={(n) => money(n)} />}
-                </div>
-                <details style={{ marginTop: 12 }}>
-                <summary className="muted" style={{ cursor: "pointer" }}>All figures by year</summary>
-                <table style={{ marginTop: 10 }}>
-                  <thead><tr><th>Period end</th><th className="num">Staff</th><th className="num">Turnover</th><th className="num hide-sm">Operating profit</th><th className="num">Profit after tax</th><th className="num">Net assets</th><th className="num">Cash</th><th className="num hide-sm">Debtors</th><th className="num hide-sm">Dividends</th></tr></thead>
-                  <tbody>
-                    {[...fin].reverse().map((f) => (
-                      <tr key={f.period_end}>
-                        <td>{date(f.period_end)}{f.period_inferred && <span className="faint small"> · date inferred</span>}
-                          {f.source?.startsWith("pdf:") && <span className="tag amber small" style={{ marginLeft: 6 }}
-                            title="Read automatically from the PDF filing: check against the filing">{f.source === "pdf:ocr" ? "read by OCR" : "from PDF"}</span>}</td>
-                        <td className="num">{int(f.employees)}</td>
-                        <td className="num">{f.turnover != null ? money(f.turnover, { precise: true })
-                          : estByEnd.has(String(f.period_end).slice(0, 10)) ? <span className="estval" title="Estimate: staff × the company's own revenue per head">≈{money(estByEnd.get(String(f.period_end).slice(0, 10))!)} est.</span> : "—"}</td>
-                        <td className={`num hide-sm ${Number(f.operating_profit) < 0 ? "neg" : ""}`}>{money(f.operating_profit, { precise: true })}</td>
-                        <td className={`num ${Number(f.profit_loss) < 0 ? "neg" : ""}`}>{money(f.profit_loss, { precise: true })}</td>
-                        <td className={`num ${Number(f.net_assets) < 0 ? "neg" : ""}`}>{money(f.net_assets, { precise: true })}</td>
-                        <td className="num">{money(f.cash, { precise: true })}</td>
-                        <td className="num hide-sm">{money(f.debtors, { precise: true })}</td>
-                        <td className="num hide-sm">{money(f.dividends, { precise: true })}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {est && <p className="muted small">Revenue: {range(est.revenue_low, est.revenue_high)}. Method: {est.method}.</p>}
-                </details>
-                <details style={{ marginTop: 8 }} open>
-                <summary className="muted" style={{ cursor: "pointer" }}>Profit, debt and working capital</summary>
-                <BalanceSheet fin={fin} />
-                </details>
-              </>
-            ) : <div className="faint">No accounts imported.</div>}
+            <Financials data={data} />
+            {est && est.basis !== "filed" && <p className="faint small" style={{ margin: "4px 0 0" }}>Revenue estimate: {range(est.revenue_low, est.revenue_high)} · {est.method}</p>}
           </section>
           <div id="value">
           <Valuation data={data} num={num} onSaved={reload} />
 
           </div>
+          <Compare num={num} />
           <div id="research">
           <Enrichment key={JSON.stringify(data.enrichment)} data={data} num={num} onSaved={reload}
                       finder={<WebsiteFinder num={num} onSaved={reload} />} />
@@ -501,91 +454,115 @@ function CallBar({ data, num, setState, onNote }: {
   );
 }
 
-function NotesSection({ data, num, onNote }: { data: CompanyDetail; num: string; onNote: (n: CompanyDetail["notes"][number]) => void }) {
+
+
+/** Notes, contacts and stage moves in one timeline, newest first, with one box to add a note or log a contact. */
+function ActivitySection({ data, num, setState, onChanged }: {
+  data: CompanyDetail; num: string; setState: (p: Record<string, unknown>) => Promise<void>; onChanged: () => void;
+}) {
+  const meta = useAsync(() => api.meta(), []);
+  const [mode, setMode] = useState<"note" | "contact">("note");
   const [note, setNote] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [noteErr, setNoteErr] = useState<string | null>(null);
+  const owner = data.ownership?.ultimate_owners?.find((u) => !u.unresolved && u.kind !== "corporate")?.name ?? "";
+  const today = new Date().toISOString().slice(0, 10);
+  const [ct, setCt] = useState({ contact_name: owner, contact_role: "owner", channel: "letter", summary: "", happened_on: today, follow_up_on: "" });
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const stageLabel = (v: string) => meta.data?.statuses.find((x) => x.value === v)?.label ?? v;
+  const items = [
+    ...data.notes.map((n) => ({ at: n.created_at, kind: "note" as const, key: `n${n.id}`, body: <>{n.body}{n.source !== "app" ? <span className="faint small"> · {n.source.replace("import:", "from ")}</span> : null}</> })),
+    ...data.outreach.map((o) => ({ at: o.happened_on, kind: "contact" as const, key: `o${o.id}`,
+      body: <><b>{cap(o.channel ?? "contact")}</b> {o.contact_role === "owner" ? "with" : `with ${o.contact_role}`} {o.contact_name}{o.summary ? `: ${o.summary}` : ""}</> })),
+    ...data.deal.history.map((h, i) => ({ at: h.created_at, kind: "stage" as const, key: `h${i}`,
+      body: <>Moved to <b>{stageLabel(h.to_status)}</b>{h.note ? <span className="faint"> · {h.note}</span> : null}</> })),
+  ].sort((a, b) => String(b.at).localeCompare(String(a.at)));
   const addNote = async () => {
     if (!note.trim()) return;
-    setSaving(true); setNoteErr(null);
-    try { onNote(await api.addNote(num, note)); setNote(""); }
-    catch (e: any) { setNoteErr(`Not saved: ${e.message}`); }
-    finally { setSaving(false); }
+    setBusy(true); setErr(null);
+    try { await api.addNote(num, note.trim()); setNote(""); onChanged(); } catch (e: any) { setErr(`Not saved: ${e.message}`); }
+    setBusy(false);
   };
+  const logContact = async () => {
+    setBusy(true); setErr(null);
+    const { follow_up_on, ...c } = ct;
+    try {
+      await api.addOutreach({ ...c, contact_name: c.contact_name.trim() || "Owner", company_number: num,
+                              next_action: follow_up_on ? `Follow up: ${c.summary || c.channel}` : null, next_action_on: follow_up_on || null });
+      if (follow_up_on) await setState({ next_action: `Follow up: ${c.summary || c.channel}`, next_action_on: follow_up_on });
+      setCt({ ...ct, summary: "", follow_up_on: "" }); onChanged();
+    } catch (e: any) { setErr(`Not saved: ${e.message}`); }
+    setBusy(false);
+  };
+  const icon = { note: "✎", contact: "✉", stage: "→" };
+  const row = (it: (typeof items)[number]) => (
+    <li key={it.key} className={`act-${it.kind}`}>
+      <span className="act-d">{date(it.at)}</span><span className="act-i">{icon[it.kind]}</span><span>{it.body}</span>
+    </li>);
   return (
-    <section id="notes">
-      <Head icon="file" tone="grey" title="Notes" aside="Never overwritten by a data refresh" />
-      <textarea rows={2} value={note} placeholder="What do you think? Ctrl+Enter to save." onChange={(e) => setNote(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && note.trim()) addNote(); }} />
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
-        {noteErr && <span className="neg small" style={{ marginRight: 8, alignSelf: "center" }}>{noteErr}</span>}
-        <button className="btn primary" disabled={!note.trim() || saving} onClick={addNote}>Add note</button>
+    <section id="activity">
+      <div className="sechead">
+        <h2 className="withico">Your activity</h2>
+        <span className="right seg2"><button className={mode === "note" ? "on" : ""} onClick={() => setMode("note")}>Note</button><button className={mode === "contact" ? "on" : ""} onClick={() => setMode("contact")}>Contact</button></span>
       </div>
-      <ul className="notes">
-        {data.notes.map((n) => (
-          <li key={n.id}>
-            <div className="meta">{dateTime(n.created_at)}{n.source !== "app" ? ` · ${n.source.replace("import:", "from ")}` : ""}</div>
-            {n.body}
-          </li>
-        ))}
-        {!data.notes.length && <li className="faint">No notes yet.</li>}
-      </ul>
+      {mode === "note" ? (
+        <div className="act-in">
+          <input type="text" value={note} placeholder="Add a note… (Enter to save; never overwritten by a data refresh)" onChange={(e) => setNote(e.target.value)}
+                 onKeyDown={(e) => { if (e.key === "Enter") addNote(); }} />
+          <button className="btn primary" disabled={!note.trim() || busy} onClick={addNote}>Save</button>
+        </div>
+      ) : (
+        <div className="act-ct">
+          <input type="text" placeholder="Who (blank: the owner)" value={ct.contact_name} onChange={(e) => setCt({ ...ct, contact_name: e.target.value })} />
+          <select value={ct.channel} onChange={(e) => setCt({ ...ct, channel: e.target.value })}>
+            <option value="letter">Letter</option><option value="email">Email</option><option value="call">Call</option><option value="linkedin">LinkedIn</option><option value="meeting">Meeting</option>
+          </select>
+          <select value={ct.contact_role} onChange={(e) => setCt({ ...ct, contact_role: e.target.value })}>
+            <option value="owner">Owner</option><option value="adviser">Adviser</option><option value="broker">Broker</option><option value="investor">Investor</option><option value="other">Other</option>
+          </select>
+          <input type="text" className="wide" placeholder="What happened" value={ct.summary} onChange={(e) => setCt({ ...ct, summary: e.target.value })} />
+          <label className="field"><span className="label">When</span><input type="date" value={ct.happened_on} onChange={(e) => setCt({ ...ct, happened_on: e.target.value })} /></label>
+          <label className="field"><span className="label">Follow up on</span><input type="date" value={ct.follow_up_on} onChange={(e) => setCt({ ...ct, follow_up_on: e.target.value })} /></label>
+          <button className="btn primary" disabled={busy} onClick={logContact}>Log contact</button>
+        </div>
+      )}
+      {err && <div className="neg small" style={{ marginTop: 6 }}>{err}</div>}
+      {items.length ? (
+        <>
+          <ul className="act">{items.slice(0, 5).map(row)}</ul>
+          {items.length > 5 && <Fold label={`${items.length - 5} older ${items.length - 5 === 1 ? "entry" : "entries"}`}><ul className="act">{items.slice(5).map(row)}</ul></Fold>}
+        </>
+      ) : <div className="faint" style={{ marginTop: 8 }}>Nothing yet.</div>}
     </section>
   );
 }
 
-function OutreachSection({ data, num, setState, onOutreach }: {
-  data: CompanyDetail; num: string; setState: (p: Record<string, unknown>) => Promise<void>; onOutreach: () => void;
-}) {
-  const owner = data.ownership?.ultimate_owners?.find((u) => !u.unresolved && u.kind !== "corporate")?.name ?? "";
-  const today = new Date().toISOString().slice(0, 10);
-  const [contact, setContact] = useState({ contact_name: owner, contact_role: "owner", channel: "letter", summary: "", happened_on: today, follow_up_on: "" });
-  const [outErr, setOutErr] = useState<string | null>(null);
+/** Where this company sits among similar companies in your data. */
+function Compare({ num }: { num: string }) {
+  const q = useAsync(() => api.compare(num), [num]);
+  const d = q.data;
+  if (!d || !d.group) return null;
+  const shown = d.metrics.filter((m) => m.value !== null);
+  if (!shown.length) return null;
+  const f = (m: (typeof shown)[number], v: number) => (m.fmt === "money" ? money(v) : `${v > 0 && m.key === "growth" ? "+" : ""}${v.toFixed(1)}%`);
+  const where = (p: number) => (p >= 75 ? `top ${100 - p}%` : p <= 25 ? `bottom ${Math.max(1, p)}%` : p >= 50 ? "above the middle" : "below the middle");
   return (
-    <section id="outreach">
-      <Head icon="people" tone="grey" title="Contact log" />
-      <form onSubmit={async (e) => {
-        e.preventDefault();
-        setOutErr(null);
-        const { follow_up_on, ...c } = contact;
-        try {
-          await api.addOutreach({ ...c, contact_name: c.contact_name.trim() || "Owner", company_number: num,
-                                  next_action: follow_up_on ? `Follow up: ${c.summary || c.channel}` : null, next_action_on: follow_up_on || null });
-          if (follow_up_on) await setState({ next_action: `Follow up: ${c.summary || c.channel}`, next_action_on: follow_up_on });
-          setContact({ ...contact, summary: "", follow_up_on: "" });
-          onOutreach();
-        } catch (err: any) { setOutErr(`Not saved: ${err.message}`); }
-      }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 110px", gap: 6 }}>
-          <input type="text" placeholder="Who (blank: the owner)" aria-label="Who" value={contact.contact_name} onChange={(e) => setContact({ ...contact, contact_name: e.target.value })} />
-          <select value={contact.contact_role} onChange={(e) => setContact({ ...contact, contact_role: e.target.value })}>
-            <option value="owner">Owner</option><option value="adviser">Adviser</option><option value="broker">Broker</option>
-            <option value="investor">Investor</option><option value="other">Other</option>
-          </select>
-          <input type="text" placeholder="What happened" value={contact.summary} onChange={(e) => setContact({ ...contact, summary: e.target.value })} />
-          <select value={contact.channel} onChange={(e) => setContact({ ...contact, channel: e.target.value })}>
-            <option value="letter">Letter</option><option value="email">Email</option><option value="call">Call</option>
-            <option value="linkedin">LinkedIn</option><option value="meeting">Meeting</option>
-          </select>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 6, marginTop: 6, alignItems: "end" }}>
-          <label className="field"><span className="label">When</span>
-            <input type="date" value={contact.happened_on} onChange={(e) => setContact({ ...contact, happened_on: e.target.value })} /></label>
-          <label className="field"><span className="label">Follow up on</span>
-            <input type="date" value={contact.follow_up_on} onChange={(e) => setContact({ ...contact, follow_up_on: e.target.value })} /></label>
-          <button className="btn" type="submit">Log contact</button>
-        </div>
-        {outErr && <div className="neg small" style={{ marginTop: 6 }}>{outErr}</div>}
-      </form>
-      <ul className="notes">
-        {data.outreach.map((o) => (
-          <li key={o.id}>
-            <div className="meta">{date(o.happened_on)} · {o.channel} · {o.contact_role}</div>
-            <b>{o.contact_name}</b>{o.summary ? `: ${o.summary}` : ""}
-          </li>
+    <section id="compare">
+      <Head icon="target" tone="grey" title="How it compares" aside={`vs ${int(d.peers)} companies in ${d.group}, filed figures`} />
+      <div className="cmp">
+        {shown.map((m) => (
+          <div key={m.key} className="cmp-row">
+            <div className="cmp-l">{m.label}</div>
+            <div className="cmp-track">
+              {m.pct !== null ? <>
+                <i className="cmp-med" title={`Median ${f(m, m.median!)}`} />
+                <b className="cmp-dot" style={{ left: `${Math.min(98, Math.max(2, m.pct))}%` }} title={`${f(m, m.value!)}: higher than ${m.pct}% of ${int(m.n)}`} />
+              </> : <span className="faint small" style={{ paddingLeft: 8 }}>Too few similar companies with this figure to compare</span>}
+            </div>
+            <div className="cmp-v"><b>{f(m, m.value!)}</b>{m.pct !== null && <span className="faint"> · {where(m.pct)}</span>}</div>
+          </div>
         ))}
-        {!data.outreach.length && <li className="faint">No contact yet.</li>}
-      </ul>
+        <div className="cmp-row cmp-axis"><div /><div className="cmp-track bare"><span>lowest</span><span>median</span><span>highest</span></div><div /></div>
+      </div>
     </section>
   );
 }
@@ -683,104 +660,6 @@ const ACCOUNTS_LABEL: Record<string, string> = {
   "no accounts filed": "no accounts filed yet", "initial": "initial accounts",
 };
 export function accountsLabel(cat: string) { return ACCOUNTS_LABEL[cat] ?? cat; }
-
-/** Short chip text for the accounts type, e.g. "Small company", "Dormant", "No accounts yet". */
-const ACCOUNTS_CHIP: Record<string, string> = {
-  "micro entity": "Micro company", "small": "Small company", "total exemption full": "Small company",
-  "total exemption small": "Small company", "unaudited abridged": "Small company", "audited abridged": "Small company",
-  "partial exemption": "Small company", "medium": "Medium company", "full": "Large company (full accounts)",
-  "group": "Group accounts", "audit exemption subsidiary": "Subsidiary of a group", "filing exemption subsidiary": "Subsidiary of a group",
-  "dormant": "Dormant", "no accounts filed": "No accounts filed yet", "initial": "No accounts filed yet",
-  "accounts type not available": "Accounts type not given",
-};
-function accountsChip(cat: string) {
-  return ACCOUNTS_CHIP[cat.toLowerCase()] ?? `Accounts: ${cat}`;
-}
-
-/** Balance sheet and cost detail, where the accounts include it. Creditors
-    are worked out from the totals the accounts state. */
-function BalanceSheet({ fin }: { fin: CompanyDetail["financials"] }) {
-  // Years as columns (newest first), figures as rows; only rows the accounts give.
-  const n = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
-  const years = [...fin].reverse().filter((f) => !f.period_inferred).slice(0, 4);
-  if (!years.length) return null;
-  type F = (typeof years)[number];
-  const da = (f: F) => n(f.depreciation_amortisation) ?? (n(f.depreciation) !== null || n(f.amortisation) !== null ? (n(f.depreciation) ?? 0) + (n(f.amortisation) ?? 0) : null);
-  const ebitda = (f: F) => (n(f.operating_profit) !== null && da(f) !== null ? n(f.operating_profit)! + da(f)! : null);
-  // Owed within / after a year: as filed, else worked out from the totals (shown in italics).
-  const within = (f: F): [number | null, boolean] => {
-    if (n(f.creditors_within) !== null) return [n(f.creditors_within), false];
-    const ca = n(f.current_assets), nca = n(f.net_current_assets);
-    return ca !== null && nca !== null && ca - nca >= 0 ? [ca - nca, true] : [null, false];
-  };
-  const after = (f: F): [number | null, boolean] => {
-    if (n(f.creditors_after) !== null) return [n(f.creditors_after), false];
-    const tal = n(f.total_assets_less_cl), na = n(f.net_assets);
-    return tal !== null && na !== null && tal - na >= 0 ? [tal - na, true] : [null, false];
-  };
-  const bank = (f: F) => (n(f.bank_loans) !== null || n(f.bank_overdrafts) !== null ? (n(f.bank_loans) ?? 0) + (n(f.bank_overdrafts) ?? 0) : null);
-  type Row = { label: string; get: (f: F) => number | null | [number | null, boolean]; hint?: string; strong?: boolean };
-  const groups: [string, Row[]][] = [
-    ["Profit", [
-      { label: "Turnover", get: (f) => n(f.turnover) },
-      { label: "Gross profit", get: (f) => n(f.gross_profit) },
-      { label: "Staff costs", get: (f) => n(f.staff_costs) },
-      { label: "Directors' pay", get: (f) => n(f.director_pay) },
-      { label: "Operating profit", get: (f) => n(f.operating_profit) },
-      { label: "Depreciation and amortisation", get: da },
-      { label: "EBITDA", get: ebitda, strong: true, hint: "Operating profit + depreciation and amortisation, both filed" },
-      { label: "Interest paid", get: (f) => n(f.interest_payable) },
-      { label: "Tax", get: (f) => n(f.tax) },
-      { label: "Profit after tax", get: (f) => n(f.profit_loss) },
-      { label: "Dividends paid", get: (f) => n(f.dividends), hint: "Often how owners pay themselves: check against directors' pay" },
-    ]],
-    ["Balance sheet", [
-      { label: "Fixed assets", get: (f) => n(f.fixed_assets) },
-      { label: "of which intangible", get: (f) => n(f.intangible_assets) },
-      { label: "Stock", get: (f) => n(f.stock) },
-      { label: "Trade debtors", get: (f) => n(f.trade_debtors), hint: "Owed by customers" },
-      { label: "Cash", get: (f) => n(f.cash) },
-      { label: "Trade creditors", get: (f) => n(f.trade_creditors), hint: "Owed to suppliers" },
-      { label: "Owed within a year", get: within },
-      { label: "Owed after a year", get: after },
-      { label: "Bank loans and overdrafts", get: bank, strong: true, hint: "Repaid from the price on a cash-free, debt-free deal" },
-      { label: "Retained earnings", get: (f) => n(f.retained_earnings), hint: "Profits kept in the business: the most that could be paid out as dividends" },
-      { label: "Share capital", get: (f) => n(f.share_capital) },
-      { label: "Net assets", get: (f) => n(f.net_assets), strong: true },
-    ]],
-  ];
-  const val = (r: Row, f: F): [number | null, boolean] => { const v = r.get(f); return Array.isArray(v) ? v : [v, false]; };
-  const shown = groups.map(([g, rows]) => [g, rows.filter((r) => years.some((f) => val(r, f)[0] !== null))] as const)
-    .filter(([, rows]) => rows.length > 1);
-  if (!shown.length) return null;
-  return (
-    <>
-      {shown.map(([g, rows]) => (
-        <div key={g} style={{ overflowX: "auto" }}>
-          <h3 style={{ margin: "18px 0 6px", fontSize: 14 }}>{g}</h3>
-          <table className="yeartable">
-            <thead><tr><th />{years.map((f) => <th key={f.period_end} className="num" title={date(f.period_end)}>
-              {new Date(f.period_end).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</th>)}</tr></thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.label} className={r.strong ? "strong" : ""}>
-                  <td>{r.label}{r.hint ? <Hint text={r.hint} /> : null}</td>
-                  {years.map((f) => {
-                    const [v, worked] = val(r, f);
-                    return <td key={f.period_end} className={`num ${v !== null && v < 0 ? "neg" : ""} ${worked ? "worked" : ""}`}
-                               title={worked ? "Worked out from the filed totals" : undefined}>
-                      {v === null ? "—" : money(v, { precise: true })}</td>;
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
-      <p className="faint small">Only figures the accounts give. <i>Italic</i>: worked out from totals.<Hint text="Small companies often file a balance sheet only, so profit lines may be missing." /></p>
-    </>
-  );
-}
 
 
 /** A few short sentences about the company, from the facts on file. */
@@ -889,4 +768,12 @@ function AccountsGap({ data }: { data: CompanyDetail }) {
     );
   }
   return null;
+}
+
+/** The town from a registered address: the part just before the postcode. */
+function townOf(addr: string | null, pc: string | null) {
+  if (!addr) return null;
+  const parts = addr.replace(pc ?? "", "").split(",").map((x) => x.trim()).filter(Boolean);
+  const t = parts[parts.length - 1];
+  return t && !/\d/.test(t) && t.length < 30 ? t.toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase()) : null;
 }

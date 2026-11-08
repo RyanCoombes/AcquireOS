@@ -1887,6 +1887,62 @@ def owner(pid: int):
         return {"watching": watching, "owner": p, "companies": rows, "indirect": indirect, "outside_register": outside}
 
 
+@app.get("/api/companies/{num}/compare")
+def compare(num: str):
+    """Where the company sits among similar companies in your data: same
+    industry division, a similar number of staff. Filed figures only."""
+    from . import sic as sic_mod
+
+    def work():
+        with db.conn() as c:
+            me = c.execute("""select c.sic_codes, c.region, l.employees, l.turnover, l.operating_profit, l.da, l.staff_trend
+                              from company c left join company_latest l using (company_number)
+                              where c.company_number = %s""", (num,)).fetchone()
+            if not me:
+                raise HTTPException(404, "Company not found")
+            emp = me["employees"]
+            div = (me["sic_codes"] or [""])[0][:2]
+            if not emp or not div:
+                return {"peers": 0, "group": None, "metrics": []}
+            lo, hi = max(1, int(emp * 0.5)), int(emp * 2) + 1
+            rows = c.execute(
+                """select l.employees, l.turnover, l.operating_profit, l.da, l.staff_trend
+                   from company_latest l join company c using (company_number)
+                   where c.company_number <> %s and l.employees between %s and %s and left(c.sic_codes[1], 2) = %s
+                     and c.status like 'active%%'
+                   limit 20000""", (num, lo, hi, div)).fetchall()
+
+        def growth(trend):
+            t = [x for x in (trend or []) if x]
+            return (100.0 * (t[-1] - t[-4]) / t[-4]) if len(t) >= 4 and t[-4] else None
+
+        def metrics(r):
+            t, e, op = r["turnover"], r["employees"], r["operating_profit"]
+            m = {"rph": float(t) / e if t and e else None,
+                 "margin": 100.0 * (float(op) + float(r["da"] or 0)) / float(t) if t and op is not None and float(t) > 0 else None,
+                 "growth": growth(r["staff_trend"])}
+            if m["margin"] is not None and not -100 <= m["margin"] <= 100:
+                m["margin"] = None  # mis-tagged accounts
+            return m
+
+        mine = metrics(me)
+        peers = [metrics(r) for r in rows]
+        out = []
+        for key, label, fmt in (("rph", "Revenue per head", "money"), ("margin", "EBITDA margin" if me["da"] else "Operating margin", "pct"),
+                                ("growth", "Staff growth (3 years)", "pct")):
+            vals = sorted(p[key] for p in peers if p[key] is not None)
+            v = mine[key]
+            if v is None or len(vals) < 20:
+                out.append({"key": key, "label": label, "fmt": fmt, "value": v, "pct": None, "median": None, "n": len(vals)})
+                continue
+            below = sum(1 for x in vals if x < v)
+            out.append({"key": key, "label": label, "fmt": fmt, "value": round(v, 1), "n": len(vals),
+                        "pct": round(100.0 * below / len(vals)), "median": round(vals[len(vals) // 2], 1)})
+        return {"peers": len(rows), "group": f"{sic_mod.DIVISIONS.get(div, 'SIC ' + div)}, {lo}–{hi - 1} staff", "metrics": out}
+
+    return cached(f"compare:{num}", 3600, work)
+
+
 @app.get("/api/network/{node_id}")
 def network(node_id: str, former: bool = False):
     """A company or person (c:NUMBER, p:PERSON_ID, o:OFFICER_KEY) and everything

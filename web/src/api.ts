@@ -304,6 +304,8 @@ export const api = {
   chDetailsBatch: (scope: string, limit: number) =>
     req<{ started: boolean }>(`/api/ch-details?scope=${scope}&limit=${limit}`, { method: "POST" }),
   researchBrief: (n: string) => req<Record<string, any>>(`/api/companies/${encodeURIComponent(n)}/research-brief`),
+  compare: (n: string) => req<{ peers: number; group: string | null; metrics: { key: string; label: string; fmt: "money" | "pct"; value: number | null; pct: number | null; median: number | null; n: number }[] }>(
+    `/api/companies/${encodeURIComponent(n)}/compare`),
   network: (id: string, former = false) =>
     req<{ node: import("./components/Network").NNode | null; nodes: import("./components/Network").NNode[]; edges: import("./components/Network").NEdge[] }>(
       `/api/network/${encodeURIComponent(id)}${former ? "?former=true" : ""}`),

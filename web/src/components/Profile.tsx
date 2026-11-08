@@ -133,22 +133,32 @@ export function Charges({ data, num, onFetched }: { data: CompanyDetail; num: st
           ))}
         </div>
       ) : null}
-      {ch?.charges?.length ? (
-        <table style={{ marginTop: 8 }}>
-          <thead><tr><th>Held by</th><th>Status</th><th className="hide-sm">Type</th><th>Created</th><th className="hide-sm">Repaid</th></tr></thead>
-          <tbody>
-            {ch.charges.map((x) => (
-              <tr key={x.charge_id} className={x.status === "fully-satisfied" ? "excluded" : ""}>
-                <td>{x.holders.join(", ") || "—"}{x.particulars ? <div className="sub">{x.particulars.slice(0, 140)}</div> : null}</td>
-                <td>{x.status === "outstanding" ? <b>Outstanding</b> : x.status === "part-satisfied" ? "Part repaid" : "Repaid"}</td>
-                <td className="hide-sm small">{x.classification ?? ""}</td>
-                <td>{date(x.created_on)}</td>
-                <td className="hide-sm">{x.satisfied_on ? date(x.satisfied_on) : ""}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
+      {ch?.charges?.length ? (() => {
+        const live = ch.charges.filter((x) => x.status !== "fully-satisfied");
+        const repaid = ch.charges.filter((x) => x.status === "fully-satisfied");
+        const table = (rows: typeof ch.charges) => (
+          <table style={{ marginTop: 8 }}>
+            <thead><tr><th>Held by</th><th>Status</th><th className="hide-sm">Type</th><th>Created</th><th className="hide-sm">Repaid</th></tr></thead>
+            <tbody>
+              {rows.map((x) => (
+                <tr key={x.charge_id}>
+                  <td>{x.holders.join(", ") || "—"}{x.particulars ? <div className="sub">{x.particulars.slice(0, 140)}</div> : null}</td>
+                  <td>{x.status === "outstanding" ? <b className="neg">Outstanding</b> : x.status === "part-satisfied" ? "Part repaid" : "Repaid"}</td>
+                  <td className="hide-sm small">{x.classification ?? ""}</td>
+                  <td>{date(x.created_on)}</td>
+                  <td className="hide-sm">{x.satisfied_on ? date(x.satisfied_on) : ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>);
+        const yrs = repaid.map((x) => (x.created_on ?? "").slice(0, 4)).filter(Boolean).sort();
+        return (
+          <>
+            {live.length ? table(live) : <div className="faint" style={{ marginTop: 6 }}>Nothing outstanding.</div>}
+            {repaid.length > 0 && <Fold label={`${repaid.length} repaid ${repaid.length === 1 ? "charge" : "charges"}${yrs.length ? ` (${yrs[0]}${yrs[yrs.length - 1] !== yrs[0] ? `–${yrs[yrs.length - 1]}` : ""})` : ""}`}>{table(repaid)}</Fold>}
+          </>
+        );
+      })() : null}
       {ch?.filings?.length ? (
         <details style={{ marginTop: 10 }}>
           <summary className="muted">Share and constitution filings ({ch.filings.length})</summary>
@@ -281,17 +291,37 @@ export function Filings({ data }: { data: CompanyDetail }) {
           {ch!.late_filings.map((l, i) => <span key={i} className="chip red">Accounts to {date(l.made_up_to)} filed {l.days_late} days late</span>)}
         </div>
       )}
-      {ch?.filings?.length ? (
-        <div className="timeline">
-          {ch.filings.slice(0, 12).map((f) => (
-            <div key={f.transaction_id} className="tl">
-              <span className="tdate">{date(f.filed_on)}</span>
-              <span className="tdesc"><b>{filingLabel(f.type, f.description)}</b></span>
-            </div>
-          ))}
-          {ch.filings.length > 12 && <a className="small" href={`https://find-and-update.company-information.service.gov.uk/company/${c.company_number}/filing-history`} target="_blank" rel="noreferrer">All {ch.filings.length} filings ↗</a>}
-        </div>
-      ) : <div className="faint">Fetch Companies House details (Charges section) to see the filing history.</div>}
+      {ch?.filings?.length ? (() => {
+        const row = (f: (typeof ch.filings)[number]) => (
+          <div key={f.transaction_id} className="tl">
+            <span className="tdate">{date(f.filed_on)}</span>
+            <span className="tdesc"><b>{filingLabel(f.type, f.description)}</b></span>
+          </div>);
+        // Accounts on time or late, year by year (late = after the 9-month deadline).
+        const late = new Set((ch.late_filings ?? []).map((l) => String(l.made_up_to).slice(0, 10)));
+        const accts = ch.filings.filter((f) => (f.type ?? "").toUpperCase() === "AA" && (f as any).detail?.made_up_date)
+          .map((f) => ({ mu: String((f as any).detail.made_up_date).slice(0, 10), filed: f.filed_on }))
+          .sort((a, b) => a.mu.localeCompare(b.mu)).slice(-10);
+        return (
+          <>
+            {accts.length > 1 && (
+              <div className="frecord">
+                <div className="label">Accounts filed</div>
+                <div className="fr-dots">
+                  {accts.map((a) => (
+                    <span key={a.mu} className={late.has(a.mu) ? "late" : "ok"} title={`Year to ${date(a.mu)}: filed ${date(a.filed)}${late.has(a.mu) ? " (late)" : " (on time)"}`}>
+                      <i />{a.mu.slice(0, 4)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="timeline">{ch.filings.slice(0, 6).map(row)}</div>
+            {ch.filings.length > 6 && <Fold label={`${ch.filings.length - 6} older filings`}><div className="timeline">{ch.filings.slice(6, 40).map(row)}</div>
+              {ch.filings.length > 40 && <a className="small" href={`https://find-and-update.company-information.service.gov.uk/company/${c.company_number}/filing-history`} target="_blank" rel="noreferrer">All {ch.filings.length} filings ↗</a>}</Fold>}
+          </>
+        );
+      })() : <div className="faint">Fetch Companies House details (Refresh at the top) to see the filing history.</div>}
     </section>
   );
 }
@@ -363,6 +393,7 @@ type Who = {
 };
 
 export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: React.ReactNode }) {
+  const [view, setView] = useState<"now" | "time">("now");
   const ch = data.ch;
   const own = data.ownership;
   const isCo = (n: string) => /\b(LIMITED|LTD|PLC|LLP|TRUST|NOMINEES?)\b/i.test(n);
@@ -491,6 +522,11 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
   return (
     <section id="ownership">
       <Head icon="owners" tone="orange" title="Owners & directors" aside={flags} />
+      <div className="tabs2" role="tablist" style={{ borderBottom: "1px solid var(--line)", marginBottom: 12 }}>
+        <button role="tab" aria-selected={view === "now"} className={view === "now" ? "on" : ""} onClick={() => setView("now")}>Now</button>
+        <button role="tab" aria-selected={view === "time"} className={view === "time" ? "on" : ""} onClick={() => setView("time")}>Over time</button>
+      </div>
+      {view === "time" ? <Tenure register={register} officers={ch?.officers ?? []} since={data.company.incorporation_date} /> : <>
       {data.enrichment?.ownership && (
         <div className="callout amber" style={{ marginBottom: 10 }}>
           <b>Research: {OWN_LABEL[data.enrichment.ownership] ?? data.enrichment.ownership}.</b> {data.enrichment.ownership_note ?? ""}{" "}
@@ -601,6 +637,8 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
       ))}
 
       {(prevOwners.length > 0 || prevDirectors.length > 0) && (
+        <Fold label={[prevOwners.length ? `${prevOwners.length} previous ${prevOwners.length === 1 ? "owner" : "owners"}` : "",
+                      prevDirectors.length ? `${prevDirectors.length} previous ${prevDirectors.length === 1 ? "director" : "directors"}` : ""].filter(Boolean).join(" and ")}>
         <div className="prev">
           {prevOwners.length > 0 && (
             <>
@@ -633,7 +671,79 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
             </>
           )}
         </div>
+        </Fold>
       )}
+      </>}
     </section>
+  );
+}
+
+
+/** A bar that opens to show older detail (previous people, repaid charges…). */
+export function Fold({ label, children }: { label: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`fold ${open ? "open" : ""}`}>
+      <button className="fold-bar" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span>{open ? "▾" : "▸"} {label}</span><b>{open ? "Hide" : "Show"}</b>
+      </button>
+      {open && <div className="fold-body">{children}</div>}
+    </div>
+  );
+}
+
+/** Owners and directors over time: when each joined and left. */
+function Tenure({ register, officers, since }: {
+  register: { name: string; kind: string; notified_on: string | null; ceased_on: string | null; natures?: string[] }[];
+  officers: { officer_key: string; name: string; role: string | null; appointed_on: string | null; resigned_on: string | null }[];
+  since: string | null;
+}) {
+  type Bar = { name: string; what: "owner" | "director"; from: string | null; to: string | null; note?: string };
+  const bars: Bar[] = [
+    ...register.map((p) => ({ name: niceName(p.name, p.kind !== "individual"), what: "owner" as const, from: p.notified_on, to: p.ceased_on,
+                              note: (() => { const b = band(p.natures ?? []); return b ? `${b[0]}–${b[1]}%` : undefined; })() })),
+    ...officers.filter((o) => !(o.role ?? "").includes("secretary"))
+      .map((o) => ({ name: niceName(o.name, false), what: "director" as const, from: o.appointed_on, to: o.resigned_on })),
+  ];
+  if (!bars.length) return <div className="faint">No owners or directors on file.</div>;
+  // One row per person, owner and director bars on it; current people first, then by start.
+  const people = new Map<string, Bar[]>();
+  for (const b of bars) people.set(b.name.toUpperCase(), [...(people.get(b.name.toUpperCase()) ?? []), b]);
+  const rows = [...people.values()].sort((a, b) => Number(b.some((x) => !x.to)) - Number(a.some((x) => !x.to))
+    || String(a[0].from ?? "").localeCompare(String(b[0].from ?? "")));
+  const t = (d: string | null) => (d ? new Date(d).getTime() : null);
+  const now = Date.now();
+  const starts = bars.map((b) => t(b.from)).filter((x): x is number => x !== null);
+  const t0 = Math.min(...(since ? [t(since)!] : []), ...starts, now - 5 * 3.156e10);
+  const span = now - t0 || 1;
+  const pct = (x: number) => (100 * (x - t0)) / span;
+  const y0 = new Date(t0).getFullYear(), y1 = new Date(now).getFullYear();
+  const step = Math.max(1, Math.ceil((y1 - y0) / 8));
+  const ticks: number[] = []; for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) ticks.push(y);
+  return (
+    <div className="tenure">
+      <div className="tn-axis">{ticks.map((y) => <span key={y} style={{ left: `${pct(new Date(y, 0, 1).getTime())}%` }}>{y}</span>)}</div>
+      {rows.map((r) => (
+        <div key={r[0].name + r[0].what} className="tn-row">
+          <div className="tn-name">{r[0].name}<div className="faint small">{[...new Set(r.map((b) => b.what))].join(" and ")}</div></div>
+          <div className="tn-track">
+            {ticks.map((y) => <i key={y} className="tn-grid" style={{ left: `${pct(new Date(y, 0, 1).getTime())}%` }} />)}
+            {r.map((b, i) => {
+              const a = t(b.from) ?? t0, z = t(b.to) ?? now;
+              return (
+                <span key={i} className={`tn-bar ${b.what} ${b.to ? "ended" : ""}`} style={{ left: `${pct(a)}%`, width: `${Math.max(0.8, pct(z) - pct(a))}%`, top: b.what === "owner" ? 4 : 18 }}
+                      title={`${b.what === "owner" ? "Owner" : "Director"}${b.note ? ` (${b.note})` : ""}: ${b.from ? date(b.from) : "before records"} – ${b.to ? date(b.to) : "now"}`}>
+                  {b.note && b.what === "owner" ? <em>{b.note}</em> : null}
+                </span>
+              );
+            })}
+          </div>
+          <div className="tn-dates small">
+            {r.map((b, i) => <div key={i}>{b.from ? new Date(b.from).getFullYear() : "?"}–{b.to ? new Date(b.to).getFullYear() : "now"}</div>)}
+          </div>
+        </div>
+      ))}
+      <div className="tn-key"><span><i className="tn-k owner" />Owner</span><span><i className="tn-k director" />Director</span><span><i className="tn-k ended" />Left</span><span className="faint">Hover a bar for the exact dates</span></div>
+    </div>
   );
 }
