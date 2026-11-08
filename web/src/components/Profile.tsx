@@ -16,7 +16,7 @@ const fmtChange = (key: string, v: number) =>
   key === "employees" ? Math.abs(Math.round(v)).toLocaleString("en-GB") : key === "debt_ratio" ? `${Math.abs(Math.round(v))} pts` : money(Math.abs(v));
 
 /** Assets, net assets and liabilities over the years, like a balance-sheet strip. */
-function BalanceChart({ series }: { series: FinSummary["series"] }) {
+export function BalanceChart({ series }: { series: FinSummary["series"] }) {
   const pts = series.filter((s) => s.total_assets != null || s.net_assets != null);
   if (pts.length < 2) {
     return (
@@ -26,7 +26,7 @@ function BalanceChart({ series }: { series: FinSummary["series"] }) {
       </div>
     );
   }
-  const W = 720, H = 240, L = 58, R = 26, T = 14, B = 26;
+  const W = 1000, H = 260, L = 60, R = 14, T = 14, B = 26;
   const ta = pts.map((p) => p.total_assets ?? p.net_assets ?? 0);
   const na = pts.map((p) => p.net_assets ?? 0);
   const tl = pts.map((p) => -(p.total_liabilities ?? 0));

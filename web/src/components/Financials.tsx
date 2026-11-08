@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { CompanyDetail } from "../api";
 import { date, int, money } from "../format";
 import { Hint } from "./bits";
+import { BalanceChart } from "./Profile";
 
 type F = CompanyDetail["financials"][number];
 type Val = number | null;
@@ -32,7 +33,7 @@ export default function Financials({ data }: { data: CompanyDetail }) {
   if (!ys.length) return <div className="faint">No accounts on file.</div>;
 
   const turnoverRow: Row = { label: "Turnover", get: (_f, i) => ys[i].turnover, change: true, est: (i) => ys[i].turnoverEst, key: false };
-  const margin = (y: Year) => { const e = ebitda(y.f) ?? n(y.f.operating_profit); return e !== null && y.turnover ? (100 * e) / y.turnover : null; };
+  const margin = (y: Year) => { const e = ebitda(y.f) ?? n(y.f.operating_profit); return e !== null && n(y.f.turnover) ? (100 * e) / n(y.f.turnover)! : null; };
   const tabs: Tab[] = [
     { key: "pl", label: "Revenue & profit", rows: [
         turnoverRow,
@@ -65,9 +66,7 @@ export default function Financials({ data }: { data: CompanyDetail }) {
         { label: "Share capital", get: (f) => n(f.share_capital) },
         { label: "Net assets", get: (f) => n(f.net_assets), key: true, change: true },
       ],
-      chart: (ys) => <ComboChart years={ys.map((y) => y.label)}
-        bars={[{ label: "Net assets", values: ys.map((y) => n(y.f.net_assets)), colour: "#0e7c6b" }]}
-        line={{ label: "Net current assets", values: ys.map((y) => n(y.f.net_current_assets)), fmt: "money" }} /> },
+      chart: () => data.fin_summary?.series?.length ? <BalanceChart series={data.fin_summary.series} /> : null },
     { key: "cash", label: "Cash & debt", rows: [
         { label: "Cash", get: (f) => n(f.cash), key: true, change: true },
         { label: "Bank loans and overdrafts", get: (f) => bank(f), key: true, hint: "Repaid from the price on a cash-free, debt-free deal" },
@@ -81,14 +80,15 @@ export default function Financials({ data }: { data: CompanyDetail }) {
                { label: "Bank debt", values: ys.map((y) => bank(y.f)), colour: "#c8352b" }]} /> },
     { key: "staff", label: "Staff & pay", rows: [
         { label: "Average staff", get: (f) => n(f.employees), fmt: "int", key: true, change: true },
-        { label: "Revenue per head", get: (_f, i) => (ys[i].turnover && n(ys[i].f.employees) ? ys[i].turnover! / n(ys[i].f.employees)! : null), est: (i) => ys[i].turnoverEst },
+        { label: "Revenue per head", get: (f) => (n(f.turnover) && n(f.employees) ? n(f.turnover)! / n(f.employees)! : null),
+          hint: "Filed turnover only: estimated years are worked out from staff × revenue per head, so they can't show a trend" },
         { label: "Staff costs", get: (f) => n(f.staff_costs) },
         { label: "Cost per head", get: (f) => (n(f.staff_costs) && n(f.employees) ? n(f.staff_costs)! / n(f.employees)! : null) },
         { label: "Directors' pay", get: (f) => n(f.director_pay) },
       ],
       chart: (ys) => <ComboChart years={ys.map((y) => y.label)}
         bars={[{ label: "Staff", values: ys.map((y) => n(y.f.employees)), colour: "#2f62d8", fmt: "int" }]}
-        line={{ label: "Revenue per head", values: ys.map((y) => (y.turnover && n(y.f.employees) ? y.turnover / n(y.f.employees)! : null)), fmt: "money" }} /> },
+        line={{ label: "Revenue per head (filed years)", values: ys.map((y) => (n(y.f.turnover) && n(y.f.employees) ? n(y.f.turnover)! / n(y.f.employees)! : null)), fmt: "money" }} /> },
   ];
   const allRows: Row[] = [...tabs[0].rows, ...tabs[1].rows, ...tabs[3].rows, { label: "Bank loans and overdrafts", get: (f: F) => bank(f) }];
   const all: Tab = { key: "all", label: "All figures", rows: allRows.filter((r, i, arr) => arr.findIndex((x) => x.label === r.label) === i) };
@@ -138,45 +138,52 @@ function fmt(v: number, f?: "money" | "int" | "pct") {
   return f === "int" ? int(v) : f === "pct" ? `${v.toFixed(1)}%` : money(v);
 }
 
-/** Bars (one or two series) and an optional line on its own scale; values printed on the bars. */
+/** Round axis steps (1, 2, 2.5 or 5 × a power of ten). */
+function niceTicks(lo: number, hi: number, n = 4) {
+  const span = hi - lo || Math.abs(hi) || 1, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((v) => v >= raw) ?? raw;
+  const t0 = Math.floor(lo / step) * step, t1 = Math.ceil(hi / step) * step, out: number[] = [];
+  for (let t = t0; t <= t1 + step / 1e6; t += step) out.push(Math.abs(t) < step / 1e6 ? 0 : t);
+  return out;
+}
+
+/** Bars with values on them; a second measure, if any, as its own small line chart underneath (no shared axis). */
 function ComboChart({ years, bars, line }: {
   years: string[];
   bars: { label: string; values: Val[]; colour: string; est?: boolean[]; fmt?: "money" | "int" }[];
   line?: { label: string; values: Val[]; fmt: "money" | "pct" };
 }) {
-  const W = 1000, H = 240, L = 54, R = line ? 54 : 14, T = 26, B = 28;
-  const all = bars.flatMap((b) => b.values).filter((v): v is number => v !== null);
-  if (!all.length && !(line && line.values.some((v) => v !== null))) return null;
-  const max = Math.max(0, ...all), min = Math.min(0, ...all);
-  const span = max - min || 1;
+  const live = bars.filter((b) => b.values.some((v) => v !== null));
+  if (!live.length) return null;
+  const W = 1000, H = 230, L = 60, R = 14, T = 24, B = 28;
+  const all = live.flatMap((b) => b.values).filter((v): v is number => v !== null);
+  const ticks = niceTicks(Math.min(0, ...all), Math.max(0, ...all));
+  const min = ticks[0], max = ticks[ticks.length - 1], span = max - min || 1;
   const y = (v: number) => T + (H - T - B) * (1 - (v - min) / span);
-  const n = years.length, slot = (W - L - R) / n, bw = Math.min(70, (slot * 0.7) / bars.length);
-  const lv = line ? line.values.filter((v): v is number => v !== null) : [];
-  const lmax = lv.length ? Math.max(...lv) : 1, lmin = lv.length ? Math.min(0, ...lv) : 0, lspan = lmax - lmin || 1;
-  const ly = (v: number) => T + (H - T - B) * (1 - (v - lmin) / lspan) ;
-  const ticks = [min, min + span / 2, max].filter((v, i, a) => a.indexOf(v) === i);
+  const n = years.length, slot = (W - L - R) / n, bw = Math.min(64, (slot * 0.62) / live.length);
   const bf = (b: (typeof bars)[number], v: number) => (b.fmt === "int" ? int(v) : money(v));
+  const lv = line ? line.values.filter((v): v is number => v !== null) : [];
   return (
     <div className="combo">
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={bars.map((b) => b.label).join(" and ")}>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={live.map((b) => b.label).join(" and ")}>
         <defs><pattern id="estp" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <rect width="6" height="6" fill="#fcf1e1" /><line x1="0" y1="0" x2="0" y2="6" stroke="#e2a85a" strokeWidth="2.5" /></pattern></defs>
-        {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className="gl" /><text x={L - 8} y={y(t) + 4} className="ax" textAnchor="end">{bars[0]?.fmt === "int" ? int(t) : money(t)}</text></g>)}
-        {min < 0 && <line x1={L} x2={W - R} y1={y(0)} y2={y(0)} className="zero" />}
+        {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className={t === 0 ? "zero" : "gl"} />
+          <text x={L - 8} y={y(t) + 4} className="ax" textAnchor="end">{live[0].fmt === "int" ? int(t) : money(t)}</text></g>)}
         {years.map((lab, i) => {
-          const x0 = L + slot * i + (slot - bw * bars.length) / 2;
+          const x0 = L + slot * i + (slot - bw * live.length) / 2;
           return (
             <g key={lab + i}>
-              {bars.map((b, j) => {
+              {live.map((b, j) => {
                 const v = b.values[i];
                 if (v === null) return null;
                 const top = Math.min(y(v), y(0)), h = Math.max(2, Math.abs(y(v) - y(0)));
                 const est = b.est?.[i];
                 return (
                   <g key={j}>
-                    <rect x={x0 + j * bw} y={top} width={bw - 4} height={h} rx={5} fill={est ? "url(#estp)" : v < 0 ? "#c8352b" : b.colour}>
+                    <rect x={x0 + j * bw + 2} y={top} width={bw - 4} height={h} rx={5} fill={est ? "url(#estp)" : v < 0 ? "#c8352b" : b.colour}>
                       <title>{`${b.label} ${lab}: ${bf(b, v)}${est ? " (estimate)" : ""}`}</title></rect>
-                    {bars.length === 1 || n <= 6 ? <text x={x0 + j * bw + (bw - 4) / 2} y={(v >= 0 ? top : top + h) + (v >= 0 ? -6 : 14)} className="bv" textAnchor="middle">{bf(b, v)}</text> : null}
+                    <text x={x0 + j * bw + bw / 2} y={v >= 0 ? top - 6 : top + h + 14} className={`bv ${est ? "est" : ""}`} textAnchor="middle">{bf(b, v)}</text>
                   </g>
                 );
               })}
@@ -184,23 +191,35 @@ function ComboChart({ years, bars, line }: {
             </g>
           );
         })}
-        {line && lv.length > 1 && (() => {
-          const pts = line.values.map((v, i) => (v === null ? null : [L + slot * i + slot / 2, ly(v)] as const)).filter(Boolean) as (readonly [number, number])[];
-          const last = line.values.map((v, i) => [v, i] as const).filter(([v]) => v !== null).pop();
-          return (
-            <g className="ln">
-              <polyline points={pts.map((p) => p.join(",")).join(" ")} />
-              {pts.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r={4} />)}
-              {last && <text x={L + slot * last[1] + slot / 2 + 8} y={ly(last[0]!) - 8} className="lv">{line.fmt === "pct" ? `${last[0]!.toFixed(1)}%` : money(last[0]!)}</text>}
-            </g>
-          );
-        })()}
       </svg>
       <div className="combo-key">
-        {bars.map((b) => <span key={b.label}><i style={{ background: b.colour }} />{b.label}</span>)}
-        {bars.some((b) => b.est?.some(Boolean)) && <span><i className="hatch" />Estimate</span>}
-        {line && lv.length > 1 && <span><i className="lk" />{line.label}{line.fmt === "pct" ? " (right scale)" : ""}</span>}
+        {live.map((b) => <span key={b.label}><i style={{ background: b.colour }} />{b.label}</span>)}
+        {live.some((b) => b.est?.some(Boolean)) && <span><i className="hatch" />Estimate</span>}
       </div>
+      {line && lv.length >= 2 && <MiniLine years={years} values={line.values} label={line.label} fmt={line.fmt} />}
+    </div>
+  );
+}
+
+/** A small line chart for a second measure (a margin, revenue per head), with its own scale. */
+function MiniLine({ years, values, label, fmt }: { years: string[]; values: Val[]; label: string; fmt: "money" | "pct" }) {
+  const W = 1000, H = 110, L = 60, R = 14, T = 22, B = 8;
+  const vs = values.filter((v): v is number => v !== null);
+  const ticks = niceTicks(Math.min(0, ...vs), Math.max(...vs), 2);
+  const lo = ticks[0], hi = ticks[ticks.length - 1], span = hi - lo || 1;
+  const slot = (W - L - R) / years.length;
+  const y = (v: number) => T + (H - T - B) * (1 - (v - lo) / span);
+  const f = (v: number) => (fmt === "pct" ? `${v.toFixed(1)}%` : money(v));
+  const pts = values.map((v, i) => (v === null ? null : [L + slot * i + slot / 2, y(v), v] as const)).filter(Boolean) as (readonly [number, number, number])[];
+  return (
+    <div className="miniline">
+      <div className="label">{label}</div>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label}>
+        {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className={t === 0 ? "zero" : "gl"} />
+          <text x={L - 8} y={y(t) + 4} className="ax" textAnchor="end">{f(t)}</text></g>)}
+        <polyline points={pts.map((p) => `${p[0]},${p[1]}`).join(" ")} className="ml" />
+        {pts.map((p, i) => <g key={i}><circle cx={p[0]} cy={p[1]} r={4} className="mc" /><text x={p[0]} y={p[1] - 9} textAnchor="middle" className="mv">{f(p[2])}</text></g>)}
+      </svg>
     </div>
   );
 }

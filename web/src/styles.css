@@ -1249,3 +1249,10 @@ table.y2 { width: 100%; border-collapse: collapse; font-size: 13.5px; font-varia
 @media (max-width: 800px) { .cmp-row { grid-template-columns: 1fr; gap: 4px; } }
 .y2 th, .y2 td { padding-left: 7px; padding-right: 7px; }
 table.y2 { font-size: 13px; }
+.combo .bv.est { fill: var(--amber); }
+.miniline { border-top: 1px solid var(--line); padding-top: 6px; margin-bottom: 8px; }
+.miniline svg { width: 100%; height: auto; display: block; }
+.miniline .ml { fill: none; stroke: var(--ink); stroke-width: 2; }
+.miniline .mc { fill: #fff; stroke: var(--ink); stroke-width: 2; }
+.miniline .mv { font-size: 11.5px; font-weight: 650; fill: var(--ink); }
+.miniline .ax { font-size: 11px; fill: var(--ink-3); } .miniline .gl { stroke: #eceef1; } .miniline .zero { stroke: #b9c0cb; }
