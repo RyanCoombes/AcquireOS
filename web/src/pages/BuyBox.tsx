@@ -2,9 +2,9 @@ import type React from "react";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
-import { ErrorLine, Toast, useAsync } from "../components/bits";
+import { ErrorLine, Hint, Toast, useAsync } from "../components/bits";
 import { useJob } from "../components/JobBar";
-import { money, OWNERSHIP } from "../format";
+import { OWNERSHIP } from "../format";
 import SicPicker from "../components/SicPicker";
 import MoneyInput from "../components/MoneyInput";
 
@@ -15,6 +15,7 @@ export default function BuyBox() {
   const idParam = /^\d+$/.test(params.get("id") ?? "") ? Number(params.get("id")) : null;
   const { data, error } = useAsync(() => api.buybox(idParam), [idParam]);
   const meta = useAsync(() => api.meta(), []);
+  const boxesQ = useAsync(() => api.buyboxes(), []);
   const [c, setC] = useState<C | null>(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -57,17 +58,6 @@ export default function BuyBox() {
       );
     });
   };
-  const ex = c.exclude ?? {};
-  const exList = [
-    ...(ex.keywords ?? []).map((k: string) => `“${k}”`),
-    ...(ex.regions ?? []),
-    ...(ex.ownership ?? []).map((k: string) => OWNERSHIP[k] ?? k),
-    ...(ex.address_flags ?? []).map((k: string) => meta.data?.address_flags?.[k] ?? k),
-    ...(ex.tiers ?? []).map((t: string) => `tier ${t}`),
-    ...(ex.accounts_types ?? []).map((k: string) => `${(meta.data?.account_sizes ?? []).find((a) => a.value === k)?.label ?? k} accounts`),
-    ...(ex.recently_sold !== false ? ["recently sold"] : []),
-    ...(ex.possible_buyer ? ["possible buyers"] : []),
-  ];
   const toggle = (path: string[], label: string, dflt: boolean) => {
     const on = (get(c, path) ?? dflt) as boolean;
     return (
@@ -78,187 +68,178 @@ export default function BuyBox() {
     );
   };
   const n = (path: string[], props: Record<string, unknown> = {}) => (
-    <input type="number" value={get(c, path) ?? ""} onChange={(e) => upd(path, e.target.value === "" ? 0 : Number(e.target.value))} {...props} />
+    <input type="number" className="bb-n" value={get(c, path) ?? ""} onChange={(e) => upd(path, e.target.value === "" ? 0 : Number(e.target.value))} {...props} />
   );
+
+  const me = boxesQ.data?.find((x) => x.id === data.id);
+  const list = (path: string[]) => ((get(c, path) ?? []) as string[]).join(", ");
+  const setList = (path: string[], v: string) => upd(path, v.split(",").map((x) => x.trim()).filter(Boolean));
 
   return (
     <>
       <BoxManager current={data.id} onToast={setToast} select={(id) => setParams({ id: String(id) }, { replace: true })} />
 
-      <div className="pagehead" style={{ paddingTop: 4 }}>
+      <div className="pagehead bb-head">
         <div>
-          <h1 style={{ fontSize: 22 }}>Editing: {data.name}</h1>
-          <div className="lede">
-            {data.description ? <>{data.description} </> : null}
-            <span className="steps3"><b>1 Universe</b> who's in <b>2 Exclusions</b> hard no's <b>3 Scoring</b> ranks the rest</span>
-          </div>
+          <h1 style={{ fontSize: 22 }}>{data.name}</h1>
+          <div className="lede">{data.description ? <>{data.description} </> : null}Which companies count, and what makes a good one.</div>
         </div>
         <div className="right">
-          <button className="btn" onClick={() => setC(structuredClone(data.defaults))}>Reset to defaults</button>
+          {me?.scored_at && <span className="bb-count"><b>{Number(me.in_scope ?? 0).toLocaleString("en-GB")}</b> companies count · {Number(me.strong ?? 0).toLocaleString("en-GB")} score 70+</span>}
+          <button className="btn" onClick={() => setC(structuredClone(data.defaults))}>Reset</button>
           <button className="btn primary" onClick={save} disabled={saving}>{saving ? "Rescoring…" : "Save and rescore"}</button>
         </div>
       </div>
 
       <section>
-        <h2>1. Universe</h2>
-        <p className="muted" style={{ marginTop: -4 }}><b>Anything listed here is included</b>; everything else is left out. Keep it wide.</p>
-        <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
-          <dt>Include SIC codes starting with</dt><dd><SicPicker value={c.universe?.sic_prefixes ?? []} onChange={(v) => upd(["universe", "sic_prefixes"], v)} /></dd>
-          <dt>…or names containing</dt><dd><input type="text" style={{ width: "100%", maxWidth: 620 }} placeholder="software, data, digital" value={(c.universe?.name_keywords ?? []).join(", ")}
-                   onChange={(e) => upd(["universe", "name_keywords"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
-          <dt>…when the SIC code starts with</dt><dd><SicPicker value={c.universe?.keyword_sic_prefixes ?? []} onChange={(v) => upd(["universe", "keyword_sic_prefixes"], v)} /></dd>
-          <dt>Only these postcode areas</dt><dd><input type="text" style={{ width: "100%", maxWidth: 360 }} placeholder="e.g. CF, SA, NP, LL (blank for all of the UK)" value={(c.universe?.postcode_areas ?? []).join(", ")}
-                   onChange={(e) => upd(["universe", "postcode_areas"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></dd>
-          <dt>Trading at least</dt><dd className="range">{n(["universe", "min_years"])}<span className="faint">years</span></dd>
-          <dt>Holding companies</dt>
-          <dd>
+        <h2>Which companies count</h2>
+        <p className="muted" style={{ marginTop: -4 }}>A company counts if it matches anything under <b>Include</b> and nothing under <b>Leave out</b>.</p>
+        <div className="bb-two">
+          <div className="bb-col in">
+            <div className="bb-pill">Include</div>
+            <div className="bb-f"><label>Industries</label>
+              <SicPicker value={c.universe?.sic_prefixes ?? []} onChange={(v) => upd(["universe", "sic_prefixes"], v)} /></div>
+            <div className="bb-f"><label>Or a name that mentions</label>
+              <input type="text" value={list(["universe", "name_keywords"])} placeholder="software, data, digital"
+                     onChange={(e) => setList(["universe", "name_keywords"], e.target.value)} />
+              <details className="bb-more"><summary>Only for these broad industries{(c.universe?.keyword_sic_prefixes ?? []).length ? ` (${c.universe.keyword_sic_prefixes.length})` : ""}<Hint text="A name match only counts for companies in these codes, so 'data' doesn't bring in every data-something shop. Leave empty to allow any industry." /></summary>
+                <SicPicker value={c.universe?.keyword_sic_prefixes ?? []} onChange={(v) => upd(["universe", "keyword_sic_prefixes"], v)} />
+              </details></div>
+            <div className="bb-row">
+              <div className="bb-f"><label>Area (postcode areas)</label>
+                <input type="text" value={list(["universe", "postcode_areas"])} placeholder="All of the UK, or e.g. CF, SA, NP"
+                       onChange={(e) => setList(["universe", "postcode_areas"], e.target.value)} /></div>
+              <div className="bb-f"><label>Trading for at least</label>
+                <div className="range">{n(["universe", "min_years"], { style: { width: 70 } })}<span className="faint">years</span></div></div>
+            </div>
             <label className="check" style={{ height: "auto" }}>
-              <input type="checkbox" checked={c.universe?.include_parents ?? true}
-                     onChange={(e) => upd(["universe", "include_parents"], e.target.checked)} />
-              Include parent companies of targets
-            </label>
-            <div className="faint small">Brings in holding companies that own a company in the universe.</div>
-          </dd>
-        </dl>
-        <p className="faint small">Saving rescores in the background; everything stays usable.</p>
-      </section>
+              <input type="checkbox" checked={c.universe?.include_parents ?? true} onChange={(e) => upd(["universe", "include_parents"], e.target.checked)} />
+              Also include their holding companies</label>
+          </div>
 
-      <section>
-        <h2>2. Exclusions</h2>
-        <p className="muted" style={{ marginTop: -4 }}><b>Anything ticked or listed here is excluded.</b></p>
-        <div className={`exsummary ${exList.length ? "" : "none"}`}>
-          {exList.length ? <><b>Excluding:</b> {exList.join(" · ")}</> : "Nothing excluded yet."}
+          <div className="bb-col out">
+            <div className="bb-pill">Leave out</div>
+            <div className="bb-f"><label>Names, industries or research mentioning</label>
+              <textarea style={{ minHeight: 52 }} value={c.exclude.keywords.join(", ")}
+                        onChange={(e) => upd(["exclude", "keywords"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></div>
+            <div className="bb-f"><label>Owned by</label><div>{xchecks(Object.entries(OWNERSHIP), ["exclude", "ownership"])}</div></div>
+            <div className="bb-f"><label>Accounts filed as</label><div>{xchecks((meta.data?.account_sizes ?? []).map((x) => [x.value, x.label] as [string, string]), ["exclude", "accounts_types"])}</div></div>
+            <div className="bb-f"><label>Already dealt with</label><div>{toggle(["exclude", "recently_sold"], "Sold in the last 3 years", true)}
+              {toggle(["exclude", "possible_buyer"], "Buying others", false)}</div></div>
+            <div className="bb-f"><label>Registered address</label><div>{xchecks(Object.entries(meta.data?.address_flags ?? {}), ["exclude", "address_flags"])}</div></div>
+            {(meta.data?.regions ?? []).length > 0 && <div className="bb-f"><label>Registered in</label><div>{xchecks(meta.data!.regions.map((r) => [r, r]), ["exclude", "regions"])}</div></div>}
+            {(meta.data?.tiers ?? []).length > 0 && <div className="bb-f"><label>Review tier (from your file)</label><div>{xchecks(meta.data!.tiers.map((t) => [t, t]), ["exclude", "tiers"])}</div></div>}
+            <div className="bb-always">Always left out: dissolved, insolvent or being struck off.</div>
+          </div>
         </div>
-        <dl className="facts exclusions" style={{ gridTemplateColumns: "240px 1fr" }}>
-          <dt>Exclude names, SIC or research mentioning</dt>
-          <dd>
-            <textarea style={{ minHeight: 56 }} value={c.exclude.keywords.join(", ")}
-                      onChange={(e) => upd(["exclude", "keywords"], e.target.value.split(",").map((s) => s.trim()).filter(Boolean))} />
-            <div className="faint small">Comma separated, whole words.</div>
-          </dd>
-          <dt>Exclude regions</dt>
-          <dd>{xchecks(meta.data?.regions.map((r) => [r, r]) ?? [], ["exclude", "regions"])}
-            {!meta.data?.regions.length && <span className="faint">No regions in the data yet.</span>}</dd>
-          <dt>Exclude ownership types</dt>
-          <dd>{xchecks(Object.entries(OWNERSHIP), ["exclude", "ownership"])}</dd>
-          <dt>Exclude accounts types</dt>
-          <dd>{xchecks((meta.data?.account_sizes ?? []).map((a) => [a.value, a.label] as [string, string]), ["exclude", "accounts_types"])}
-            <div className="faint small">As filed at Companies House. Dormant is excluded by default.</div></dd>
-          <dt>Exclude registered addresses</dt>
-          <dd>{xchecks(Object.entries(meta.data?.address_flags ?? {}), ["exclude", "address_flags"])}</dd>
-          <dt>Exclude review tiers</dt>
-          <dd>{xchecks((meta.data?.tiers ?? []).map((t) => [t, t]), ["exclude", "tiers"])}
-            <div className="faint small">Tiers from a ranked file you imported, if any.</div></dd>
-          <dt>Exclude sold or buying companies</dt>
-          <dd>{toggle(["exclude", "recently_sold"], "Recently sold to another company", true)}
-            {toggle(["exclude", "possible_buyer"], "Possible buyers (taking over others)", false)}
-            <div className="faint small">From changes on the owners register in the last 3 years. Research you save overrides them.</div></dd>
-          <dt>When owners aren't on record</dt>
-          <dd>
-            <select value={String(get(c, ["unknown_owner_points"]) ?? 0)} onChange={(e) => upd(["unknown_owner_points"], Number(e.target.value))}>
-              <option value="0">No points for ownership and owner age (cautious)</option>
-              <option value="0.5">Half points (neutral)</option>
-            </select>
-            <div className="faint small">Missing owners often means a group or investors own it, so the cautious option is the default.</div>
-          </dd>
-          <dt>Always excluded</dt>
-          <dd className="muted">Dissolved, insolvent or being struck off.</dd>
-        </dl>
       </section>
 
       <section>
-        <h2>3. Scoring</h2>
-        <p className="muted" style={{ marginTop: -4 }}>Ranks what's in; never keeps anything out. Missing data scores half.</p>
-        <table>
-          <thead><tr><th>Criterion</th><th className="num">Weight</th><th className="num">Share</th><th>Settings</th></tr></thead>
+        <h2>What makes a good one</h2>
+        <p className="muted" style={{ marginTop: -4 }}>Ranks the companies that count. Missing data scores half.</p>
+        <table className="bb-score">
           <tbody>
-            <Crit label="Staff" w={["staff", "weight"]} c={c} n={n} total={totalWeight}>
-              Acceptable {n(["staff", "min"])} to {n(["staff", "max"])}, ideal {n(["staff", "ideal_min"])} to {n(["staff", "ideal_max"])}
+            <Crit label="Staff" w={["staff", "weight"]} c={c} upd={upd} total={totalWeight}>
+              Ideal {n(["staff", "ideal_min"])}–{n(["staff", "ideal_max"])}, still counts {n(["staff", "min"])}–{n(["staff", "max"])}
             </Crit>
-            <Crit label="Years trading" w={["years_trading", "weight"]} c={c} n={n} total={totalWeight}>
-              At least {n(["years_trading", "min"])}, ideal {n(["years_trading", "ideal"])} or more
+            <Crit label="Oldest owner's age" w={["owner_age", "weight"]} c={c} upd={upd} total={totalWeight}>
+              Points from {n(["owner_age", "min"])}, full points at {n(["owner_age", "ideal"])}
             </Crit>
-            <Crit label="Revenue" w={["revenue", "weight"]} c={c} n={n} total={totalWeight}>
-              Ideal {money(c.revenue.ideal_min)}–{money(c.revenue.ideal_max)}, acceptable {money(c.revenue.min)}–{money(c.revenue.max)}
-              <div className="range" style={{ marginTop: 6 }}>
-                {([["min", "Lowest"], ["ideal_min", "Ideal from"], ["ideal_max", "Ideal to"], ["max", "Highest"]] as const).map(([k, l]) => (
-                  <label key={k} className="field" style={{ marginRight: 6 }}>
-                    <span className="label">{l}</span>
-                    <MoneyInput value={c.revenue[k]} width={130} onChange={(v) => upd(["revenue", k], v ?? 0)} />
-                  </label>
-                ))}
-              </div>
-              <div className="faint small">Uses filed turnover where available, otherwise the estimate from staff numbers.</div>
+            <Crit label="Revenue" w={["revenue", "weight"]} c={c} upd={upd} total={totalWeight}>
+              <span className="bb-money">Ideal <MoneyInput value={c.revenue.ideal_min} width={96} onChange={(v) => upd(["revenue", "ideal_min"], v ?? 0)} />–<MoneyInput value={c.revenue.ideal_max} width={96} onChange={(v) => upd(["revenue", "ideal_max"], v ?? 0)} />,
+                still counts <MoneyInput value={c.revenue.min} width={96} onChange={(v) => upd(["revenue", "min"], v ?? 0)} />–<MoneyInput value={c.revenue.max} width={96} onChange={(v) => upd(["revenue", "max"], v ?? 0)} /></span>
+              <Hint text="Filed turnover where there is one, otherwise the estimate from staff numbers." />
             </Crit>
-            <Crit label="Owner age" w={["owner_age", "weight"]} c={c} n={n} total={totalWeight}>
-              Points start at {n(["owner_age", "min"])}, full points from {n(["owner_age", "ideal"])}
-            </Crit>
-            <Crit label="Ownership" w={["ownership", "weight"]} c={c} n={n} total={totalWeight}>
-              Full points for{" "}
+            <Crit label="Ownership" w={["ownership", "weight"]} c={c} upd={upd} total={totalWeight}>
+              Best:{" "}
               {Object.entries(OWNERSHIP).filter(([k]) => k !== "unknown").map(([k, v]) => (
-                <label key={k} className="check" style={{ display: "inline-flex", marginRight: 12, height: "auto" }}>
+                <label key={k} className="check" style={{ display: "inline-flex", marginRight: 10, height: "auto" }}>
                   <input type="checkbox" checked={c.ownership.good.includes(k)}
                          onChange={(e) => upd(["ownership", "good"], e.target.checked ? [...c.ownership.good, k] : c.ownership.good.filter((x: string) => x !== k))} />
                   {v}
                 </label>
               ))}
-            </Crit>
-            <Crit label="Net asset growth" w={["net_asset_growth", "weight"]} c={c} n={n} total={totalWeight}>
-              Full points if net assets rose on the year
-            </Crit>
-            <Crit label="Industry code" w={["sic", "weight"]} c={c} n={n} total={totalWeight}>
-              Preferred SIC codes{" "}
               <div style={{ marginTop: 6 }}>
-                <SicPicker value={c.sic.preferred} onChange={(v) => upd(["sic", "preferred"], v)} />
+                <select value={String(get(c, ["unknown_owner_points"]) ?? 0)} onChange={(e) => upd(["unknown_owner_points"], Number(e.target.value))}>
+                  <option value="0">Owners not on record: no points for ownership or age (cautious)</option>
+                  <option value="0.5">Owners not on record: half points (neutral)</option>
+                </select>
               </div>
             </Crit>
+            <Crit label="Years trading" w={["years_trading", "weight"]} c={c} upd={upd} total={totalWeight}>
+              Ideal {n(["years_trading", "ideal"])}+ years, at least {n(["years_trading", "min"])}
+            </Crit>
+            <Crit label="Favourite industries" w={["sic", "weight"]} c={c} upd={upd} total={totalWeight}>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <span style={{ paddingTop: 6, whiteSpace: "nowrap" }}>Extra points for</span>
+                <div style={{ flex: 1 }}><SicPicker value={c.sic.preferred} onChange={(v) => upd(["sic", "preferred"], v)} /></div>
+              </div>
+            </Crit>
+            <Crit label="Net assets growing" w={["net_asset_growth", "weight"]} c={c} upd={upd} total={totalWeight}>
+              Rose on the year before
+            </Crit>
+            <tr><td colSpan={3} className="bb-grp">Scored by you on each company (0–5)<Hint text="Not scored yet = not counted, so it doesn't drag a company down." /></td></tr>
+            {(c.manual ?? []).map((m: any, i: number) => (
+              <tr key={m.key}>
+                <td className="bb-name"><input type="text" value={m.label} aria-label="Criterion"
+                  onChange={(e) => { const x = [...c.manual]; x[i] = { ...m, label: e.target.value }; upd(["manual"], x); }} /></td>
+                <td className="bb-imp"><Importance value={Number(m.weight ?? 0)} onChange={(v) => { const x = [...c.manual]; x[i] = { ...m, weight: v }; upd(["manual"], x); }} /></td>
+                <td><div style={{ display: "flex", gap: 6 }}>
+                  <input type="text" style={{ flex: 1 }} value={m.help ?? ""} placeholder="5 = …"
+                         onChange={(e) => { const x = [...c.manual]; x[i] = { ...m, help: e.target.value }; upd(["manual"], x); }} />
+                  <button className="btn quiet" title="Remove" aria-label={`Remove ${m.label}`}
+                          onClick={() => upd(["manual"], c.manual.filter((_: any, j: number) => j !== i))}>×</button></div></td>
+              </tr>
+            ))}
+            <tr><td colSpan={3} style={{ borderBottom: 0 }}>
+              <button className="btn quiet" onClick={() => {
+                const label = prompt("Name of the criterion, e.g. “Customer spread”");
+                if (!label) return;
+                const key = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || `c${Date.now()}`;
+                upd(["manual"], [...(c.manual ?? []), { key, label, weight: 5, help: "" }]);
+              }}>+ Add your own</button></td></tr>
           </tbody>
         </table>
-        <h3 style={{ margin: "18px 0 4px", fontSize: 14 }}>Your own criteria</h3>
-        <p className="muted" style={{ marginTop: -4 }}>You score these 0–5 on each company. Not scored yet = not counted.</p>
-        <div className="manual-ed label"><span>Criterion</span><span>Weight</span><span>What a 5 looks like</span><span /></div>
-        {(c.manual ?? []).map((m: any, i: number) => (
-          <div key={m.key} className="manual-ed">
-            <input type="text" value={m.label} onChange={(e) => { const x = [...c.manual]; x[i] = { ...m, label: e.target.value }; upd(["manual"], x); }} />
-            <input type="number" min={0} value={m.weight} onChange={(e) => { const x = [...c.manual]; x[i] = { ...m, weight: Number(e.target.value) }; upd(["manual"], x); }} />
-            <input type="text" value={m.help ?? ""} placeholder="e.g. 5 = no customer over 10% of revenue"
-                   onChange={(e) => { const x = [...c.manual]; x[i] = { ...m, help: e.target.value }; upd(["manual"], x); }} />
-            <button className="btn quiet" title="Remove" aria-label={`Remove ${m.label}`}
-                    onClick={() => upd(["manual"], c.manual.filter((_: any, j: number) => j !== i))}>×</button>
-          </div>
-        ))}
-        <button className="btn" onClick={() => {
-          const label = prompt("Name of the criterion, e.g. “Customer spread”");
-          if (!label) return;
-          const key = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || `c${Date.now()}`;
-          upd(["manual"], [...(c.manual ?? []), { key, label, weight: 5, help: "" }]);
-        }}>Add a criterion</button>
       </section>
 
-      <section>
-        <h2>Valuation assumptions</h2>
-        <p className="muted" style={{ marginTop: -4 }}>Value = profit × multiple. Profit is filed, or revenue × margin.</p>
-        <dl className="facts" style={{ gridTemplateColumns: "220px 1fr" }}>
-          <dt>Profit margin</dt>
-          <dd className="range">{n(["valuation", "margin_low"], { step: 1 })}<span className="faint">to</span>{n(["valuation", "margin_high"], { step: 1 })}<span className="faint">% of revenue</span></dd>
-          <dt>EBITDA multiple</dt>
-          <dd className="range">{n(["valuation", "multiple_low"], { step: 0.25 })}<span className="faint">to</span>{n(["valuation", "multiple_high"], { step: 0.25 })}<span className="faint">times</span></dd>
-        </dl>
-        <p className="faint small">Small UK IT and software firms often sell at 3–6× EBITDA.</p>
+      <section className="bb-val">
+        <h2>Valuation</h2>
+        <span className="muted">Profit × multiple. Margin</span>
+        <span className="range">{n(["valuation", "margin_low"], { step: 1 })}<span className="faint">–</span>{n(["valuation", "margin_high"], { step: 1 })}</span>
+        <span className="muted">% where profit isn't filed; multiple</span>
+        <span className="range">{n(["valuation", "multiple_low"], { step: 0.25 })}<span className="faint">–</span>{n(["valuation", "multiple_high"], { step: 0.25 })}</span>
+        <span className="muted">× EBITDA</span>
+        <Hint text="Small UK IT and software firms often sell at 3–6× EBITDA. Adjust to your own evidence." />
       </section>
       <Toast msg={toast} onDone={() => setToast(null)} />
     </>
   );
 }
 
-function Crit({ label, w, c, n, total, children }: { label: string; w: string[]; c: C; n: (p: string[], props?: Record<string, unknown>) => React.ReactElement; total: number; children: React.ReactNode }) {
+// Importance in plain words; the points behind them. A weight that isn't one of
+// these (e.g. 20 from before) is kept exactly and shown as Custom until changed.
+const LEVELS: [string, number][] = [["Off", 0], ["Low", 5], ["Medium", 15], ["High", 25]];
+function Importance({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const exact = LEVELS.some(([, v]) => v === value);
+  return (
+    <span className="bb-seg-wrap">
+      <span className="bb-seg" role="radiogroup">
+        {LEVELS.map(([l, v]) => (
+          <button key={l} type="button" role="radio" aria-checked={value === v} className={value === v ? "on" : ""} onClick={() => onChange(v)}>{l}</button>
+        ))}
+      </span>
+      {!exact && <span className="faint small nowrap" title="A weight from before, kept exactly. Pick a level to change it.">Custom: {value}</span>}
+    </span>
+  );
+}
+
+function Crit({ label, w, c, upd, total, children }: { label: string; w: string[]; c: C; upd: (p: string[], v: unknown) => void; total: number; children: React.ReactNode }) {
   const weight = Number(get(c, w) ?? 0);
   return (
-    <tr>
-      <td><b>{label}</b></td>
-      <td className="num">{n(w, { style: { width: 64 }, min: 0 })}</td>
-      <td className="num muted">{total ? Math.round((100 * weight) / total) : 0}%</td>
-      <td>{children}</td>
+    <tr className={weight === 0 ? "off" : ""}>
+      <td className="bb-name"><b>{label}</b>{weight > 0 && total ? <div className="faint small">{Math.round((100 * weight) / total)}% of the score</div> : null}</td>
+      <td className="bb-imp"><Importance value={weight} onChange={(v) => upd(w, v)} /></td>
+      <td className="bb-set">{children}</td>
     </tr>
   );
 }
