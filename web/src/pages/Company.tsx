@@ -271,15 +271,15 @@ export default function Company() {
             {est && est.basis !== "filed" && <p className="faint small" style={{ margin: "4px 0 0" }}>Revenue estimate: {range(est.revenue_low, est.revenue_high)} · {est.method}</p>}
           </section>
         <OwnersDirectors data={data} flags={<Flags flags={own?.flags} address={c.address_flag} />} />
+        {data.links.length ? (
         <div className="pair eq">
           <div className="pcol">
           <section id="group">
             <Head icon="group" tone="blue" title="Group and connections" right={<Link to={`/connections/${c.company_number}`}>Connection map →</Link>} />
             {data.links.length ? (
-              <table>
-                <thead><tr><th>Company</th><th>Link</th><th>Confidence</th><th className="hide-sm">Evidence</th></tr></thead>
-                <tbody>
-                  {data.links.map((l, i) => (
+              <>
+              {(() => {
+                const row = (l: (typeof data.links)[number], i: number) => (
                     <tr key={i}>
                       <td>
                         {l.in_list ? <Link to={`/c/${l.other}`}>{l.other_name ?? l.other}</Link> : <span>{l.other_name ?? l.other} <span className="faint small">· not in your list</span></span>}
@@ -289,9 +289,16 @@ export default function Company() {
                       <td className={l.confidence === "confirmed" ? "pos" : l.confidence === "possible" ? "faint" : ""}>{cap(l.confidence)}</td>
                       <td className="muted small hide-sm">{l.evidence}</td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                );
+                const table = (rows: typeof data.links, off = 0) => (
+                  <table>
+                    <thead><tr><th>Company</th><th>Link</th><th>Confidence</th><th className="hide-sm">Evidence</th></tr></thead>
+                    <tbody>{rows.map((l, i) => row(l, i + off))}</tbody>
+                  </table>);
+                // Strongest links first; beyond five, the rest fold away so this card stays a similar height to Locations.
+                return <>{table(data.links.slice(0, 5))}{data.links.length > 5 && <Fold label={`${data.links.length - 5} more connections`}>{table(data.links.slice(5), 5)}</Fold>}</>;
+              })()}
+              </>
             ) : <div className="faint">No links found in the data imported so far.</div>}
           </section>
           </div>
@@ -299,6 +306,14 @@ export default function Company() {
           <Location data={data} />
           </div>
         </div>
+        ) : (
+          <>
+            <section id="group" className="oneline">
+              <Head icon="group" tone="blue" title="Group and connections" aside="No links found in the data so far: no parent, subsidiaries or companies with the same owner." right={<Link to={`/connections/${c.company_number}`}>Connection map →</Link>} />
+            </section>
+            <Location data={data} />
+          </>
+        )}
           <div id="value">
           <Valuation data={data} num={num} onSaved={reload} />
 
@@ -329,13 +344,13 @@ export default function Company() {
                       <span className="sc-l">{r.label}<span className="sc-t">{r.text}</span></span>
                       <span className="sc-p">{r.status === "unscored" ? <span className="faint">–</span> : <>{r.points}<span className="faint">/{r.max}</span></>}
                         {r.status !== "unscored" && <i style={{ width: `${pct}%` }} />}</span>
+              </div>
+                  );
+                })}
                       {score.reasons.some((r) => r.status === "unscored") && (
                   <div className="sc-r unscored"><span className="reason-mark unknown">–</span>
                     <span className="sc-l">Your own scores<span className="sc-t">Not scored yet: {score.reasons.filter((r) => r.status === "unscored").map((r) => r.label).join(", ")}. <a href="#deal">Score them</a></span></span><span /></div>
                 )}
-              </div>
-                  );
-                })}
               </div>
             ) : <div className="faint">Not scored yet.</div>}
           </section>

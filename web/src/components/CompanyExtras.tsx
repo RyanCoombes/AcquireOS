@@ -8,6 +8,7 @@ import { cap, date, dateTime } from "../format";
 
 export function Location({ data }: { data: CompanyDetail }) {
   const nav = useNavigate();
+  const [showAll, setShowAll] = useState(false);
   const meta = useAsync(() => api.meta(), []);
   const c = data.company;
   const points: MapPoint[] = [];
@@ -61,18 +62,15 @@ export function Location({ data }: { data: CompanyDetail }) {
             <>
               <div className="label">Other offices and sites</div>
               <div className="offices">
-                {offices.map((l, i) => (
-                  <div key={i} className="office">
-                    <span className="okind">{cap(l.kind)}</span>
-                    <div>
-                      {l.name && <b>{l.name}</b>}
-                      <div className="small">{l.address ?? ""}</div>
-                      {l.postcode && <a className="small" href={`https://www.openstreetmap.org/search?query=${encodeURIComponent(l.postcode)}`} target="_blank" rel="noreferrer">{l.postcode} ↗</a>}
-                      {l.postcode && l.lat == null && <span className="faint small"> · not on the map yet</span>}
-                    </div>
+                {(showAll ? offices : offices.slice(0, 3)).map((l, i) => (
+                  <div key={i} className="office2">
+                    <b>{l.name ?? cap(l.kind)}</b>{l.kind !== "office" && l.name ? <span className="faint small"> · {l.kind}</span> : null}
+                    <div className="small faint">{[l.address, l.postcode].filter(Boolean).join(" · ")}{l.postcode && l.lat == null ? " · not on the map yet" : ""}</div>
                   </div>
                 ))}
               </div>
+              {offices.length > 3 && <button className="fold-bar" style={{ marginBottom: 12 }} onClick={() => setShowAll(!showAll)}>
+                <span>{showAll ? "▾ Fewer offices" : `▸ ${offices.length - 3} more offices`}</span><b>{showAll ? "Hide" : "Show"}</b></button>}
             </>
           )}
           <div className="label">SIC codes</div>

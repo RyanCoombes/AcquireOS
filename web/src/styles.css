@@ -1343,3 +1343,12 @@ table.y2 { table-layout: fixed; }
 .y2 th:first-child, .y2 td:first-child { width: 20%; }
 .y2 th:not(:first-child), .y2 td:not(:first-child) { text-align: center; }
 .y2 .chg2 { text-align: center; }
+/* In a half-width column the location card stacks: map on top, details below */
+.pair .loc-grid { grid-template-columns: minmax(0, 1fr); }
+.pair .loc-grid .mapbox { height: 220px !important; }
+/* Score rows on one line: label, then the reason (cut short; full text on hover) */
+.sc-r { padding: 5px 0; }
+.sc-l { display: flex; gap: 8px; align-items: baseline; white-space: nowrap; overflow: hidden; }
+.sc-t { display: inline; overflow: hidden; text-overflow: ellipsis; }
+section.oneline { padding-top: 10px; padding-bottom: 10px; } section.oneline .sechead { margin-bottom: 0; }
+.office2 { padding: 5px 0; border-top: 1px solid var(--line); font-size: 13.5px; } .office2:first-child { border-top: 0; }
