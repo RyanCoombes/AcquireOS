@@ -1104,3 +1104,58 @@ section.bb-val h2 { margin: 0 8px 0 0; }
 
 /* An estimated figure: amber, dotted underline (filed figures are plain) */
 .fig-est { color: var(--amber); text-decoration: underline dotted 1.5px; text-underline-offset: 3px; cursor: help; }
+
+/* Connections network */
+.net-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+.net-canvas { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+svg.network { width: 100%; height: auto; display: block; cursor: grab; background:
+  radial-gradient(circle, #e9ebef 1px, transparent 1px) 0 0 / 22px 22px; }
+svg.network:active { cursor: grabbing; }
+.ne line { stroke: #b9c0cb; stroke-width: 1.6; }
+.ne.owns line { stroke: var(--teal); stroke-width: 2.2; }
+.ne.director line { stroke: var(--blue); stroke-width: 1.8; }
+.ne.group line { stroke: #5d6674; stroke-width: 2; }
+.ne.same_owner line { stroke: #8a94a3; stroke-dasharray: 6 4; }
+.ne.same_address line { stroke: #b9c0cb; stroke-dasharray: 2 4; }
+.ne.former line { opacity: .45; stroke-dasharray: 3 4; }
+.ne text { font-size: 10.5px; fill: var(--teal-2); font-weight: 600; paint-order: stroke; stroke: #fff; stroke-width: 3px; }
+.nn { cursor: pointer; }
+.nn.company rect { fill: #fff; stroke: #c9ced6; stroke-width: 1.4; }
+.nn.company text { font-size: 12px; fill: var(--ink); font-weight: 550; }
+.nn.company.outside rect { stroke-dasharray: 4 3; fill: #fafbfc; }
+.nn.company.outside text { fill: var(--ink-2); }
+.nn.company.closed text { fill: var(--ink-3); text-decoration: line-through; }
+.nn.company.root rect { stroke: var(--teal); stroke-width: 2.4; fill: var(--teal-soft); }
+.nn.company rect.sc { fill: var(--teal); stroke: none; }
+.nn.company .sct { fill: #fff; font-size: 10px; font-weight: 700; }
+.nn.person circle { fill: #fff; stroke: var(--blue); stroke-width: 2; }
+.nn.person.owner circle { stroke: var(--teal); fill: var(--teal-soft); }
+.nn.person .ini { font-size: 11px; font-weight: 700; fill: var(--ink); }
+.nn.person .lbl { font-size: 11.5px; fill: var(--ink); paint-order: stroke; stroke: #fff; stroke-width: 3px; }
+.nn.sel rect, .nn.sel circle { stroke: var(--ink); stroke-width: 2.6; }
+.nn .more { font-size: 13px; font-weight: 700; fill: var(--teal); }
+.net-legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 12px; font-size: 12px; color: var(--ink-2); border-top: 1px solid var(--line); }
+.lg { display: inline-block; width: 18px; height: 0; border-top: 2px solid #b9c0cb; vertical-align: middle; margin-right: 5px; }
+.lg.owns { border-color: var(--teal); } .lg.director { border-color: var(--blue); } .lg.group { border-color: #5d6674; }
+.lg.same_owner { border-top-style: dashed; border-color: #8a94a3; } .lg.same_address { border-top-style: dotted; }
+.net-side { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; position: sticky; top: 76px; }
+.net-links { list-style: none; margin: 6px 0 0; padding: 0; max-height: 420px; overflow: auto; }
+.net-links li { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; cursor: pointer; }
+.net-links li:hover { color: var(--teal-2); }
+.net-links li.former { opacity: .7; }
+.net-hits { position: absolute; top: 58px; left: 0; right: 0; z-index: 40; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); overflow: hidden; }
+.net-hits > div { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.net-hits > div:hover { background: var(--panel-2); }
+@media (max-width: 1100px) { .net-wrap { grid-template-columns: minmax(0, 1fr); } .net-side { position: static; } }
+.wconn { font-size: 11.5px; margin-left: 6px; font-weight: 500; }
+
+/* Map focus */
+.focusbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; background: var(--panel); border: 1px solid var(--line);
+            border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px; }
+.focusbar b { font-size: 15px; }
+.fchk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; border: 1px solid var(--line-2); border-radius: 99px; padding: 4px 12px; cursor: pointer; }
+.fchk input { display: none; }
+.fchk i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; opacity: .35; }
+.fchk.on { border-color: var(--teal); background: var(--teal-soft); color: var(--teal-2); font-weight: 600; }
+.fchk.on i { opacity: 1; }
+.focus-actions { margin-left: auto; display: flex; gap: 6px; }

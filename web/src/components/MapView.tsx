@@ -8,6 +8,7 @@ import "leaflet/dist/leaflet.css";
 export interface MapPoint {
   company_number: string; name: string; lat: number; lon: number; score?: number | string | null;
   excluded?: boolean | null; status?: string; precision?: string; focus?: boolean; label?: string;
+  colour?: string; size?: number;
 }
 export interface MapLink {
   a: [number, number]; b: [number, number]; kind: "owned_by" | "shared_owner" | "shared_address" | string;
@@ -17,6 +18,7 @@ export interface MapLink {
 const UK: L.LatLngBoundsExpression = [[49.9, -8.2], [58.7, 1.8]];
 
 function colour(p: MapPoint) {
+  if (p.colour) return p.colour;
   if (p.focus) return "#141820";
   if (p.excluded) return "#b8bec8";
   const s = Number(p.score ?? 0);
@@ -49,14 +51,14 @@ export default function MapView({
     g.clearLayers();
     for (const l of links) {
       L.polyline([l.a, l.b], {
-        color: l.kind === "owned_by" ? "#141820" : l.kind === "shared_owner" ? "#0e7c6b" : "#8a919d",
+        color: l.kind === "owned_by" ? "#141820" : l.kind === "shared_owner" ? "#0e7c6b" : l.kind === "person" ? "#2f62d8" : l.kind === "office" ? "#0e7c6b" : "#8a919d",
         weight: l.kind === "owned_by" ? 2 : 1.6, opacity: 0.7,
         dashArray: l.confidence === "possible" || l.kind === "shared_address" ? "5 6" : undefined,
       }).bindTooltip(l.label ?? "", { sticky: true }).addTo(g);
     }
     for (const p of points) {
       const mk = L.circleMarker([p.lat, p.lon], {
-        radius: p.focus ? 9 : 6, weight: p.focus ? 3 : 1.5, color: "#ffffff",
+        radius: p.size ?? (p.focus ? 9 : 6), weight: p.focus ? 3 : 1.5, color: "#ffffff",
         fillColor: colour(p), fillOpacity: p.precision === "outcode" ? 0.55 : 0.95,
       });
       const score = p.score !== undefined && p.score !== null ? ` · score ${Math.round(Number(p.score))}` : "";

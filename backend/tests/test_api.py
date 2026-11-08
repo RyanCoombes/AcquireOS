@@ -1084,3 +1084,38 @@ def test_ebitda_adds_back_filed_depreciation():
     assert any("Bank loans" in x for x in with_da["steps"])
     without = valuation.value({"operating_profit": 200_000}, a)
     assert without["ebitda_low"] == 200_000 and "may be higher" in without["steps"][0]
+
+
+def test_network_companies_and_people(loaded):
+    from acquireos import network
+    from acquireos.api import app
+
+    loaded.commit()
+    with db.conn() as c:
+        num = c.execute("""select cp.company_number from company_person cp join person p on p.id = cp.person_id
+                           where p.kind = 'individual' and cp.ceased_on is null and p.birth_year is not null limit 1""").fetchone()["company_number"]
+        own = c.execute("""select p.id, p.name, p.birth_year, p.birth_month from company_person cp join person p on p.id = cp.person_id
+                           where cp.company_number = %s and p.kind = 'individual' and cp.ceased_on is null limit 1""", (num,)).fetchone()
+        # the same person as a director here and elsewhere (officer list format), and one unrelated director
+        sur, first = network._parts(own["name"])
+        c.execute("""insert into officer (company_number, officer_key, name, role, birth_year, birth_month)
+                     values (%s, 'offA', %s, 'director', %s, %s), (%s, 'offB', 'NOBODY, Else', 'director', 1950, 1)
+                     on conflict do nothing""",
+                  (num, f"{sur}, {first.title()}", own["birth_year"], own["birth_month"], num))
+        c.execute("""insert into officer_appointment (officer_key, company_number, company_name, role)
+                     values ('offA', 'ZZ000001', 'OTHER CO LIMITED', 'director') on conflict do nothing""")
+        c.commit()
+        r = network.neighbours(c, f"c:{num}")
+        ids = {n["id"] for n in r["nodes"]}
+        # the owner who is also a director appears once, as the owner
+        assert f"p:{own['id']}" in ids and "o:offA" not in ids and "o:offB" in ids
+        kinds = {(e["source"], e["kind"]) for e in r["edges"]}
+        assert (f"p:{own['id']}", "owns") in kinds and (f"p:{own['id']}", "director") in kinds
+        # opening the person shows their other directorship
+        p = network.neighbours(c, f"p:{own['id']}")
+        assert "c:ZZ000001" in {n["id"] for n in p["nodes"]} and p["node"]["director"]
+        # an officer link resolves to the same person
+        assert network.neighbours(c, "o:offA")["node"]["id"] == f"p:{own['id']}"
+    with TestClient(app) as cl:
+        assert cl.get(f"/api/network/c:{num}").status_code == 200
+        assert cl.get("/api/network/c:NOPE0000").status_code == 404

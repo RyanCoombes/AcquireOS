@@ -97,6 +97,7 @@ function OwnerPage({ pid }: { pid: number }) {
         </div>
         <div className="right">
           <WatchButton kind="owner" refId={String(pid)} on={!!(data as any).watching} label={o.name} />
+          <Link className="btn quiet" to={`/connections/n/${encodeURIComponent(`p:${pid}`)}`}>Connections</Link>
           {o.kind !== "individual" && o.registration_number && <Link className="btn" to={`/c/${o.registration_number}`}>Open as a company</Link>}
         </div>
       </div>

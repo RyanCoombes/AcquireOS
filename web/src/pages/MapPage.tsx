@@ -1,8 +1,9 @@
 import { useMemo, useState, useEffect } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { ErrorLine, useAsync } from "../components/bits";
 import MapView, { type MapLink, type MapPoint } from "../components/MapView";
+import MapFocus from "../components/MapFocus";
 import SicPicker from "../components/SicPicker";
 import { FilterGroup, MoneyRange, NumField, NumRange, PresenceFilter, Select } from "../components/Filters";
 import { int, OWNERSHIP } from "../format";
@@ -16,7 +17,6 @@ export default function MapPage() {
     p.set("nation", "Wales"); if (w !== "any") p.set("presence", w);
     setParams(p, { replace: true });
   }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
-  const nav = useNavigate();
   const meta = useAsync(() => api.meta(), []);
   const [showLinks, setShowLinks] = useState(false);
   const q = useMemo(() => {
@@ -55,14 +55,27 @@ export default function MapPage() {
   }).filter(Boolean) as MapLink[] : [];
   const counts = geo.data?.counts;
 
+  const focus = (params.get("focus") ?? "").replace(/^c:/, "").toUpperCase();
+  const setFocus = (n: string | null) => { const p = new URLSearchParams(params); if (n) p.set("focus", `c:${n}`); else p.delete("focus"); setParams(p); };
+  if (focus && meta.data) {
+    return (
+      <>
+        <div className="pagehead"><div><h1>Map</h1><div className="lede">One company and what it's connected to.</div></div>
+          <div className="right"><FocusSearch onPick={setFocus} /></div></div>
+        <MapFocus num={focus} tiles={meta.data.map.tiles} attribution={meta.data.map.attribution} onFocus={setFocus} onClose={() => setFocus(null)} />
+      </>
+    );
+  }
+
   return (
     <>
       <div className="pagehead">
         <div>
           <h1>Map</h1>
-          <div className="lede">Registered offices, coloured by score.</div>
+          <div className="lede">Registered offices, coloured by score. Click a dot, or search, to focus on one company and its connections.</div>
         </div>
         <div className="right">
+          <FocusSearch onPick={setFocus} />
           {counts && counts.pending > 0 && (
             <button className="btn" disabled={geo.data?.running} onClick={async () => { await api.startGeocode(); geo.reload(); setTimeout(() => { geo.reload(); data.reload(); }, 8000); }}>
               {geo.data?.running ? "Locating…" : `Locate ${int(counts.pending)} postcodes`}
@@ -151,7 +164,7 @@ export default function MapPage() {
       {meta.data && (
         <section style={{ padding: 0, overflow: "hidden" }}>
           <MapView points={points} links={links} tiles={meta.data.map.tiles} attribution={meta.data.map.attribution}
-                   height={620} onOpen={(n) => nav(`/c/${n}`)} />
+                   height={620} onOpen={(n) => setFocus(n)} />
         </section>
       )}
       <div className="legend">
@@ -169,5 +182,29 @@ export default function MapPage() {
         </div>
       )}
     </>
+  );
+}
+
+
+/** Search for a company to focus the map on. */
+function FocusSearch({ onPick }: { onPick: (num: string) => void }) {
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<{ company_number: string; name: string }[]>([]);
+  useEffect(() => {
+    if (q.trim().length < 2) { setHits([]); return; }
+    let live = true;
+    const t = setTimeout(() => api.companies({ q, limit: "8", include_excluded: "true", count: "false" })
+      .then((r) => live && setHits(r.rows)).catch(() => {}), 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [q]);
+  return (
+    <div style={{ position: "relative", width: 300 }}>
+      <input type="search" placeholder="Focus on a company…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: "100%" }} />
+      {hits.length > 0 && (
+        <div className="net-hits" style={{ top: 38 }}>
+          {hits.map((h) => <div key={h.company_number} onClick={() => { setQ(""); setHits([]); onPick(h.company_number); }}>{h.name} <span className="faint small">{h.company_number}</span></div>)}
+        </div>
+      )}
+    </div>
   );
 }

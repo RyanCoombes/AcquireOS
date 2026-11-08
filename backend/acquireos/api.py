@@ -1887,6 +1887,19 @@ def owner(pid: int):
         return {"watching": watching, "owner": p, "companies": rows, "indirect": indirect, "outside_register": outside}
 
 
+@app.get("/api/network/{node_id}")
+def network(node_id: str, former: bool = False):
+    """A company or person (c:NUMBER, p:PERSON_ID, o:OFFICER_KEY) and everything
+    one step away: owners, directors, linked companies, a person's companies."""
+    from . import network as net
+
+    with db.conn() as c:
+        r = net.neighbours(c, node_id, UID, former)
+    if not r["node"]:
+        raise HTTPException(404, "Not found")
+    return r
+
+
 @app.get("/api/links/{num}")
 def link_graph(num: str, depth: int = 2):
     """Nodes and edges around one company, up to `depth` hops."""

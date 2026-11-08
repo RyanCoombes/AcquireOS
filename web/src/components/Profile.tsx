@@ -551,6 +551,9 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                                                  on={(data.watched_officers ?? []).includes(w.officerKey)} />
                       : w.personId ? <WatchButton small kind="owner" refId={String(w.personId)} label={w.name}
                                                        on={(data.watched_owners ?? []).includes(String(w.personId))} /> : null}
+                    {(w.personId || w.officerKey) && !w.company && (
+                      <Link className="wconn" to={`/connections/n/${encodeURIComponent(w.personId ? `p:${w.personId}` : `o:${w.officerKey}`)}`}
+                            title="Everything this person owns or directs">Connections</Link>)}
                     {[...w.roles].filter((r) => r !== "Shareholder" || !w.roles.has("Owner")).map((r) =>
                       <span key={r} className={`role ${r === "Shareholder" ? "owner" : r.toLowerCase()}`}>
                         {r === "Shareholder" ? "Owner" : r === "Owner" && !w.band && w.pct == null && w.control ? "Controls" : r}</span>)}

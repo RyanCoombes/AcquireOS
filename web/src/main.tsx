@@ -151,6 +151,7 @@ function App() {
             <Route path="/watch" element={<Watching />} />
             <Route path="/connections" element={<Connections />} />
             <Route path="/connections/:num" element={<Connections />} />
+            <Route path="/connections/n/:nid" element={<Connections />} />
             <Route path="/owners" element={<Owners />} />
             <Route path="/owners/:pid" element={<Owners />} />
             <Route path="/reports" element={<Reports />} />
