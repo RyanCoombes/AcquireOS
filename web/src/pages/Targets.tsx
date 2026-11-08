@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Row } from "../api";
-import { ErrorLine, Flags, RevenueTag, Score, Signals, StatusMark, Toast, useAsync } from "../components/bits";
+import { ErrorLine, Flags, Score, Signals, StatusMark, Toast, useAsync } from "../components/bits";
 import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
 import { NOT_NOW, NOT_SUITABLE, pickNote, rememberList, RuleOutMenu } from "../components/RuleOut";
@@ -113,8 +113,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
     try { const v = localStorage.getItem(key); return v === null ? dflt : v === "1"; } catch { return dflt; }
   };
   const remember = (key: string, v: boolean) => { try { localStorage.setItem(key, v ? "1" : "0"); } catch { /* ignore */ } };
-  const [more, setMoreState] = useState(() => remembered("ao.filters.more", false));
-  const setMore = (v: boolean) => { setMoreState(v); remember("ao.filters.more", v); };
+  // "More filters" always starts closed; the most-used filters stay in view.
+  const [more, setMore] = useState(false);
   const [showFilters, setShowState] = useState(() => remembered("ao.filters.shown", typeof window === "undefined" || window.innerWidth > 860));
   const setShowFilters = (v: boolean) => { setShowState(v); remember("ao.filters.shown", v); };
   const [toast, setToast] = useState<string | null>(null);
@@ -448,7 +448,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
               {list.data?.search_limited ? "Lots of companies match that; showing the first 5,000. Type more to narrow it down. "
                 : capped ? "Counting stops at 100,000; add a filter to narrow it down. " : ""}
               {mode === "directory" ? (boxName ? `Best fit is the score in ${boxName}.` : "Best fit is each company's highest score across your buy boxes, where it is in one.")
-                : boxName ? "Scores are from this buy box." : "Each company's best score across your buy boxes, tagged with the box."}
+                : boxName ? "Scores are from this buy box." : "Each company's best score across your buy boxes (hover a score for the box)."}
+              {" "}<span className="fig-est" style={{ cursor: "default" }}>Amber underlined</span> = estimate.
             </span>
           </div>
           <ColumnPicker mode={mode} shown={shownCols} onChange={setCols} />
@@ -521,13 +522,8 @@ function TargetRow({ r, cols, cursor, onOpen, showBox, mode, sics, dim, href, ti
   const bad = isBadStatus(r.company_status);
   const recent = r.last_change && Date.now() - new Date(r.last_change).getTime() < 30 * 864e5;
   const scoreCell = (
-    <td>
+    <td title={showBox && r.box_name ? (r.boxes && r.boxes.length > 1 ? `In ${r.boxes.length} buy boxes: ${r.boxes.join(", ")}` : `Buy box: ${r.box_name}`) : undefined}>
       {r.score !== null && !dim ? <Score value={r.score} coverage={r.coverage} /> : <span className="faint">—</span>}
-      {showBox && r.box_name && (
-        <div className="boxtag" title={r.boxes && r.boxes.length > 1 ? `In ${r.boxes.length} buy boxes: ${r.boxes.join(", ")}` : `Buy box: ${r.box_name}`}>
-          {r.box_name}{r.boxes && r.boxes.length > 1 ? ` +${r.boxes.length - 1}` : ""}
-        </div>
-      )}
     </td>
   );
   const nameCell = (
@@ -556,10 +552,11 @@ function TargetRow({ r, cols, cursor, onOpen, showBox, mode, sics, dim, href, ti
     </td>
   );
   const staffCell = <td className="num"><div className="staffcell"><Spark values={r.staff_trend} w={48} h={16} />{int(r.employees)}</div></td>;
+  // Filed figures plain; anything else (estimate, your file, own margin) amber and underlined.
   const revenueCell = (
     <td className="num hide-sm">
-      {range(r.revenue_low, r.revenue_high)}
-      {r.revenue_low != null && <div><RevenueTag basis={r.revenue_basis} method={r.revenue_method} /></div>}
+      <Fig v={range(r.revenue_low, r.revenue_high)} est={r.revenue_low != null && r.revenue_basis !== "filed"}
+           title={r.revenue_basis === "filed" ? `Filed${r.revenue_method ? `: ${r.revenue_method}` : ""}` : r.revenue_method ?? "Estimate"} />
     </td>
   );
   const statusCell = (
@@ -593,11 +590,9 @@ function TargetRow({ r, cols, cursor, onOpen, showBox, mode, sics, dim, href, ti
     revenue: revenueCell,
     value: (
       <td className="num hide-sm">
-        {range(r.value_low, r.value_high)}
-        {r.value_basis === "loss" ? <div className="sub">loss-making as filed</div>
-          : r.value_low && r.value_basis ? <div><span className={`revtag ${r.value_basis === "filed" ? "filed" : "est"}`}
-              title={r.value_basis === "filed" ? "From profit in the filed accounts" : r.value_basis === "filed_margin" ? "Revenue × the company's own margin from its last accounts with profit" : "From estimated revenue × your buy box's margin"}>
-              {r.value_basis === "filed" ? "✓ Filed profit" : r.value_basis === "filed_margin" ? "≈ Own margin" : "≈ Estimate"}</span></div> : null}
+        <Fig v={range(r.value_low, r.value_high)} est={!!r.value_low && r.value_basis !== "filed"}
+             title={r.value_basis === "filed" ? "From profit in the filed accounts" : r.value_basis === "filed_margin" ? "Estimate: revenue × the company's own margin from its last accounts with profit" : "Estimate: revenue × your buy box's margin"} />
+        {r.value_basis === "loss" ? <div className="sub">loss-making as filed</div> : null}
       </td>),
     age: ownerCell,
     ownership: <td className="hide-sm nowrap">{r.ownership_type ? OWNERSHIP[r.ownership_type] ?? r.ownership_type : <span className="faint">Not traced</span>}</td>,
@@ -645,4 +640,10 @@ function ColumnPicker({ mode, shown, onChange }: { mode: Mode; shown: string[]; 
       )}
     </div>
   );
+}
+
+/** A figure: plain when filed, amber with a dotted underline when it is an estimate. */
+function Fig({ v, est, title }: { v: string; est: boolean; title?: string }) {
+  if (v === "—") return <span className="faint">—</span>;
+  return <span className={est ? "fig-est" : ""} title={title}>{v}</span>;
 }

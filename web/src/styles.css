@@ -1101,3 +1101,6 @@ input.bb-n { width: 66px; margin: 0 2px; }
 section.bb-val { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 section.bb-val h2 { margin: 0 8px 0 0; }
 @media (max-width: 1000px) { .bb-two { grid-template-columns: minmax(0, 1fr); } .bb-score .bb-name, .bb-score .bb-imp { width: auto; } }
+
+/* An estimated figure: amber, dotted underline (filed figures are plain) */
+.fig-est { color: var(--amber); text-decoration: underline dotted 1.5px; text-underline-offset: 3px; cursor: help; }
