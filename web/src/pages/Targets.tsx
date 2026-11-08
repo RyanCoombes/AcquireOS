@@ -85,6 +85,23 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
     p.set("nation", "Wales"); if (w !== "any") p.set("presence", w);
     setParams(p, { replace: true });
   }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Filters stay put: opening the list with none (from the menu or a link)
+  // brings back the ones you last used here; clearing them clears this too.
+  const memKey = `ao.q.${mode}`;
+  const pending = useRef<string | null>(null);
+  const first = useRef(true);
+  if (first.current) {
+    first.current = false;
+    if (params.toString() === "") { try { pending.current = localStorage.getItem(memKey) || null; } catch { /* ignore */ } }
+  }
+  useEffect(() => { if (pending.current) setParams(new URLSearchParams(pending.current), { replace: true }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const restoring = pending.current !== null && params.toString() === "";
+  useEffect(() => {
+    if (restoring) return;
+    pending.current = null;
+    const p = new URLSearchParams(params); p.delete("page");
+    try { localStorage.setItem(memKey, p.toString()); } catch { /* ignore */ }
+  }, [params.toString()]); // eslint-disable-line react-hooks/exhaustive-deps
   const nav = useNavigate();
   const meta = useAsync(() => api.meta(), []);
   const saved = useAsync(() => api.searches(), []);
@@ -101,9 +118,9 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   if (mode === "targets") apiParams.in_box = "true";
   else if (apiParams.in_box === "1") apiParams.in_box = "true";
   // Rows first (fast), the count separately (it can take a moment on millions of rows).
-  const list = useAsync(() => api.companies({ ...apiParams, count: "false" }), [params.toString(), mode]);
+  const list = useAsync(() => restoring ? new Promise<never>(() => {}) : api.companies({ ...apiParams, count: "false" }), [params.toString(), mode]);
   const countParams = Object.fromEntries(Object.entries(apiParams).filter(([k]) => k !== "limit" && k !== "offset"));
-  const countQ = useAsync(() => api.companiesCount(countParams), [params.toString(), mode]);
+  const countQ = useAsync(() => restoring ? new Promise<never>(() => {}) : api.companiesCount(countParams), [params.toString(), mode]);
   const [sics, setSics] = useState<SicOption[]>([]);
   useEffect(() => { if (mode === "directory") loadSic().then(setSics); }, [mode]);
   const [cursor, setCursor] = useState(0);
