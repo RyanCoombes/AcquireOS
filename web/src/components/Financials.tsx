@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { CompanyDetail } from "../api";
 import { date, int, money } from "../format";
 import { Hint } from "./bits";
-import { FinancialOverview } from "./Profile";
+import { BalanceChart } from "./Profile";
 
 type F = CompanyDetail["financials"][number];
 type Val = number | null;
@@ -107,7 +107,7 @@ export default function Financials({ data }: { data: CompanyDetail }) {
         </div>
         {cur.chart && cur.key !== "ov" && <span className="seg2"><button className={view === "chart" ? "on" : ""} onClick={() => setView("chart")}>Chart and table</button><button className={view === "table" ? "on" : ""} onClick={() => setView("table")}>Table only</button></span>}
       </div>
-      {cur.key === "ov" ? <FinancialOverview s={data.fin_summary!} /> : <>
+      {cur.key === "ov" ? <Overview data={data} ys={ys} /> : <>
       {cur.chart && view === "chart" && cur.chart(ys)}
       <div className="fin2-table">
         <table className="y2">
@@ -226,5 +226,67 @@ function MiniLine({ years, values, label, fmt }: { years: string[]; values: Val[
         {pts.map((p, i) => <g key={i}><circle cx={p[0]} cy={p[1]} r={4} className="mc" /><text x={p[0]} y={p[1] - 9} textAnchor="middle" className="mv">{f(p[2])}</text></g>)}
       </svg>
     </div>
+  );
+}
+
+
+/** The overview: assets chart, then one card per measure with its change, a small trend line and a note. */
+function Overview({ data, ys }: { data: CompanyDetail; ys: Year[] }) {
+  const sm = data.fin_summary!;
+  const series = sm.series ?? [];
+  const spark = (key: string) => series.map((r: any) => (r[key] ?? (key === "turnover" ? r.turnover_est : null)) as number | null);
+  const tiles: { key: string; label: string; value: string; est?: boolean; change?: { text: string; good: boolean | null; up: boolean } | null; note?: string; spark?: (number | null)[] }[] = [];
+  const fmtv = (k: string, v: number) => (k === "employees" ? int(v) : k === "debt_ratio" ? `${Math.round(v)}%` : money(v));
+  for (const r of sm.rows) {
+    tiles.push({
+      key: r.key, label: r.label, value: fmtv(r.key, r.value), est: r.estimated,
+      change: r.change != null && r.change !== 0 ? { up: r.change > 0, good: r.good,
+        text: `${r.change > 0 ? "+" : "−"}${r.key === "employees" ? int(Math.abs(r.change)) : r.key === "debt_ratio" ? `${Math.abs(Math.round(r.change))} pts` : money(Math.abs(r.change))}${r.change_pct != null ? ` (${r.change_pct > 0 ? "+" : ""}${r.change_pct}%)` : ""}` } : null,
+      note: r.trend, spark: spark(r.key),
+    });
+  }
+  // Revenue per head and margin from the latest year with filed turnover (estimates would be circular).
+  const filed = [...ys].reverse().find((y) => n(y.f.turnover) && n(y.f.employees));
+  if (filed) {
+    const rph = n(filed.f.turnover)! / n(filed.f.employees)!;
+    const pts = ys.map((y) => (n(y.f.turnover) && n(y.f.employees) ? n(y.f.turnover)! / n(y.f.employees)! : null));
+    tiles.splice(3, 0, { key: "rph", label: "Revenue per head", value: money(rph), note: `From the ${filed.label} accounts${pts.filter((x) => x !== null).length < 2 ? " (the only year with turnover filed)" : ""}`, spark: pts });
+    const op = ebitda(filed.f) ?? n(filed.f.operating_profit);
+    if (op !== null) tiles.splice(4, 0, { key: "margin", label: ebitda(filed.f) !== null ? "EBITDA margin" : "Operating margin",
+      value: `${((100 * op) / n(filed.f.turnover)!).toFixed(1)}%`, note: `From the ${filed.label} accounts` });
+  }
+  return (
+    <>
+      {series.length ? <BalanceChart series={series} /> : null}
+      <div className="ovt-head faint small">Year to {date(sm.period_end)}{sm.previous_end ? `, against the year to ${date(sm.previous_end)}` : ""}</div>
+      <div className="ovt">
+        {tiles.map((t) => (
+          <div key={t.key} className="ovt-c">
+            <div className="ovt-l">{t.label}</div>
+            <div className="ovt-v"><span className={t.est ? "fig-est" : ""} title={t.est ? "Estimate: staff × the company's own revenue per head" : undefined}>{t.value}</span>
+              {t.change && <span className={`ovt-ch ${t.change.good === true ? "good" : t.change.good === false ? "bad" : ""}`}>{t.change.up ? "▲" : "▼"} {t.change.text}</span>}</div>
+            {t.spark && t.spark.filter((x) => x !== null).length > 1 && <Spark vals={t.spark} />}
+            {t.note && <div className="ovt-n">{t.note}</div>}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function Spark({ vals }: { vals: (number | null)[] }) {
+  const W = 200, H = 34, P = 3;
+  const v = vals.map((x, i) => [i, x] as const).filter(([, x]) => x !== null) as [number, number][];
+  const lo = Math.min(...v.map(([, x]) => x)), hi = Math.max(...v.map(([, x]) => x)), span = hi - lo || 1;
+  const X = (i: number) => P + (i * (W - 2 * P)) / Math.max(1, vals.length - 1);
+  const Y = (x: number) => H - P - ((x - lo) * (H - 2 * P)) / span;
+  const pts = v.map(([i, x]) => `${X(i)},${Y(x)}`).join(" ");
+  const last = v[v.length - 1];
+  return (
+    <svg className="ovt-sp" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden>
+      <polyline points={`${X(v[0][0])},${H} ${pts} ${X(last[0])},${H}`} className="a" />
+      <polyline points={pts} className="l" />
+      <circle cx={X(last[0])} cy={Y(last[1])} r="2.6" className="d" />
+    </svg>
   );
 }

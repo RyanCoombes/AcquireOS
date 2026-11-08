@@ -1294,3 +1294,23 @@ table.y2 { font-size: 13px; }
 .balchart .l-liab { stroke: #7a8494; stroke-width: 1.6; }
 .k-assets { background: rgba(14,124,107,.35); } .k-net { background: #1f5d70; } .k-liab { background: rgba(154,164,178,.6); }
 .pc-facts { grid-template-columns: 120px 1fr !important; }
+/* Overview and Activity side by side at equal height; Owners & directors full width, cards in columns */
+.company-page .pair.eq { align-items: stretch; }
+.company-page .pair.eq > .pcol { display: flex; flex-direction: column; }
+.company-page .pair.eq > .pcol > section { flex: 1; margin-bottom: 0; }
+.company-page .pair.eq { margin-bottom: 16px; }
+#ownership .pcards { grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); align-items: start; }
+#activity .act { max-height: 520px; overflow: auto; }
+
+/* Financial overview cards */
+.ovt-head { margin: 4px 0 8px; }
+.ovt { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.ovt-c { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 9px; background: var(--panel); display: flex; flex-direction: column; gap: 3px; }
+.ovt-l { font-size: 12px; color: var(--ink-3); }
+.ovt-v { font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.ovt-ch { font-size: 11.5px; font-weight: 600; color: var(--ink-2); }
+.ovt-ch.good { color: var(--teal-2); } .ovt-ch.bad { color: var(--red); }
+.ovt-sp { width: 100%; height: 34px; display: block; margin: 2px 0; }
+.ovt-sp .a { fill: var(--teal-soft); stroke: none; } .ovt-sp .l { fill: none; stroke: var(--teal); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.ovt-sp .d { fill: var(--teal-2); }
+.ovt-n { font-size: 12px; color: var(--ink-2); line-height: 1.35; }

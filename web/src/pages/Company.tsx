@@ -216,7 +216,7 @@ export default function Company() {
               <a key={id} href={`#${id}`} className={inView === id ? "on" : ""} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{l}</a>
             ))}
           </nav>
-        <div className="pair top2">
+        <div className="pair top2 eq">
           <div className="pcol">
           <section id="overview">
             <Head icon="overview" title="Overview" />
@@ -258,12 +258,12 @@ export default function Company() {
               </details>
             )}
           </section>
-            <ActivitySection key={num} data={data} num={num} setState={setState} onChanged={reload} />
           </div>
           <div className="pcol">
-            <OwnersDirectors data={data} flags={<Flags flags={own?.flags} address={c.address_flag} />} />
+            <ActivitySection key={num} data={data} num={num} setState={setState} onChanged={reload} />
           </div>
         </div>
+        <OwnersDirectors data={data} flags={<Flags flags={own?.flags} address={c.address_flag} />} />
           <section id="financials">
             <Head icon="money" tone="green" title="Financials" aside={(() => { const n = fin.filter((f) => !f.period_inferred).length; return `${n} ${n === 1 ? "year" : "years"} filed`; })()} />
             <AccountsGap data={data} />

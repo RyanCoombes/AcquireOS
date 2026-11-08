@@ -204,7 +204,7 @@ function DealCheck({ eLo, eHi, vLo, vHi, saved, onSave, directorPay, payYear, mu
   );
 
   return (
-    <details className="dealcheck" open={Object.keys(saved).length > 0}>
+    <details className="dealcheck">
       <summary>Funding check: can the profit pay for the deal? <span className="faint small">{note}</span></summary>
 
       <div className="dc-price">
