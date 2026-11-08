@@ -25,7 +25,7 @@ export default function Financials({ data }: { data: CompanyDetail }) {
     .map((r) => [String(r.period_end).slice(0, 10), r.turnover_est as number]));
   const ys: Year[] = fin.map((f) => {
     const e = f.turnover == null ? est.get(String(f.period_end).slice(0, 10)) ?? null : null;
-    return { f, label: new Date(f.period_end).toLocaleDateString("en-GB", { month: "short", year: "numeric" }),
+    return { f, label: new Date(f.period_end).toLocaleDateString("en-GB", fin.length > 8 ? { year: "numeric" } : { month: "short", year: "numeric" }),
              turnover: n(f.turnover) ?? e, turnoverEst: f.turnover == null && e != null };
   });
   const [tab, setTab] = useState("ov");

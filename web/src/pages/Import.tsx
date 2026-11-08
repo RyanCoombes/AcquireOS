@@ -234,7 +234,8 @@ function ChFeed({ onDone }: { onDone: () => void }) {
                 <span className="label">Months of accounts</span>
                 <select value={months} onChange={(e) => setMonths(Number(e.target.value))}>
                   {[[1, "1 (monthly top-up)"], [12, "12 (about 2 years of figures)"], [24, "24 (about 3 years)"],
-                    [36, "36 (about 4 years)"], [48, "48 (about 5 years)"], [60, "60 (about 6 years)"]].map(([m, l]) =>
+                    [36, "36 (about 4 years)"], [48, "48 (about 5 years)"], [60, "60 (about 6 years)"],
+                    [96, "96 (about 9 years)"], [120, "120 (about 11 years)"], [156, "156 (about 14 years)"]].map(([m, l]) =>
                     <option key={m} value={m}>{l}</option>)}
                 </select>
               </label>
@@ -385,7 +386,7 @@ function CatchUp() {
     <div className="syncbar"><i style={{ width: `${total ? Math.min(100, (100 * done) / total) : 0}%` }} /></div>);
   const reread = async () => {
     setMsg(null);
-    try { await api.startRefresh(Math.min(72, Math.max(1, acc!.accounts_months_total)), true); refresh(); setMsg("Started: progress shows under Companies House bulk data above."); }
+    try { await api.startRefresh(Math.min(180, Math.max(1, acc!.accounts_months_total)), true); refresh(); setMsg("Started: progress shows under Companies House bulk data above."); }
     catch (e: any) { setMsg(e.message); }
   };
   return (
@@ -459,7 +460,7 @@ function PdfReadPanel() {
       </p>
       <PdfFailures count={st.nothing_found + st.failed} onRetried={setSt} />
       {!st.ocr && <div className="callout amber" style={{ marginTop: 8 }}>OCR isn't installed here, so only PDFs with a text layer can be read. Update the stack to get the new image.</div>}
-      <p className="faint small">Years with no figures, newest first, back up to 5 years.<Hint text="For every company fetched from Companies House. Read as data where Companies House has it, otherwise from the PDF (text, or OCR for scans). Your pipeline first. PDF figures are marked on the company page." /></p>
+      <p className="faint small">Years with no figures, newest first, back up to 10 years.<Hint text="For every company fetched from Companies House. Read as data where Companies House has it, otherwise from the PDF (text, or OCR for scans). Your pipeline first. PDF figures are marked on the company page." /></p>
     </section>
   );
 }

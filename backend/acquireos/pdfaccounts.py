@@ -320,7 +320,7 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
     return result
 
 
-# Years to read: accounts filings within five years (from each company's
+# Years to read: accounts filings within ten years (from each company's
 # filing history, fetched by the sync or on opening) with no figures held,
 # not dormant, and not read yet (or read by an older version and not found).
 TODO_SQL = """
@@ -339,7 +339,7 @@ with aa as (
 select aa.company_number, aa.made_up,
        row_number() over (partition by aa.company_number order by aa.made_up desc) as nth
 from aa
-where aa.made_up > current_date - interval '5 years 6 months'
+where aa.made_up > current_date - interval '10 years 6 months'
   and exists (select 1 from filing fl where fl.company_number = aa.company_number and fl.type = 'AA'
               and fl.detail->>'made_up_date' = aa.made_up::text and fl.detail ? 'document')
   and not exists (select 1 from financial_period fp where fp.company_number = aa.company_number
@@ -351,7 +351,7 @@ where aa.made_up > current_date - interval '5 years 6 months'
 
 QUEUE_SQL = """
 -- Newest year first across all companies (every company's latest missing
--- accounts before anyone's second-latest), back at most 5 years; within a
+-- accounts before anyone's second-latest), back at most 10 years; within a
 -- year, your pipeline first, then the best-scoring targets.
 with todo as (""" + TODO_SQL + """)
 select t.company_number, t.made_up from todo t

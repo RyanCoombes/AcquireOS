@@ -1314,3 +1314,6 @@ table.y2 { font-size: 13px; }
 .ovt-sp .a { fill: var(--teal-soft); stroke: none; } .ovt-sp .l { fill: none; stroke: var(--teal); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 .ovt-sp .d { fill: var(--teal-2); }
 .ovt-n { font-size: 12px; color: var(--ink-2); line-height: 1.35; }
+.balchart circle { stroke-width: 2; fill: #fff; cursor: help; }
+.balchart .d-assets { stroke: #0e7c6b; } .balchart .d-net { stroke: #16213a; } .balchart .d-liab { stroke: #7a8494; }
+.balchart circle:hover { r: 5; }

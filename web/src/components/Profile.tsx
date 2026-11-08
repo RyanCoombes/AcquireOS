@@ -66,6 +66,13 @@ export function BalanceChart({ series }: { series: FinSummary["series"] }) {
         {hasTA && <path d={line(ta)} className="l-assets" />}
         <path d={line(na)} className="l-net" />
         {hasTL && <path d={line(tl)} className="l-liab" />}
+        {pts.map((p, i) => (
+          <g key={`d${i}`}>
+            {hasTA && <circle cx={x(i)} cy={y(ta[i])} r={3.5} className="d-assets"><title>{`${String(p.period_end).slice(0, 4)} total assets: ${money(ta[i])}`}</title></circle>}
+            <circle cx={x(i)} cy={y(na[i])} r={3.5} className="d-net"><title>{`${String(p.period_end).slice(0, 4)} net assets: ${money(na[i])}`}</title></circle>
+            {hasTL && <circle cx={x(i)} cy={y(tl[i])} r={3.5} className="d-liab"><title>{`${String(p.period_end).slice(0, 4)} total liabilities: ${money(-tl[i])}`}</title></circle>}
+          </g>
+        ))}
         {pts.map((p, i) => <text key={i} x={x(i)} y={H - 8} textAnchor="middle">{String(p.period_end).slice(0, 4)}</text>)}
       </svg>
       <figcaption>

@@ -2375,7 +2375,7 @@ def start_refresh(months: int = 1, reread: bool = False):
         clear_cache()
         _start_scoring()  # any buy box changed while the refresh ran
 
-    _run_detached(["fetch", "all", "--months", str(max(1, min(months, 72)))] + (["--reread"] if reread else []), after=after)
+    _run_detached(["fetch", "all", "--months", str(max(1, min(months, 180)))] + (["--reread"] if reread else []), after=after)
     import time
 
     time.sleep(0.5)  # let the job row appear
