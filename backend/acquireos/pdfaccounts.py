@@ -27,7 +27,7 @@ FIELDS = ("turnover", "gross_profit", "operating_profit", "profit_loss", "net_as
 
 # Labels at the start of a line (lower-cased, punctuation simplified).
 # Bump when reading improves: years that couldn't be read are tried again.
-VERSION = 2
+VERSION = 3
 
 _PL = r"(profit|loss|\(loss\)\s*/\s*profit|profit\s*/\s*\(loss\)|\(profit\)\s*/\s*loss|loss\s*/\s*\(profit\))"
 LABELS: list[tuple[str, re.Pattern]] = [
@@ -178,7 +178,24 @@ def _nice():
         pass
 
 
+# Tesseract on a Raspberry Pi: one thread (its OpenMP threads fight each other
+# and everything else on a busy Pi, which is what made pages time out), no
+# search for white-on-black text (accounts don't have any; it doubles the work).
+_TESS_ENV = {**os.environ, "OMP_THREAD_LIMIT": "1"}
+_TESS_ARGS = ["--psm", "6", "-c", "tessedit_do_invert=0"]
+PAGE_TIMEOUT = 300
+
+
+def _enough(text: str) -> bool:
+    """Stop reading more pages once the main figures are in."""
+    f = extract(text)["figures"]
+    return "net_assets" in f and len(f) >= 3
+
+
 def ocr(pdf: bytes, pages: int = 20) -> str:
+    """OCR page by page, newest first in the order they appear; a page that
+    takes too long is skipped (and noted) rather than failing the whole year;
+    stops early once the balance sheet and two more figures have been read."""
     if not ocr_available():
         return ""
     with tempfile.TemporaryDirectory() as d:
@@ -187,12 +204,22 @@ def ocr(pdf: bytes, pages: int = 20) -> str:
             f.write(pdf)
         subprocess.run(["pdftoppm", "-r", "200", "-gray", "-l", str(pages), "-png", src, os.path.join(d, "p")],
                        check=False, timeout=600, preexec_fn=_nice, capture_output=True)
-        out = []
-        for name in sorted(n for n in os.listdir(d) if n.endswith(".png")):
-            r = subprocess.run(["tesseract", os.path.join(d, name), "stdout", "--psm", "6"],
-                               check=False, timeout=180, preexec_fn=_nice, capture_output=True, text=True)
-            out.append(r.stdout or "")
-        return "\n".join(out)
+        out, skipped = [], []
+        names = sorted((n for n in os.listdir(d) if n.endswith(".png")), key=lambda n: int(re.sub(r"\D", "", n) or 0))
+        for name in names:
+            try:
+                r = subprocess.run(["tesseract", os.path.join(d, name), "stdout", *_TESS_ARGS], env=_TESS_ENV,
+                                   check=False, timeout=PAGE_TIMEOUT, preexec_fn=_nice, capture_output=True, text=True)
+                out.append(r.stdout or "")
+            except subprocess.TimeoutExpired:
+                skipped.append(re.sub(r"\D", "", name).lstrip("0") or "?")
+                continue
+            if _enough("\n".join(out)):
+                break
+        text = "\n".join(out)
+        if skipped:
+            text += f"\n[OCR skipped page(s) {', '.join(skipped)}: took longer than {PAGE_TIMEOUT // 60} minutes]"
+        return text
 
 
 def _sample(text: str) -> str:
@@ -263,6 +290,9 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
                         result.update(status="done", figures=cur)
                     else:
                         result["status"] = "nothing_found"
+                        sk = re.search(r"\[OCR skipped page\(s\) [^\]]+\]", text)
+                        if sk:
+                            result["note"] = sk.group(0).strip("[]")
                     if ex["dropped"]:
                         result["note"] = "left out: " + "; ".join(ex["dropped"])
     except Exception as e:
