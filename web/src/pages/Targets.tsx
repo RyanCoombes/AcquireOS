@@ -4,6 +4,7 @@ import { api, type Row } from "../api";
 import { ErrorLine, Flags, RevenueTag, Score, Signals, StatusMark, Toast, useAsync } from "../components/bits";
 import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
+import { NOT_NOW, NOT_SUITABLE, pickNote, rememberList, RuleOutMenu } from "../components/RuleOut";
 import { ActiveChips, FilterGroup, MoneyRange, NumField, NumRange, Select } from "../components/Filters";
 import { ageFrom, cap, CHANGE_KIND, date, int, isBadStatus, OWNERSHIP, range, relDays, years } from "../format";
 
@@ -101,6 +102,13 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
       setSel(new Set()); list.reload();
     } catch (e: any) { setToast(`Not saved: ${e.message}`); }
   };
+  const bulkRuleOut = async (st: "rejected" | "passed", why: string) => {
+    try {
+      const r = await api.bulkState({ numbers: [...sel], ...pickNote(st, why) });
+      setToast(`${r.updated} ruled out: ${why}`);
+      setSel(new Set()); list.reload();
+    } catch (e: any) { setToast(`Not saved: ${e.message}`); }
+  };
   useEffect(() => setCursor(0), [params.toString()]);
 
   const view = query.changed_days && query.sort === "changed" ? "changed" : mode === "directory" ? "all" : "fit";
@@ -136,6 +144,10 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   });
 
   const rows = list.data?.rows ?? [];
+  // Remember this list, so ruling a company out on its page can open the next one.
+  useEffect(() => { if (rows.length) rememberList(rows.map((r) => r.company_number), window.location.pathname + window.location.search); }, [list.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [gone, setGone] = useState<Set<string>>(new Set());
+  useEffect(() => setGone(new Set()), [list.data]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
@@ -411,6 +423,11 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                 <option value="">Move to stage…</option>
                 {(m?.statuses ?? []).map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
               </select>
+              <select value="" onChange={(e) => { const [st, why] = e.target.value.split("|"); if (st) bulkRuleOut(st as "rejected" | "passed", why); }} aria-label="Rule out ticked companies">
+                <option value="">Rule out…</option>
+                <optgroup label="Not suitable">{NOT_SUITABLE.map((w) => <option key={w} value={`rejected|${w}`}>{w}</option>)}</optgroup>
+                <optgroup label="Not now">{NOT_NOW.map((w) => <option key={w} value={`passed|${w}`}>{w}</option>)}</optgroup>
+              </select>
               <a className="btn" href={"/api/export.csv?numbers=" + encodeURIComponent([...sel].join(","))}>Export ticked</a>
               <button className="btn quiet" onClick={() => setSel(new Set())}>Clear</button>
             </div>
@@ -428,10 +445,12 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                     {sort === c.key && <span className="arrow">{dir === "asc" ? "↑" : "↓"}</span>}
                   </th>
                 ))}
+                <th className="rowx" aria-label="Rule out" />
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => <TargetRow key={r.company_number} r={r} cursor={i === cursor} ticked={sel.has(r.company_number)} onTick={() => toggle(r.company_number)} showBox={!boxId} mode={mode} sics={sics} dim={!!boxId && !!r.excluded}
+              {rows.filter((r) => !gone.has(r.company_number)).map((r, i) => <TargetRow key={r.company_number}
+                                             onRuledOut={(msg) => { setToast(msg); setGone((g) => new Set(g).add(r.company_number)); }} r={r} cursor={i === cursor} ticked={sel.has(r.company_number)} onTick={() => toggle(r.company_number)} showBox={!boxId} mode={mode} sics={sics} dim={!!boxId && !!r.excluded}
                                              href={`/c/${r.company_number}${boxId ? `?bb=${boxId}` : ""}`}
                                              onOpen={() => nav(`/c/${r.company_number}${boxId ? `?bb=${boxId}` : ""}`)} />)}
             </tbody>
@@ -452,10 +471,12 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   );
 }
 
-function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, onTick }: {
+function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, onTick, onRuledOut }: {
   r: Row; cursor: boolean; onOpen: () => void; showBox: boolean; mode: Mode; sics: SicOption[]; dim: boolean; href: string;
-  ticked: boolean; onTick: () => void;
+  ticked: boolean; onTick: () => void; onRuledOut: (msg: string) => void;
 }) {
+  const closed = r.status === "rejected" || r.status === "passed";
+  const xCell = <td className="rowx">{!closed && <RuleOutMenu num={r.company_number} name={r.name} onDone={onRuledOut} />}</td>;
   const tick = (
     <td className="tick" onClick={(e) => e.stopPropagation()}>
       <input type="checkbox" checked={ticked} onChange={onTick} aria-label={`Tick ${r.name}`} />
@@ -532,6 +553,7 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
         </td>
         {scoreCell}
         {statusCell}
+        {xCell}
       </tr>
     );
   }
@@ -553,6 +575,7 @@ function TargetRow({ r, cursor, onOpen, showBox, mode, sics, dim, href, ticked, 
       <td className="num">{age ?? "—"}</td>
       <td className="hide-sm nowrap">{r.ownership_type ? OWNERSHIP[r.ownership_type] ?? r.ownership_type : <span className="faint">Not traced</span>}</td>
       {statusCell}
+      {xCell}
     </tr>
   );
 }

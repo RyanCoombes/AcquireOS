@@ -1,8 +1,8 @@
 import type React from "react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { duration, elapsed, useJob } from "../components/JobBar";
 import { Link } from "react-router-dom";
-import { api, type ChSync, type PdfRead, type Preview } from "../api";
+import { api, type ChSync, type PdfFailure, type PdfRead, type Preview } from "../api";
 import { ErrorLine, useAsync } from "../components/bits";
 import { dateTime, int } from "../format";
 
@@ -385,13 +385,55 @@ function PdfReadPanel() {
         <span className={`chip ${state[1]}`}>{state[0]}</span>
         <button className="btn quiet" style={{ marginLeft: "auto" }} onClick={toggle}>{st.paused ? "Resume" : "Pause"}</button></div>
       <p className="small" style={{ margin: 0 }}>
-        <b>{int(st.done)}</b> read{st.by_ocr ? <> ({int(st.by_ocr)} by OCR)</> : null}
+        <b>{int(st.done)}</b> read{st.by_ocr || st.by_data ? <> ({[st.by_ocr ? `${int(st.by_ocr)} by OCR` : "", st.by_data ? `${int(st.by_data)} as data` : ""].filter(Boolean).join(", ")})</> : null}
         {" · "}<b>{int(st.nothing_found + st.failed)}</b> couldn't be read
         {" · "}<b>{int(st.queue)}</b> waiting{st.last_at ? <> · last {dateTime(st.last_at)}</> : null}
       </p>
+      <PdfFailures count={st.nothing_found + st.failed} onRetried={setSt} />
       {!st.ocr && <div className="callout amber" style={{ marginTop: 8 }}>OCR isn't installed here, so only PDFs with a text layer can be read. Update the stack to get the new image.</div>}
-      <p className="faint small">Accounts filed only as PDF, found by the Companies House sync. Newest year first, then back up to 5 years; your pipeline before other targets. Figures are marked “from PDF” or “read by OCR” on the company page.</p>
+      <p className="faint small">Accounts years with no figures here, for every company the Companies House sync (or opening it) has fetched. Read as data where Companies House has it, otherwise from the PDF. Newest year first, then back up to 5 years; your pipeline before other targets. PDF figures are marked “from PDF” or “read by OCR”.</p>
     </section>
+  );
+}
+
+function PdfFailures({ count, onRetried }: { count: number; onRetried: (s: PdfRead) => void }) {
+  const [rows, setRows] = useState<PdfFailure[] | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  if (!count) return null;
+  const why = (r: PdfFailure) => r.note ?? (r.status === "nothing_found" ? (r.method === "ocr" ? "scanned: no labelled figures could be made out" : "no labelled figures found") : "failed");
+  return (
+    <details style={{ marginTop: 8 }} onToggle={(e) => { if ((e.target as HTMLDetailsElement).open && !rows) api.pdfFailures().then(setRows); }}>
+      <summary className="small" style={{ cursor: "pointer" }}>Which couldn't be read, and why</summary>
+      <div style={{ display: "flex", gap: 8, margin: "8px 0" }}>
+        <button className="btn quiet" onClick={async () => { onRetried(await api.pdfRetry()); setRows([]); }}>Try them all again</button>
+        <span className="faint small" style={{ alignSelf: "center" }}>Each is tried up to 3 times, and again whenever the reader improves.</span>
+      </div>
+      {!rows ? <div className="faint small">Loading…</div> : (
+        <table className="small">
+          <thead><tr><th>Company</th><th>Year end</th><th>How</th><th>Why</th><th /></tr></thead>
+          <tbody>
+            {rows.map((r) => {
+              const k = `${r.company_number}-${r.made_up}`;
+              return (
+                <Fragment key={k}>
+                  <tr>
+                    <td><Link to={`/c/${r.company_number}`}>{r.name}</Link></td>
+                    <td className="nowrap">{String(r.made_up).slice(0, 10)}</td>
+                    <td>{r.method === "ocr" ? "OCR (scanned)" : r.method === "text" ? "Text" : "—"}</td>
+                    <td>{why(r)}{r.tries > 1 ? <span className="faint"> · tried {r.tries}×</span> : null}</td>
+                    <td className="nowrap">
+                      {r.sample && <button className="linkish small" onClick={() => setOpen(open === k ? null : k)}>{open === k ? "Hide" : "What was read"}</button>}{" "}
+                      <a className="small" href={`https://find-and-update.company-information.service.gov.uk/company/${r.company_number}/filing-history`} target="_blank" rel="noreferrer">PDF ↗</a>
+                    </td>
+                  </tr>
+                  {open === k && <tr><td colSpan={5}><pre className="pdfsample">{r.sample}</pre></td></tr>}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </details>
   );
 }
 

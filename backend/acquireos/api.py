@@ -707,8 +707,9 @@ def company(num: str, bb: str | None = None):
         sc = next((x for x in scores if x["buy_box_id"] == bb["id"]), None)
     return {
         "deal": deal, "manual": manual, "buy_box": {"id": bb["id"], "name": bb["name"]}, "scores": scores,
-        "pdf_reads": c.execute("select made_up, status, method, note, read_at from pdf_read where company_number = %s order by made_up desc",
+        "pdf_reads": c.execute("select made_up, status, method, note, read_at, tries from pdf_read where company_number = %s order by made_up desc",
                                (num,)).fetchall(),
+        "pdf_waiting": __import__("acquireos.pdfaccounts", fromlist=["x"]).todo_for(c, num),
         "watching": bool(c.execute("select 1 from watch where kind = 'company' and ref = %s", (num,)).fetchone()),
         "watched_officers": [r["ref"] for r in c.execute("select ref from watch where kind = 'director'")],
         "watched_owners": [r["ref"] for r in c.execute("select ref from watch where kind = 'owner'")],
@@ -1684,6 +1685,50 @@ def pdf_read_pause(body: SyncIn):
     with db.conn() as c:
         chsync.set_setting(c, "pdf_paused", body.paused)
         return pdfaccounts.status(c)
+
+
+@app.get("/api/pdf-read/failures")
+def pdf_read_failures(limit: int = 200):
+    """Years that couldn't be read: why, and the lines that were read."""
+    from . import pdfaccounts
+
+    with db.conn() as c:
+        return pdfaccounts.failures(c, min(max(limit, 1), 1000))
+
+
+@app.post("/api/pdf-read/retry")
+def pdf_read_retry(company_number: str | None = None):
+    from . import pdfaccounts
+
+    with db.conn() as c:
+        n = pdfaccounts.retry(c, company_number)
+        return {"requeued": n, **pdfaccounts.status(c)}
+
+
+@app.post("/api/companies/{num}/refresh")
+def refresh_company(num: str):
+    """Everything from Companies House now (profile, filings, owners, officers,
+    charges, accounts), then any accounts filed only as PDF are read in the
+    background, this company first."""
+    import threading
+
+    from . import chapi, pdfaccounts
+
+    num = num.strip().upper()
+    with db.conn() as c:
+        if not c.execute("select 1 from company where company_number = %s", (num,)).fetchone():
+            raise HTTPException(404, "Company not found")
+        try:
+            r = chapi.fetch(c, num)
+        except chapi.NoKey as e:
+            raise HTTPException(400, str(e))
+        c.execute("delete from pdf_read where company_number = %s and status <> 'done'", (num,))
+        c.commit()
+        todo = pdfaccounts.todo_for(c, num)
+    if todo:
+        threading.Thread(target=pdfaccounts.read_company, args=(num,), daemon=True, name=f"pdf-{num}").start()
+    return {"changes": r.get("changes", 0), "accounts_added": r.get("accounts_added", 0), "error": r.get("error"),
+            "pdf_reading": todo}
 
 
 @app.put("/api/ch-sync")

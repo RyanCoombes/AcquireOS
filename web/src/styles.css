@@ -963,3 +963,21 @@ tr.filler td { background: var(--teal-soft, #e6f2ef); }
 .filled { display: inline-block; min-width: 110px; text-align: right; color: var(--teal); }
 
 .tag.amber { background: var(--amber-soft); color: var(--amber); }
+
+/* Ruling out: one click per reason */
+.ruleout { display: grid; gap: 6px; }
+.ruleout .grp { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.ruleout .lbl { font-size: 12px; font-weight: 650; color: var(--ink-3); min-width: 92px; }
+.ruleout .lbl.red { color: var(--red); }
+.ruleout .grp .chipbtn:hover { border-color: var(--red); color: var(--red); }
+.ruleout input { height: 28px; font-size: 12.5px; width: 180px; }
+.ruleout.compact .lbl { min-width: 0; width: 100%; }
+.rowmenu { position: relative; display: inline-block; }
+.xbtn { border: 1px solid transparent; background: none; color: var(--ink-3); border-radius: 8px; width: 28px; height: 28px; cursor: pointer; font-size: 13px; }
+.xbtn:hover, .xbtn[aria-expanded="true"] { border-color: var(--red); color: var(--red); background: var(--red-soft); }
+.rowmenu .pop { position: absolute; right: 0; top: 32px; z-index: 30; width: 330px; background: var(--panel, #fff); border: 1px solid var(--line);
+                border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.14); padding: 10px; text-align: left; }
+td.rowx { width: 36px; text-align: right; padding-right: 4px; }
+.undo { display: flex; gap: 10px; align-items: center; }
+
+.pdfsample { max-height: 260px; overflow: auto; font-size: 11.5px; background: var(--bg, #f6f7f8); padding: 8px; border-radius: 8px; white-space: pre-wrap; margin: 0; }

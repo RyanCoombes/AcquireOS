@@ -6,6 +6,7 @@ import { AreaChart as SmallLine } from "../components/charts";
 import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
 import MyScores from "../components/MyScores";
+import { listFrom, nextInList, RuleOutChips, type RuleOutPick } from "../components/RuleOut";
 import { Enrichment, Location } from "../components/CompanyExtras";
 import { Charges, Filings, FinancialOverview, Head, OwnersDirectors, WebsiteFinder } from "../components/Profile";
 import { ageFrom, CHANGE_KIND, chUrl, date, dateTime, describeChange, int, isBadStatus, LINK_KIND, money, OWNERSHIP, range, relDays, toNum, years } from "../format";
@@ -63,6 +64,14 @@ export default function Company() {
       .catch(() => setChCheck(null));
   }, [data, num]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // While its PDF accounts are being read after a refresh, look again every 20 seconds.
+  const [pollUntil, setPollUntil] = useState(0);
+  useEffect(() => {
+    if (!pollUntil || Date.now() > pollUntil || !data?.pdf_waiting?.length) return;
+    const t = setTimeout(reload, 20_000);
+    return () => clearTimeout(t);
+  }, [data, pollUntil]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (error) return <ErrorLine error={error} />;
   if (!data) return <div className="empty">Loading…</div>;
   const { company: c, financials: fin, estimate: est, ownership: own } = data;
@@ -83,8 +92,21 @@ export default function Company() {
   const series = (k: keyof (typeof fin)[number]) =>
     fin.map((f) => ({ x: f.period_end, y: toNum(f[k] as string | number | null), inferred: f.period_inferred }));
 
+  // Refresh: everything from Companies House now, then its PDF accounts read in the background.
+  const refresh = async () => {
+    setChCheck("Refreshing from Companies House…");
+    try {
+      const r = await api.refreshCompany(num);
+      setChCheck([r.changes ? `${r.changes} new` : "Up to date", r.accounts_added ? `${r.accounts_added} accounts added` : "",
+                  r.pdf_reading.length ? `reading ${r.pdf_reading.length} PDF accounts…` : ""].filter(Boolean).join(" · "));
+      if (r.pdf_reading.length) setPollUntil(Date.now() + 20 * 60e3);
+      reload();
+    } catch (e: any) { setChCheck(`Refresh failed: ${e.message}`); }
+  };
+
   return (
     <>
+      <UndoBar key={num} />
       <div className="pagehead">
         <div>
           <div className="crumb">
@@ -106,6 +128,7 @@ export default function Company() {
           </div>
         </div>
         <div className="right">
+          {data.ch?.enabled && <button className="btn quiet" onClick={refresh} title="Fetch everything from Companies House now, and read any accounts filed only as PDF">↻ Refresh</button>}
           <WatchButton kind="company" refId={c.company_number} on={!!data.watching} label={c.name} onChange={reload} />
           <a className="btn quiet" href={chUrl(c.company_number)} target="_blank" rel="noreferrer">Companies House ↗</a>
           <Link className="btn" to={`/connections/${c.company_number}`}>Connection map</Link>
@@ -343,9 +366,9 @@ function MyCall({ data, num, setState, onNote, onOutreach, onScored }: {
     <>
       <section>
         <h2>Your call</h2>
+        <CloseOut num={num} name={data.company.name} status={s.status} setState={setState} />
         <div className="label" style={{ margin: "0 0 4px" }}>Stage</div>
         <StageSelect value={s.status} onChange={(v) => setState({ status: v, stage_note: "Changed on the company page" })} />
-        <CloseOut status={s.status} setState={setState} />
         <div className="label" style={{ margin: "14px 0 4px" }}>Rating <span className="faint">(keys 1–5)</span></div>
         <div className="rating">
           {[1, 2, 3, 4, 5].map((n) => (
@@ -639,40 +662,55 @@ function SameBusiness({ data }: { data: CompanyDetail }) {
 }
 
 
-/** One click to rule a company out, with a reason kept in its history. */
-const NOT_SUITABLE = ["Too small", "Too big", "Wrong sector", "Already sold", "Not owner-run", "Investor-backed", "Weak finances", "Wrong location"];
-const NOT_NOW = ["Owner not ready", "Owner said no", "Timing", "Revisit next year"];
-
-function CloseOut({ status, setState }: { status: string; setState: (p: Record<string, unknown>) => void }) {
-  const [open, setOpen] = useState<null | "rejected" | "passed">(null);
+/** One click to rule a company out, with a reason kept in its history; then on
+    to the next company in the list you came from (you can undo it there). */
+function CloseOut({ num, name, status, setState }: { num: string; name: string; status: string; setState: (p: Record<string, unknown>) => Promise<void> | void }) {
+  const nav = useNavigate();
+  const [advance, setAdvance] = useState(() => { try { return localStorage.getItem("ao.ruleout.next") !== "0"; } catch { return true; } });
   const closed = status === "rejected" || status === "passed";
-  const pick = (st: "rejected" | "passed", why: string) => {
-    setState({ status: st, stage_note: `${st === "rejected" ? "Not suitable" : "Not now"}: ${why}` });
-    setOpen(null);
+  const next = nextInList(num);
+  const pick = async (p: RuleOutPick) => {
+    await setState(p);
+    if (advance && next) {
+      try { sessionStorage.setItem("ao.undo", JSON.stringify({ num, name, prev: status, note: p.stage_note })); } catch { /* ignore */ }
+      nav(`/c/${next}${window.location.search}`);
+    }
   };
+  if (closed) {
+    return (
+      <div className="faint small" style={{ margin: "0 0 10px" }}>
+        {status === "rejected" ? "Ruled out: hidden from targets." : "Not now: hidden from targets."}{" "}
+        <button className="linkish small" onClick={() => setState({ status: "watching", stage_note: "Brought back" })}>Bring back to Watching</button>
+        {next && <> · <Link to={`/c/${next}`}>Next in list →</Link></>}
+      </div>
+    );
+  }
   return (
-    <div className="closeout">
-      {!closed && (
-        <div className="row">
-          <button className={`btn quiet ${open === "rejected" ? "on" : ""}`} onClick={() => setOpen(open === "rejected" ? null : "rejected")}
-                  title="Doesn't fit. Hidden from targets.">✕ Not suitable</button>
-          <button className={`btn quiet ${open === "passed" ? "on" : ""}`} onClick={() => setOpen(open === "passed" ? null : "passed")}
-                  title="Fits, but not now. Hidden from targets; easy to bring back.">⏸ Not now</button>
-        </div>
+    <div style={{ margin: "0 0 12px" }}>
+      <RuleOutChips onPick={pick} />
+      {next && (
+        <label className="faint small" style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+          <input type="checkbox" checked={advance} onChange={(e) => { setAdvance(e.target.checked); try { localStorage.setItem("ao.ruleout.next", e.target.checked ? "1" : "0"); } catch { /* ignore */ } }} />
+          Then open the next company in the list
+        </label>
       )}
-      {open && (
-        <div className="reasons">
-          <span className="faint small">Why?</span>
-          {(open === "rejected" ? NOT_SUITABLE : NOT_NOW).map((r) => <button key={r} className="chipbtn" onClick={() => pick(open, r)}>{r}</button>)}
-          <button className="chipbtn" onClick={() => pick(open, "no reason given")}>Skip</button>
-        </div>
-      )}
-      {closed && (
-        <div className="faint small" style={{ marginTop: 6 }}>
-          {status === "rejected" ? "Ruled out: hidden from targets." : "Not now: hidden from targets."}{" "}
-          <button className="linkish small" onClick={() => setState({ status: "watching", stage_note: "Brought back" })}>Bring back to Watching</button>
-        </div>
-      )}
+    </div>
+  );
+}
+
+/** After ruling one out and moving on: say so, with Undo. */
+function UndoBar() {
+  const [u, setU] = useState<{ num: string; name: string; prev: string; note: string } | null>(() => {
+    try { const v = JSON.parse(sessionStorage.getItem("ao.undo") ?? "null"); sessionStorage.removeItem("ao.undo"); return v; } catch { return null; }
+  });
+  if (!u) return null;
+  const from = listFrom();
+  return (
+    <div className="callout undo">
+      <span><b>{u.name}</b> · {u.note}</span>
+      <button className="btn quiet" onClick={async () => { await api.setState(u.num, { status: u.prev, stage_note: "Undone" }); setU(null); }}>Undo</button>
+      {from && <Link className="faint small" to={from}>Back to the list</Link>}
+      <button className="linkish small" style={{ marginLeft: "auto" }} onClick={() => setU(null)}>Dismiss</button>
     </div>
   );
 }
@@ -682,11 +720,12 @@ function CloseOut({ status, setState }: { status: string; setState: (p: Record<s
     or filed only as PDF (Claude can read those and save the figures). */
 function AccountsGap({ data }: { data: CompanyDetail }) {
   const c = data.company;
-  const pdf = (data.ch?.fetched as any)?.accounts_pdf as string[] | undefined;
+  const pdf = [...new Set([...(((data.ch?.fetched as any)?.accounts_pdf ?? []) as string[]), ...(data.pdf_waiting ?? []),
+    ...(data.pdf_reads ?? []).map((r) => String(r.made_up).slice(0, 10))].map((d) => String(d).slice(0, 10)))].sort().reverse();
   const latest = [...data.financials].reverse().find((f) => !f.period_inferred)?.period_end;
   const behind = c.last_accounts_date && (!latest || new Date(c.last_accounts_date).getTime() - new Date(latest).getTime() > 45 * 864e5);
   const url = `https://find-and-update.company-information.service.gov.uk/company/${c.company_number}/filing-history`;
-  if (pdf?.length) {
+  if (pdf.length) {
     // Read automatically in the background (text layer, or OCR for scans), newest first.
     const reads = new Map((data.pdf_reads ?? []).map((r) => [String(r.made_up).slice(0, 10), r]));
     const st = pdf.map((d) => ({ d, r: reads.get(String(d).slice(0, 10)) }));
@@ -695,9 +734,9 @@ function AccountsGap({ data }: { data: CompanyDetail }) {
     const failed = st.filter((x) => x.r && x.r.status !== "done");
     return (
       <div className={`callout ${failed.length ? "amber" : ""}`} style={{ marginBottom: 10 }}>
-        Accounts to {pdf.map((d) => date(d)).join(", ")} are filed only as PDF.{" "}
-        {read.length > 0 && <>{read.map((x) => date(x.d)).join(", ")}: <b>read from the PDF{read.some((x) => x.r?.method === "ocr") ? " (some by OCR)" : ""}</b>, worth checking against the filing. </>}
-        {waiting.length > 0 && <>{waiting.map((x) => date(x.d)).join(", ")}: waiting to be read automatically. </>}
+        Accounts to {pdf.map((d) => date(d)).join(", ")} weren't in the bulk data.{" "}
+        {read.length > 0 && <>{read.map((x) => date(x.d)).join(", ")}: <b>{read.every((x) => x.r?.method === "data") ? "read from Companies House" : `read from the PDF${read.some((x) => x.r?.method === "ocr") ? " (some by OCR)" : ""}`}</b>{read.some((x) => x.r?.method !== "data") ? ", worth checking against the filing" : ""}. </>}
+        {waiting.length > 0 && <>{waiting.map((x) => date(x.d)).join(", ")}: waiting to be read automatically (↻ Refresh reads them now). </>}
         {failed.length > 0 && <>{failed.map((x) => `${date(x.d)}${x.r?.note ? ` (${x.r.note})` : ""}`).join(", ")}: <b>couldn't be read</b>.
           Ask Claude: <i>“Read the accounts PDFs for {c.name} in AcquireOS and save the figures.”</i> </>}
         <a href={url} target="_blank" rel="noreferrer">Filings ↗</a>

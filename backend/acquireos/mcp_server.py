@@ -154,6 +154,16 @@ def read_accounts_pdf(company_number: str, made_up_date: str | None = None) -> s
 
 
 @server.tool(description=(
+    "Accounts years the automatic PDF reader couldn't read (company, year end, why, how: text or OCR), newest first. "
+    "Work through them with read_accounts_pdf and save_financials when the user asks."))
+def list_unreadable_accounts(limit: int = 50) -> str:
+    from . import pdfaccounts
+
+    with db.conn() as c:
+        return _j([{k: v for k, v in r.items() if k != "sample"} for r in pdfaccounts.failures(c, min(max(limit, 1), 500))])
+
+
+@server.tool(description=(
     "Save figures you read from a company's filed accounts (e.g. a PDF via read_accounts_pdf), for one year end "
     "(period_end YYYY-MM-DD). Give only figures printed in the accounts, in pounds; never estimates. source_url is "
     "the filing (its Companies House filing-history page). The company is rescored. Figures are marked as read "

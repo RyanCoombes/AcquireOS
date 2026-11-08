@@ -916,6 +916,18 @@ def test_pdf_accounts_figures_are_read_and_checked():
     # £'000 accounts, and losses in brackets
     k = pdfaccounts.extract("£'000 £'000\nTurnover 12,500 11,000\nOperating loss (320) (150)\n")["figures"]
     assert k["turnover"][0] == 12_500_000 and k["operating_profit"][0] == -320_000
+    # figures on the lines after the label (text taken from a table)
+    t = pdfaccounts.extract("Turnover\n3\n1,234,567\n1,100,000\nCash at bank and in hand\n45,000\n30,000\n")["figures"]
+    assert t["turnover"] == [1_234_567, 1_100_000] and t["cash"] == [45_000, 30_000]
+    # common OCR slips: E for £, O for 0, full stops for commas
+    o = pdfaccounts.extract("Turnover E1,2O4,000 £1.100.000\nDebtors 5 12.345 1O,000\n")["figures"]
+    assert o["turnover"] == [1_204_000, 1_100_000] and o["debtors"] == [12_345, 10_000]
+    # a micro-entity balance sheet: capital and reserves stands in for net assets
+    m = pdfaccounts.extract("Net current assets 20,000 15,000\nCapital and reserves 52,310 40,100\n")["figures"]
+    assert m["net_assets"] == [52_310, 40_100]
+    # a policy sentence is not a figure
+    assert "turnover" not in pdfaccounts.extract("Turnover represents amounts invoiced in 2024\n")["figures"]
+    assert "cash" not in pdfaccounts.extract("Cash flow statement 2024 2023\n")["figures"]
 
 
 def test_pdf_accounts_ocr_on_a_scanned_page():
@@ -945,19 +957,36 @@ def test_pdf_accounts_ocr_on_a_scanned_page():
 
 
 def test_pdf_queue_newest_years_first(loaded):
+    import json as _j
+
     from acquireos import pdfaccounts
 
     loaded.commit()
     with db.conn() as c:
-        c.execute("""insert into ch_fetch (company_number, checked_at, accounts_pdf) values
-                     ('01000001', now(), '["2025-03-31", "2024-03-31", "2015-03-31"]'),
-                     ('01000002', now(), '["2025-12-31", "2023-12-31"]')
-                     on conflict (company_number) do update set accounts_pdf = excluded.accounts_pdf""")
-        q = [(r["company_number"], str(r["made_up"])) for r in c.execute(pdfaccounts.QUEUE_SQL, (10,))]
+        c.execute("delete from financial_period where company_number in ('01000001', '01000002')")
+        for num, mu in (("01000001", "2025-03-31"), ("01000001", "2024-03-31"), ("01000001", "2015-03-31"),
+                        ("01000002", "2025-12-31"), ("01000002", "2023-12-31")):
+            c.execute("""insert into filing (company_number, transaction_id, filed_on, type, category, description, detail)
+                         values (%s, %s, %s, 'AA', 'accounts', 'accounts-with-accounts-type-small', %s)""",
+                      (num, f"t{num}{mu}", mu, _j.dumps({"made_up_date": mu, "document": f"/document/{num}{mu}"})))
+        # a dormant year is never read
+        c.execute("""insert into filing (company_number, transaction_id, filed_on, type, category, description, detail)
+                     values ('01000002', 'dorm', '2024-12-31', 'AA', 'accounts', 'accounts-with-accounts-type-dormant', %s)""",
+                  (_j.dumps({"made_up_date": "2024-12-31", "document": "/document/d"}),))
+        q = [(r["company_number"], str(r["made_up"])) for r in pdfaccounts.queue(c, 10)]
         # each company's latest year before anyone's older ones; nothing over 5 years old
         assert {x[1] for x in q[:2]} == {"2025-03-31", "2025-12-31"}
         assert ("01000001", "2015-03-31") not in q and len(q) == 4
         assert pdfaccounts.queue_size(c) == 4
+        assert pdfaccounts.todo_for(c, "01000001") == ["2025-03-31", "2024-03-31"]
+        # a year that couldn't be read by an older reader is tried again; by this one, not
+        c.execute("""insert into pdf_read (company_number, made_up, status, version) values
+                     ('01000001', '2025-03-31', 'nothing_found', 1), ('01000002', '2025-12-31', 'nothing_found', %s)""",
+                  (pdfaccounts.VERSION,))
+        assert pdfaccounts.queue_size(c) == 3
+        assert len(pdfaccounts.failures(c)) == 2 and pdfaccounts.retry(c, "01000002") == 1
+        assert pdfaccounts.queue_size(c) == 4
+        c.rollback()
 
 
 def test_pdf_read_and_save(loaded, monkeypatch):
@@ -969,6 +998,7 @@ def test_pdf_read_and_save(loaded, monkeypatch):
     from .conftest import FIX
     loaded.commit()
     monkeypatch.setattr(chapi, "_document", lambda link, limit=0, accept="": b"%PDF")
+    monkeypatch.setattr(chapi, "_doc_formats", lambda link: ["application/pdf"])
     monkeypatch.setattr(pdfaccounts, "pdf_text", lambda pdf, ocr_pages=20: ((FIX / "pdf_accounts.txt").read_text(), "ocr"))
     with db.conn() as c:
         c.execute("delete from financial_period where company_number = '01000003'")

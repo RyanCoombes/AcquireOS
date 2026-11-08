@@ -25,16 +25,20 @@ from datetime import date
 FIELDS = ("turnover", "gross_profit", "operating_profit", "profit_loss", "net_assets", "cash", "debtors")
 
 # Labels at the start of a line (lower-cased, punctuation simplified).
+# Bump when reading improves: years that couldn't be read are tried again.
+VERSION = 2
+
+_PL = r"(profit|loss|\(loss\)\s*/\s*profit|profit\s*/\s*\(loss\)|\(profit\)\s*/\s*loss|loss\s*/\s*\(profit\))"
 LABELS: list[tuple[str, re.Pattern]] = [
-    ("turnover", re.compile(r"^(turnover|revenue|sales)\b(?!.*\bcost\b)")),
-    ("gross_profit", re.compile(r"^gross (profit|loss|\(loss\)\s*/\s*profit|profit\s*/\s*\(loss\))")),
-    ("operating_profit", re.compile(r"^(operating (profit|loss|\(loss\)\s*/\s*profit|profit\s*/\s*\(loss\))|"
-                                    r"(profit|loss) from operations|profit\s*/\s*\(loss\) from operations)")),
-    ("profit_loss", re.compile(r"^((profit|loss|\(loss\)\s*/\s*profit|profit\s*/\s*\(loss\)) for the (financial )?(year|period)|"
-                               r"(profit|loss|\(loss\)\s*/\s*profit|profit\s*/\s*\(loss\)) after tax(ation)?)")),
-    ("net_assets", re.compile(r"^(net (assets|liabilities|\(liabilities\)\s*/\s*assets|assets\s*/\s*\(liabilities\)))\b")),
-    ("equity", re.compile(r"^(total equity|shareholders'?\s*funds|total shareholders'?\s*funds)\b")),
-    ("cash", re.compile(r"^(cash at bank( and in hand)?|cash and cash equivalents|cash in hand)\b")),
+    ("turnover", re.compile(r"^(turnover|revenue|sales)\b(?!.*\b(cost|represents|is recognised|comprises)\b)")),
+    ("gross_profit", re.compile(rf"^gross {_PL}")),
+    ("operating_profit", re.compile(rf"^(operating {_PL}|{_PL} from operations)")),
+    ("profit_loss", re.compile(rf"^({_PL} for the (financial )?(year|period)|{_PL} after tax(ation)?|"
+                               rf"{_PL} on ordinary activities after tax(ation)?|"
+                               r"total comprehensive (income|\(loss\)|loss|income\s*/\s*\(loss\)) for the (financial )?(year|period))")),
+    ("net_assets", re.compile(r"^(total )?net (assets|liabilities|\(liabilities\)\s*/\s*assets|assets\s*/\s*\(liabilities\))\b")),
+    ("equity", re.compile(r"^(total equity|(total )?capital and reserves|(total )?(shareholders|members)'?\s*(funds|\(deficit\)\s*/\s*funds|funds\s*/\s*\(deficit\)|deficit))\b")),
+    ("cash", re.compile(r"^(cash at bank( and in hand)?|cash and cash equivalents|cash in hand|cash)\b(?!\s*flow)")),
     ("debtors", re.compile(r"^(debtors|trade and other receivables)\b")),
 ]
 _NUM = re.compile(r"\(?-?£?\s?\d[\d,]*\)?|(?<![\w.])-(?![\w.])")
@@ -56,13 +60,28 @@ def _value(tok: str) -> float | None:
     return -v if neg else v
 
 
+_NUMLINE = re.compile(r"^[\s£(),.\d-]+$")
+
+
+def _clean(line: str) -> str:
+    """Common OCR slips in figures: £ read as E or €, O for 0, l/I for 1,
+    full stops for thousands commas (4.123.456), stray table rules."""
+    line = line.replace("|", " ").replace("€", "£")
+    line = re.sub(r"(?<![A-Za-z])E(?=\s?\d)", "£", line)
+    line = re.sub(r"(?<=\d)[Oo](?=[\d,)])|(?<=[\d,(])[Oo](?=\d)", "0", line)
+    line = re.sub(r"(?<=\d)[lI](?=[\d,])|(?<=[\d,(])[lI](?=\d)", "1", line)
+    line = re.sub(r"\b(\d{1,3})\.(\d{3})\.(\d{3})\b", r"\1,\2,\3", line)
+    line = re.sub(r"\b(\d{1,3})\.(\d{3})\b(?!\.\d)", r"\1,\2", line)
+    return line
+
+
 def extract(text: str) -> dict:
     """{field: [current, prior]} from accounts text, plus employees and the
     checks applied. Values in pounds."""
     scale = 1000.0 if _THOUSANDS.search(text) else 1.0
     found: dict[str, list[float | None]] = {}
-    for raw in text.splitlines():
-        line = " ".join(raw.replace("’", "'").split())
+    lines = [_clean(" ".join(raw.replace("’", "'").split())) for raw in text.splitlines()]
+    for i, line in enumerate(lines):
         low = line.lower().lstrip("•*- ").strip()
         if not low:
             continue
@@ -70,8 +89,21 @@ def extract(text: str) -> dict:
             if field in found or not rx.search(low):
                 continue
             # Numbers after the label; a small leading number is a note reference.
-            toks = [m.group(0).strip() for m in _NUM.finditer(line[rx.search(low).end():])]
+            rest = line[len(line) - len(low):][rx.search(low).end():]
+            toks = [m.group(0).strip() for m in _NUM.finditer(rest)]
             toks = [t for t in toks if t and t != "£"]
+            if not toks and not re.search(r"[a-z]{3}", rest.lower()):
+                # Text taken from a table often puts the figures on the next
+                # lines: take up to four lines that are only numbers.
+                for nxt in lines[i + 1:i + 5]:
+                    if not nxt.strip():
+                        continue
+                    if not _NUMLINE.match(nxt):
+                        break
+                    toks += [m.group(0).strip() for m in _NUM.finditer(nxt)]
+                    if len([t for t in toks if not _NOTE.match(t)]) >= 2:
+                        break
+                toks = [t for t in toks if t and t != "£"]
             # A leading note reference ("Turnover 3 4,123,456 3,812,004"): a plain
             # 1-2 digit number followed by two figures, or by one larger figure.
             if len(toks) >= 2 and _NOTE.match(toks[0]) and (
@@ -156,6 +188,14 @@ def ocr(pdf: bytes, pages: int = 20) -> str:
         return "\n".join(out)
 
 
+def _sample(text: str) -> str:
+    """The lines that look like the accounts (labels with figures), for
+    checking by eye why a year couldn't be read."""
+    keep = [l for l in (" ".join(x.split()) for x in text.splitlines())
+            if l and (re.search(r"\d[\d,]{2,}", l) or re.search(r"(?i)balance sheet|profit and loss|turnover|net assets|equity|reserves", l))]
+    return "\n".join(keep)[:6000]
+
+
 def read_and_save(conn, company_number: str, made_up: str) -> dict:
     """Fetch one PDF-only set of accounts, read it, save what passes the checks
     and record the outcome in pdf_read."""
@@ -167,17 +207,32 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
         """select transaction_id, detail from filing where company_number = %s and type = 'AA'
            and detail->>'made_up_date' = %s order by filed_on desc limit 1""", (num, made_up)).fetchone()
     link = (f or {}).get("detail", {}).get("document") if f else None
-    result = {"status": "failed", "method": None, "figures": {}, "note": None}
+    result = {"status": "failed", "method": None, "figures": {}, "note": None, "sample": None}
     try:
         if not link:
             result["note"] = "no document link for these accounts"
         else:
-            pdf = chapi._document(link, limit=25_000_000)
-            if not pdf:
+            data_vals = {}
+            if "application/xhtml+xml" in chapi._doc_formats(link):
+                # Filed as data after all (a bulk month that didn't load): read it exactly.
+                from .importers.accounts import parse
+                raw = chapi._document(link, limit=20_000_000, accept="application/xhtml+xml")
+                data_vals = parse(raw) if raw else {}
+            if data_vals:
+                for pe, vals in data_vals.items():
+                    _upsert(conn, num, pe, vals, f"api:{f['transaction_id']}", balance_date=date.fromisoformat(made_up))
+                result.update(status="done", method="data", figures={str(k): "data" for k in data_vals})
+                pdf = None
+            else:
+                pdf = chapi._document(link, limit=25_000_000)
+            if result["status"] == "done":
+                pass
+            elif not pdf:
                 result["note"] = "Companies House did not return the document"
             else:
                 text, method = pdf_text(pdf)
                 result["method"] = method
+                result["sample"] = _sample(text)
                 if not text.strip():
                     result["note"] = "no text could be read" + ("" if ocr_available() else " (OCR is not installed)")
                 else:
@@ -208,11 +263,13 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
     import json
 
     conn.execute(
-        """insert into pdf_read (company_number, made_up, status, method, figures, note)
-           values (%s, %s, %s, %s, %s, %s)
+        """insert into pdf_read (company_number, made_up, status, method, figures, note, sample, version)
+           values (%s, %s, %s, %s, %s, %s, %s, %s)
            on conflict (company_number, made_up) do update set status = excluded.status, method = excluded.method,
-             figures = excluded.figures, note = excluded.note, read_at = now()""",
-        (num, made_up, result["status"], result["method"], json.dumps(result["figures"]), result["note"]))
+             figures = excluded.figures, note = excluded.note, sample = excluded.sample, version = excluded.version,
+             tries = pdf_read.tries + 1, read_at = now()""",
+        (num, made_up, result["status"], result["method"], json.dumps(result["figures"]), result["note"],
+         result["sample"], VERSION))
     if result["status"] == "done":
         from . import scoring
         from .importers.companies import refresh_estimates
@@ -226,32 +283,89 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
     return result
 
 
+# Years to read: accounts filings within five years (from each company's
+# filing history, fetched by the sync or on opening) with no figures held,
+# not dormant, and not read yet (or read by an older version and not found).
+TODO_SQL = """
+with aa as (
+    select distinct on (fl.company_number, (fl.detail->>'made_up_date')::date)
+           fl.company_number, (fl.detail->>'made_up_date')::date as made_up
+    from filing fl
+    where fl.type = 'AA' and fl.detail ? 'document' and fl.detail->>'made_up_date' ~ '^\\d{4}-\\d{2}-\\d{2}$'
+      and coalesce(fl.description, '') not like '%%dormant%%'
+      /*only*/
+    union
+    select f.company_number, d.value::date
+    from ch_fetch f cross join lateral jsonb_array_elements_text(f.accounts_pdf) d
+    where d.value ~ '^\\d{4}-\\d{2}-\\d{2}$' /*only_f*/
+)
+select aa.company_number, aa.made_up,
+       row_number() over (partition by aa.company_number order by aa.made_up desc) as nth
+from aa
+where aa.made_up > current_date - interval '5 years 6 months'
+  and exists (select 1 from filing fl where fl.company_number = aa.company_number and fl.type = 'AA'
+              and fl.detail->>'made_up_date' = aa.made_up::text and fl.detail ? 'document')
+  and not exists (select 1 from financial_period fp where fp.company_number = aa.company_number
+                  and not fp.period_inferred and abs(fp.period_end - aa.made_up) <= 45
+                  and coalesce(fp.source, '') not like 'pdf:%%')
+  and not exists (select 1 from pdf_read r where r.company_number = aa.company_number and r.made_up = aa.made_up
+                  and (r.status = 'done' or r.version >= %(version)s or r.tries >= 3))
+"""
+
 QUEUE_SQL = """
--- Newest year first across all companies (every company's latest PDF-only
+-- Newest year first across all companies (every company's latest missing
 -- accounts before anyone's second-latest), back at most 5 years; within a
 -- year, your pipeline first, then the best-scoring targets.
-with todo as (
-    select f.company_number, d.value::date as made_up,
-           row_number() over (partition by f.company_number order by d.value::date desc) as nth
-    from ch_fetch f cross join lateral jsonb_array_elements_text(f.accounts_pdf) d
-    where d.value::date > current_date - interval '5 years 6 months'
-      and not exists (select 1 from pdf_read r where r.company_number = f.company_number and r.made_up = d.value::date)
-)
+with todo as (""" + TODO_SQL + """)
 select t.company_number, t.made_up from todo t
 order by t.nth,
          exists (select 1 from user_company uc where uc.company_number = t.company_number and uc.user_id = 1
                  and uc.status not in ('new', 'passed', 'rejected')) desc,
          (select max(score) from company_best cb where cb.company_number = t.company_number) desc nulls last,
          t.made_up desc
-limit %s"""
+limit %(limit)s"""
+
+
+def todo_for(conn, company_number: str) -> list[str]:
+    """One company's years waiting to be read, newest first."""
+    q = TODO_SQL.replace("/*only*/", "and fl.company_number = %(num)s").replace("/*only_f*/", "and f.company_number = %(num)s")
+    return [str(r["made_up"]) for r in conn.execute(q + " order by made_up desc",
+                                                   {"num": company_number, "version": VERSION})]
+
+
+def queue(conn, limit: int = 5) -> list[dict]:
+    return conn.execute(QUEUE_SQL, {"limit": limit, "version": VERSION}).fetchall()
 
 
 def queue_size(conn) -> int:
+    return conn.execute("select count(*) as n from (" + TODO_SQL + ") t",
+                        {"version": VERSION}).fetchone()["n"]
+
+
+def failures(conn, limit: int = 200) -> list[dict]:
+    """Years that couldn't be read, newest first, with why and what was read."""
     return conn.execute(
-        """select count(*) as n from ch_fetch f cross join lateral jsonb_array_elements_text(f.accounts_pdf) d
-           where d.value::date > current_date - interval '5 years 6 months'
-             and not exists (select 1 from pdf_read r where r.company_number = f.company_number
-                             and r.made_up = d.value::date)""").fetchone()["n"]
+        """select r.company_number, c.name, r.made_up, r.status, r.method, r.note, r.read_at, r.tries,
+                  left(r.sample, 1500) as sample
+           from pdf_read r join company c using (company_number)
+           where r.status <> 'done' order by r.read_at desc limit %s""", (limit,)).fetchall()
+
+
+def retry(conn, company_number: str | None = None) -> int:
+    """Try years that couldn't be read again (one company, or all)."""
+    return conn.execute(
+        "delete from pdf_read where status <> 'done'" + (" and company_number = %s" if company_number else ""),
+        (company_number,) if company_number else ()).rowcount
+
+
+def read_company(company_number: str) -> None:
+    """Read one company's waiting years now (used by Refresh on the company page)."""
+    from . import db
+
+    with db.conn(dedicated=True) as c:
+        for mu in todo_for(c, company_number):
+            read_and_save(c, company_number, mu)
+            c.commit()
 
 
 def run_forever():
@@ -277,7 +391,7 @@ def run_forever():
                         or chsync.get_setting(c, "pdf_paused", False):
                     time.sleep(300)
                     continue
-                rows = c.execute(QUEUE_SQL, (5,)).fetchall()
+                rows = queue(c, 5)
                 if not rows:
                     time.sleep(900)
                     continue
@@ -293,6 +407,7 @@ def run_forever():
 def status(conn) -> dict:
     r = conn.execute("""select count(*) filter (where status = 'done') as done,
                                count(*) filter (where status = 'done' and method = 'ocr') as by_ocr,
+                               count(*) filter (where status = 'done' and method = 'data') as by_data,
                                count(*) filter (where status = 'nothing_found') as nothing_found,
                                count(*) filter (where status = 'failed') as failed,
                                max(read_at) as last_at from pdf_read""").fetchone()
