@@ -72,6 +72,20 @@ export default function Company() {
     return () => clearTimeout(t);
   }, [data, pollUntil]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Which section is in view, for the section bar.
+  const [inView, setInView] = useState("overview");
+  useEffect(() => {
+    if (!data) return;
+    const ids = ["overview", "ownership", "notes", "financials", "value", "charges", "filings", "group", "score", "research", "deal", "changes"];
+    const els = ids.map((id) => document.getElementById(id)).filter(Boolean) as HTMLElement[];
+    const io = new IntersectionObserver((entries) => {
+      const vis = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+      if (vis[0]) setInView(vis[0].target.id);
+    }, { rootMargin: "-130px 0px -55% 0px" });
+    els.forEach((e) => io.observe(e));
+    return () => io.disconnect();
+  }, [data ? num : null]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (error) return <ErrorLine error={error} />;
   if (!data) return <div className="empty">Loading…</div>;
   const { company: c, financials: fin, estimate: est, ownership: own } = data;
@@ -83,6 +97,17 @@ export default function Company() {
   const latest = [...fin].reverse().find((f) => !f.period_inferred);
   const age = ageFrom(own?.oldest_birth_year);
   const prof = ((data.ch?.fetched as any)?.profile ?? {}) as any;
+  const val = data.valuation;
+  // Latest filed profit: EBITDA where depreciation is filed for the same year, else operating profit.
+  const profit = (() => {
+    const f = [...fin].reverse().find((x) => !x.period_inferred && x.operating_profit != null);
+    if (!f) return null;
+    const n = (v: any) => (v == null ? null : Number(v));
+    const da = n(f.depreciation_amortisation) ?? (n(f.depreciation) != null || n(f.amortisation) != null ? (n(f.depreciation) ?? 0) + (n(f.amortisation) ?? 0) : null);
+    return { v: Number(f.operating_profit) + (da ?? 0), ebitda: da != null && da > 0, at: f.period_end };
+  })();
+  const staffYears = fin.filter((x) => !x.period_inferred && x.employees != null);
+  const staffChange = staffYears.length >= 2 ? { d: Number(staffYears[staffYears.length - 1].employees) - Number(staffYears[staffYears.length - 2].employees) } : null;
   const activity = [...fin].reverse().find((f) => f.principal_activity);
   const ard = prof.accounts?.accounting_reference_date;
   const yearEnd = ard?.day && ard?.month ? new Date(2000, Number(ard.month) - 1, Number(ard.day)).toLocaleDateString("en-GB", { day: "numeric", month: "long" }) : null;
@@ -139,17 +164,40 @@ export default function Company() {
         </div>
       </div>
 
-      <div className="factline stats">
-        <div><b><Score value={score && !score.excluded ? score.score : null} coverage={score?.coverage} /></b>
-          <span>{score?.excluded ? `Outside ${shownName}` : `Score in ${shownName}`}{score && !score.excluded ? ` · ${Math.round(Number(score.coverage))}% had data` : ""}</span></div>
-        <div><b>{int(latest?.employees)}</b><span>Staff{latest ? ` · ${date(latest.period_end)}` : ""}</span></div>
-        <div><b>{est ? range(est.revenue_low, est.revenue_high) : "—"}</b><span>Revenue {est ? <RevenueTag basis={est.basis} method={est.method} long /> : "· not filed or estimated"}</span></div>
-        <div><b>{years(c.incorporation_date)}</b><span>Years trading</span></div>
-        <div><b>{age ?? "—"}</b><span>Oldest owner's age</span></div>
-        <div><b>{money(latest?.net_assets ?? null)}</b><span>Net assets</span></div>
+      {/* The six things to screen on: fit, size, profit, price, people, succession. */}
+      <div className="cokpis">
+        <div className={`cokpi ${score?.excluded ? "bad" : ""}`}>
+          <span className="k">Fit · {shownName}</span>
+          {score?.excluded ? <b>Outside</b> : <b><Score value={score ? score.score : null} coverage={score?.coverage} /></b>}
+          <span className="s">{score?.excluded ? score.exclusion : score ? `${Math.round(Number(score.coverage))}% of criteria had data` : "Not scored yet"}</span>
+        </div>
+        <div className="cokpi">
+          <span className="k">Revenue</span>
+          <b>{est ? range(est.revenue_low, est.revenue_high) : "—"}</b>
+          <span className="s">{est ? <RevenueTag basis={est.basis} method={est.method} long /> : "Not filed or estimated"}</span>
+        </div>
+        <div className={`cokpi ${profit && profit.v < 0 ? "bad" : ""}`}>
+          <span className="k">{profit?.ebitda ? "EBITDA" : "Operating profit"}</span>
+          <b>{profit ? money(profit.v) : "—"}</b>
+          <span className="s">{profit ? `Filed · ${date(profit.at)}${profit.ebitda ? " · incl. depreciation" : ""}` : "Not in the filed accounts"}</span>
+        </div>
+        <div className="cokpi">
+          <span className="k">Indicative value</span>
+          <b>{val?.value_low ? range(val.value_low, val.value_high) : "—"}</b>
+          <span className="s">{val?.value_low ? (val.basis === "filed" ? "From filed profit" : val.basis === "filed_margin" ? "From its own margin" : "From estimates") : val?.basis === "loss" ? "Loss-making: no earnings value" : "Not enough figures"}</span>
+        </div>
+        <div className="cokpi">
+          <span className="k">Staff</span>
+          <b>{int(latest?.employees)}</b>
+          <span className="s">{staffChange ? <span className={staffChange.d >= 0 ? "pos" : "neg"}>{staffChange.d >= 0 ? "+" : ""}{staffChange.d} on the year before</span> : latest ? `At ${date(latest.period_end)}` : "Not filed"}</span>
+        </div>
+        <div className="cokpi">
+          <span className="k">Oldest owner</span>
+          <b>{age ?? "—"}</b>
+          <span className="s">{own && own.ownership_type !== "unknown" ? OWNERSHIP[own.ownership_type] : "Owners not traced"}</span>
+        </div>
       </div>
 
-      {score?.excluded && <div className="callout red"><b>Outside {shownName}:</b> {score.exclusion}</div>}
       {(data.ch?.disqualified ?? []).length > 0 && (
         <div className="callout red"><b>Disqualified director:</b>{" "}
           {[...new Set(data.ch!.disqualified!.map((d) => d.name))].join(", ")}. Matched on name and month and year of birth: check the
@@ -175,7 +223,7 @@ export default function Company() {
             {[["overview", "Overview"], ["ownership", "Owners & directors"], ["notes", "Notes"], ["financials", "Financials"],
               ["value", "Value"], ["charges", "Charges"], ["filings", "Filings"], ["group", "Group"], ["score", "Score"],
               ["research", "Research"], ["deal", "Deal"], ["changes", "History"]].map(([id, l]) => (
-              <a key={id} href={`#${id}`} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{l}</a>
+              <a key={id} href={`#${id}`} className={inView === id ? "on" : ""} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{l}</a>
             ))}
           </nav>
         <div className="flow2">
