@@ -1134,3 +1134,16 @@ def test_compare_with_similar_companies(loaded):
         # too few similar companies in the test data to rank against: no percentile is made up
         assert all(m["pct"] is None for m in d["metrics"])
         assert cl.get("/api/companies/NOPE0000/compare").status_code == 404
+
+
+def test_old_own_margin_does_not_cap_the_value():
+    from acquireos import valuation
+
+    a = valuation.assumptions(None)
+    base = {"revenue_low": 3_400_000, "revenue_high": 4_100_000, "revenue_basis": "estimated", "filed_margin": 1.9}
+    recent = valuation.value({**base, "filed_margin_period": "2024-09-30", "latest_period": "2025-09-30"}, a)
+    old = valuation.value({**base, "filed_margin_period": "2023-09-30", "latest_period": "2025-09-30"}, a)
+    # same low end (the company's own margin), but an old year no longer pins the top end near it
+    assert recent["ebitda_low"] == old["ebitda_low"]
+    assert old["ebitda_high"] == 4_100_000 * a["margin_high"] / 100 > recent["ebitda_high"]
+    assert "older than its latest" in old["steps"][0]

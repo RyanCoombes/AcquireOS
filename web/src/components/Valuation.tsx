@@ -30,7 +30,9 @@ export default function Valuation({ data, num, onSaved }: { data: CompanyDetail;
   const fm = v.filed_margin ?? null;
   const ownMargin = fm !== null && !marginTouched && v.override?.margin_low == null && v.override?.margin_high == null;
   const mLo = ownMargin ? Math.max(Number(fm), 0) : a.margin_low;
-  const mHi = ownMargin ? Math.max(mLo, (mLo + a.margin_low) / 2) : a.margin_high;
+  // An own margin from accounts 2+ years before the latest: the upper end uses the buy box's margin.
+  const oldMargin = !!(v as any).filed_margin_old;
+  const mHi = ownMargin ? Math.max(mLo, oldMargin ? a.margin_high : (mLo + a.margin_low) / 2) : a.margin_high;
   const live = useMemo(() => {
     if (op !== null && op > 0) return { eLo: op, eHi: op, basis: "filed" as const };
     if (op !== null && op <= 0) return null;  // loss-making as filed: no earnings-based value
@@ -70,7 +72,7 @@ export default function Valuation({ data, num, onSaved }: { data: CompanyDetail;
             {v.cash ? <div><b>{money(v.cash)}</b><span>Cash on balance sheet, not included</span></div> : null}
           </div>
           <p className="val-how">
-            {live.basis === "filed" ? <>Filed operating profit {money(op)}</> : <>{est?.basis === "filed" ? "Filed" : "Estimated"} revenue × {round1(mLo)}–{round1(mHi)}% margin{live.basis === "filed_margin" ? <> (its own, from {String(v.filed_margin_period ?? "").slice(0, 4)})</> : " (your buy box)"}</>}
+            {live.basis === "filed" ? <>Filed operating profit {money(op)}</> : <>{est?.basis === "filed" ? "Filed" : "Estimated"} revenue × {round1(mLo)}–{round1(mHi)}% margin{live.basis === "filed_margin" ? <> (its own {round1(Number(fm))}% from {String(v.filed_margin_period ?? "").slice(0, 4)}{oldMargin ? <>, <b>an old year</b>: up to your buy box's {a.margin_high}%</> : ""})</> : " (your buy box)"}</>}
             {" "}× {a.multiple_low}–{a.multiple_high} times. Debt not netted off.
             <Hint text={live.basis === "filed" ? "Depreciation is added back where it's filed (EBITDA). On a cash-free, debt-free deal, debt is repaid from the seller's proceeds, so it isn't taken off the value here."
               : `${live.basis === "filed_margin" ? `The margin is the company's own: ${round1(Number(fm))}% in its latest accounts with profit; the upper end allows some improvement. ` : fm === null ? "No profit has ever been filed, so your buy box's margin is used. " : ""}On a cash-free, debt-free deal, debt is repaid from the seller's proceeds.`} />

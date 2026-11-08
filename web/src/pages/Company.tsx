@@ -175,7 +175,8 @@ export default function Company() {
         <div className="cokpi">
           <span className="k">Indicative value</span>
           <b>{val?.value_low ? range(val.value_low, val.value_high) : "—"}</b>
-          <span className="s">{val?.value_low ? (val.basis === "filed" ? "From filed profit" : val.basis === "filed_margin" ? "From its own margin" : "From estimates") : val?.basis === "loss" ? "Loss-making: no earnings value" : "Not enough figures"}</span>
+          <span className="s">{val?.value_low ? (val.basis === "filed" ? "From filed profit" : val.basis === "filed_margin"
+            ? `From its ${String(val.filed_margin_period ?? "").slice(0, 4)} margin${(val as any).filed_margin_old ? " (old)" : ""}` : "From estimates") : val?.basis === "loss" ? "Loss-making: no earnings value" : "Not enough figures"}</span>
         </div>
         <div className="cokpi">
           <span className="k">Staff</span>

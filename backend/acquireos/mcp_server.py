@@ -265,7 +265,9 @@ def audit_queue(check: str = "all", limit: int = 20, min_score: float = 0, pipel
     "Save researched facts about a company. source_url is required: the page where you verified it "
     "('manual' only if the user told you). business_type: " + "|".join(enrich.BUSINESS_TYPES) +
     ". recurring_revenue and field_service: yes|partly|no|unknown. confidence: high|medium|low. "
-    "summary may use short paragraphs and '- ' bullet lines. "
+    "summary may use short paragraphs and '- ' bullet lines; keep it to what the business does, its customers and "
+    "people. Never put accounts figures (turnover, profit, staff, assets) only in the summary: save each year you "
+    "read with save_financials, so they are used for scoring, the charts and the valuation. "
     "locations: every office or site found, as [{name, address, postcode, kind}] with kind "
     + "|".join(enrich.LOCATION_KINDS) + " (replaces the saved list, so send all of them). "
     "facts: other key facts, each with its own source, as [{label, value, source_url}] e.g. "

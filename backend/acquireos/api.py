@@ -656,7 +656,7 @@ def company(num: str, bb: str | None = None):
         own_margin = not any(override.get(k) not in (None, "") for k in ("margin_low", "margin_high"))
         val = {**valuation.value(facts, a, use_filed_margin=own_margin), "assumptions": a, "defaults": valuation.assumptions(bb["criteria"]),
                "override": override, "cash": facts.get("cash"), "filed_margin": facts.get("filed_margin"),
-               "filed_margin_period": facts.get("filed_margin_period")}
+               "filed_margin_period": facts.get("filed_margin_period"), "filed_margin_old": valuation.margin_is_old(facts)}
         geo = c.execute("select lat, lon, precision from postcode_geo where postcode = %s and lat is not null",
                         (row["postcode"],)).fetchone() if row["postcode"] else None
         sic_known = {r["code"]: r["description"] for r in c.execute(

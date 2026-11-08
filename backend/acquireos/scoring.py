@@ -192,7 +192,7 @@ ACCOUNT_TYPES = {
 
 UNKNOWN_SHARE = 0.5
 # Bump when the scoring rules change, so every company is scored again.
-SCORING_VERSION = 3  # 3: EBITDA adds back filed depreciation and amortisation
+SCORING_VERSION = 4  # 3: EBITDA adds back filed D&A; 4: an old own margin no longer caps the value range
 
 
 def score_company(c: dict, criteria: dict, today: date | None = None, scope=None,
@@ -397,7 +397,7 @@ with research_text as (
 )
 select c.company_number, c.name, c.status, c.review_tier, c.incorporation_date, c.sic_codes,
        c.nature_of_business, c.region, c.address_flag, c.postcode, c.accounts_category,
-       l.employees, l.net_assets, l.operating_profit, l.cash, l.net_assets_prev, l.da, l.bank_debt,
+       l.employees, l.net_assets, l.operating_profit, l.cash, l.net_assets_prev, l.da, l.bank_debt, l.period_end as latest_period,
        e.revenue_low, e.revenue_high, e.basis as revenue_basis,
        o.ownership_type, o.flags as ownership_flags, o.oldest_birth_year,
        concat_ws(' ', rt.txt, en.summary, en.business_type) as research_text, en.field_service,

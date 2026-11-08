@@ -63,13 +63,18 @@ def value(f: dict, a: dict, use_filed_margin: bool = True) -> dict:
             # up to halfway to the buy box's low margin.
             yr = str(f.get("filed_margin_period") or "")[:4]
             m_lo = max(float(fm), 0.0)
-            m_hi = max(m_lo, (m_lo + a["margin_low"]) / 2)
+            stale = margin_is_old(f)
+            # A margin from accounts two or more years before the latest says little
+            # about now (one bad year can sink it): the range runs up to the buy box's
+            # upper margin instead of halfway to its lower one.
+            m_hi = max(m_lo, a["margin_high"] if stale else (m_lo + a["margin_low"]) / 2)
             e_lo, e_hi = r_lo * m_lo / 100, r_hi * m_hi / 100
             basis = "filed_margin"
             steps.append(
                 f"Profit: {rb} of {_m(r_lo)}–{_m(r_hi)} × {m_lo:g}–{m_hi:g}% margin = {_m(e_lo)}–{_m(e_hi)}. "
                 f"The margin is the company's own: {float(fm):g}% in its {yr or 'last'} accounts, the latest that "
-                f"show profit; the upper end allows for some improvement since.")
+                + ("show profit. Those accounts are two or more years older than its latest, so the upper end uses "
+                   "your buy box's margin." if stale else "show profit; the upper end allows for some improvement since."))
         else:
             e_lo, e_hi = r_lo * a["margin_low"] / 100, r_hi * a["margin_high"] / 100
             basis = "estimated"
@@ -88,6 +93,19 @@ def value(f: dict, a: dict, use_filed_margin: bool = True) -> dict:
         steps.append(f"Bank loans and overdrafts: {_m(f['bank_debt'])}. Not taken off above; on a cash-free, debt-free deal "
                      "they are repaid from the price, so the seller receives less.")
     return {"ebitda_low": e_lo, "ebitda_high": e_hi, "value_low": v_lo, "value_high": v_hi, "basis": basis, "steps": steps}
+
+
+def margin_is_old(f: dict) -> bool:
+    """The company's own margin comes from accounts 2+ years before its latest."""
+    from datetime import date
+
+    a, b = f.get("filed_margin_period"), f.get("latest_period")
+    try:
+        a = a if isinstance(a, date) else date.fromisoformat(str(a)[:10])
+        b = b if isinstance(b, date) else date.fromisoformat(str(b)[:10])
+    except (TypeError, ValueError):
+        return False
+    return (b - a).days >= 700
 
 
 def _m(v) -> str:
