@@ -89,7 +89,7 @@ _SPLIT = {"Creditors": {"WithinOneYear": "creditors_within", "AfterOneYear": "cr
 # Text kept as well as figures.
 TEXT_CONCEPTS = {"principal_activity": ["DescriptionPrincipalActivities", "PrincipalActivities", "DescriptionPrincipalActivity"]}
 # Bumped when new figures are read, so months read earlier can be read again.
-LOADER_VERSION = 3
+LOADER_VERSION = 4  # 4: a year's own accounts win over later comparatives
 _LOCAL_TO_FIELD = {local: (field, rank) for field, names in CONCEPTS.items() for rank, local in enumerate(names)}
 _WANTED_LOCALS = set(_LOCAL_TO_FIELD) | set(_SPLIT)
 
@@ -386,6 +386,40 @@ TEXT_FIELDS = list(TEXT_CONCEPTS.keys())
 ALL_FIELDS = FIELDS + TEXT_FIELDS
 
 
+# Which figures win for a year:
+# - a year's own accounts (balance sheet date within 45 days of the year end) are
+#   always applied, even when a later filing's comparative column got there first;
+# - a later filing's comparative column never blanks or zeroes a figure the year
+#   already has (small companies' comparatives often have no P&L, and "-" reads as 0);
+# - a real, non-zero restated comparative still replaces a filed figure (restatements
+#   correct errors), but never figures saved by you or Claude (source manual / pdf:claude).
+_OWN_NEW = "(excluded.source_balance_date - excluded.period_end) <= 45"
+_OWN_OLD = "(fp.source_balance_date is not null and (fp.source_balance_date - fp.period_end) <= 45 and not fp.period_inferred)"
+_KEEP = f"(not {_OWN_NEW} and {_OWN_OLD})"   # a comparative arriving on top of a year's own figures
+_SAVED = "(coalesce(fp.source, '') in ('manual', 'pdf:claude') or coalesce(fp.source, '') like 'manual%%')"
+_SAVING = "(coalesce(excluded.source, '') in ('manual', 'pdf:claude'))"   # you or Claude saving figures now: always applied
+# a year's own (older) accounts arriving after a newer filing's comparative: they fill gaps, but don't undo a restatement
+_FILL = f"({_OWN_NEW} and not {_OWN_OLD} and fp.source_balance_date > excluded.source_balance_date and not {_SAVING})"
+
+
+def _merge_sql(cols) -> str:
+    """The SET and WHERE of the upsert into financial_period, by the rule above."""
+    def one(c):
+        blank = f"excluded.{c} is null" if c in TEXT_FIELDS else f"(excluded.{c} is null or excluded.{c} = 0)"
+        fblank = f"fp.{c} is null" if c in TEXT_FIELDS else f"(fp.{c} is null or fp.{c} = 0)"
+        return (f"{c} = case when {_SAVING} then coalesce(excluded.{c}, fp.{c}) "
+                f"when {_KEEP} and ({_SAVED} or {blank}) then coalesce(fp.{c}, excluded.{c}) "
+                f"when {_FILL} then case when {fblank} then coalesce(excluded.{c}, fp.{c}) else fp.{c} end "
+                f"else coalesce(excluded.{c}, fp.{c}) end")
+    sets = ", ".join(one(c) for c in cols)
+    return f"""period_inferred = false,
+                source = case when ({_KEEP} or {_FILL}) and not {_SAVING} then fp.source else excluded.source end,
+                source_balance_date = case when ({_KEEP} or {_FILL}) and not {_SAVING} then fp.source_balance_date else excluded.source_balance_date end,
+                {sets}
+            where fp.period_inferred or fp.source_balance_date is null or {_OWN_NEW}
+               or {_KEEP} or excluded.source_balance_date >= fp.source_balance_date"""
+
+
 def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_changes: bool = True,
         workers: int | None = None, batch: int = 5000, progress=None) -> dict:
     """Import filed accounts for every company in the database.
@@ -441,12 +475,9 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
                 source_balance_date, {', '.join(ALL_FIELDS)})
             select distinct on (company_number, period_end) company_number, period_end, false, source, balance_date,
                    {', '.join(ALL_FIELDS)}
-            from acc_stage order by company_number, period_end, balance_date desc, source desc
+            from acc_stage order by company_number, period_end, (balance_date - period_end) <= 45 desc, balance_date desc, source desc
             on conflict (company_number, period_end) do update set
-                period_inferred = false, source = excluded.source, source_balance_date = excluded.source_balance_date,
-                {', '.join(f"{f} = coalesce(excluded.{f}, fp.{f})" for f in ALL_FIELDS)}
-            where fp.period_inferred or fp.source_balance_date is null
-               or excluded.source_balance_date >= fp.source_balance_date""").rowcount
+                {_merge_sql(ALL_FIELDS)}""").rowcount
         conn.execute("insert into acc_touched select distinct company_number from acc_stage on conflict do nothing")
         conn.execute("""
             update company c set last_accounts_date = greatest(c.last_accounts_date, x.d)
@@ -556,10 +587,7 @@ def _upsert(conn, num, period_end, vals, source, balance_date=None):
                 {', '.join(cols)})
             values (%(num)s, %(pe)s, false, %(src)s, %(bd)s, {', '.join(f'%({c})s' for c in cols)})
             on conflict (company_number, period_end) do update set
-              period_inferred = false, source = excluded.source, source_balance_date = excluded.source_balance_date,
-              {', '.join(f'{c} = excluded.{c}' for c in cols)}
-            where fp.period_inferred or fp.source_balance_date is null
-               or excluded.source_balance_date >= fp.source_balance_date""",
+              {_merge_sql(cols)}""",
         params,
     )
 

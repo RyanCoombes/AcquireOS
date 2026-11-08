@@ -213,17 +213,29 @@ def save_financials(company_number: str, period_end: str, source_url: str, turno
         if not c.execute("select 1 from company where company_number = %s", (num,)).fetchone():
             raise ValueError(f"Company {num} is not in AcquireOS")
         _upsert(c, num, pe, vals, "pdf:claude", balance_date=pe)
+        # Check it stuck: read the year back and say which figures (if any) aren't as given.
+        back = c.execute("""select * from financial_period where company_number = %s and period_end = %s""", (num, pe)).fetchone() or {}
+        def same(a, b):
+            try:
+                return abs(float(a) - float(b)) < 0.5
+            except (TypeError, ValueError):
+                return a == b
+        not_kept = {k: {"sent": v, "stored": back.get(k)} for k, v in vals.items() if not same(back.get(k), v)}
         c.execute("""insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)
                      values (%s, 'fact', %s, %s, 'Accounts PDF', 'claude (mcp)', 'high')""",
                   (num, f"Figures read from the accounts to {period_end}: " +
-                   ", ".join(f"{k.replace('_', ' ')} {v:,.0f}" for k, v in vals.items()), source_url))
+                   ", ".join(f"{k.replace('_', ' ')} {v:,.0f}" if isinstance(v, (int, float)) else f"{k.replace('_', ' ')}: {v}"
+                             for k, v in vals.items()), source_url))
         c.execute("create temp table if not exists api_touched (company_number text)")
         c.execute("delete from api_touched")
         c.execute("insert into api_touched values (%s)", (num,))
         refresh_estimates(c, from_table="api_touched")
         scoring.refresh_latest(c, [num])
         scoring.rescore(c, company_number=num)
-    return _j({"saved": sorted(vals), "period_end": period_end})
+    if not_kept:
+        return _j({"saved": sorted(k for k in vals if k not in not_kept), "period_end": period_end,
+                   "NOT_SAVED": not_kept, "warning": "Some figures did not stick: they are not what you sent. Tell the user."})
+    return _j({"saved": sorted(vals), "period_end": period_end, "checked": "read back and matches"})
 
 
 @server.tool(description=(

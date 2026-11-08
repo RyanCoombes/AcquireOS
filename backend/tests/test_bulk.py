@@ -140,3 +140,36 @@ def test_accounts_debt_working_capital_and_activity():
     assert r["depreciation"] == 15_000 and r["stock"] == 30_000 and r["retained_earnings"] == -20_000
     assert r["principal_activity"] == "The provision of IT managed services." and r["net_assets"] == 500_000
 
+
+
+def test_a_years_own_figures_beat_later_comparatives():
+    """FY24 saved from its own accounts must survive the FY25 filing's comparative
+    column (blank there, or a '-' read as 0), and a year's own accounts fill any blanks a
+    later comparative left (restated figures still win)."""
+    from datetime import date
+
+    from acquireos import db
+    from acquireos.importers.accounts import _upsert
+
+    with db.conn() as c:
+        num = "01999002"
+        c.execute("insert into company (company_number, name) values (%s, 'TEST LTD') on conflict do nothing", (num,))
+        c.execute("delete from financial_period where company_number = %s", (num,))
+        fy24 = date(2024, 9, 30)
+        _upsert(c, num, fy24, {"turnover": 4_970_000, "operating_profit": 492_000}, "pdf:text", balance_date=fy24)
+        # the FY25 accounts: comparative column with no P&L, a dash (0) for operating profit, and net assets
+        _upsert(c, num, fy24, {"operating_profit": 0, "net_assets": 1_900_000}, "accounts:fy25", balance_date=date(2025, 9, 30))
+        r = c.execute("select turnover, operating_profit, net_assets, source from financial_period where company_number = %s and period_end = %s",
+                      (num, fy24)).fetchone()
+        assert float(r["turnover"]) == 4_970_000 and float(r["operating_profit"]) == 492_000   # kept
+        assert float(r["net_assets"]) == 1_900_000 and r["source"] == "pdf:text"             # gap filled, own source kept
+        # the other way round: comparative first, then the year's own accounts
+        fy23 = date(2023, 9, 30)
+        _upsert(c, num, fy23, {"turnover": 0, "operating_profit": 300_000, "net_assets": 5}, "accounts:fy24", balance_date=fy24)
+        _upsert(c, num, fy23, {"turnover": 4_110_000, "operating_profit": 250_000}, "accounts:fy23", balance_date=fy23)
+        r = c.execute("select turnover, operating_profit, net_assets from financial_period where company_number = %s and period_end = %s",
+                      (num, fy23)).fetchone()
+        assert float(r["turnover"]) == 4_110_000          # blank comparative filled from the year's own accounts
+        assert float(r["operating_profit"]) == 300_000    # a later restated figure still wins
+        assert float(r["net_assets"]) == 5
+        c.rollback()

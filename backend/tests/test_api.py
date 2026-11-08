@@ -1147,3 +1147,33 @@ def test_old_own_margin_does_not_cap_the_value():
     assert recent["ebitda_low"] == old["ebitda_low"]
     assert old["ebitda_high"] == 4_100_000 * a["margin_high"] / 100 > recent["ebitda_high"]
     assert "older than its latest" in old["steps"][0]
+
+
+def test_pdf_reader_never_replaces_figures_and_rejects_tiny_ones(loaded, monkeypatch):
+    import json as _j
+    from datetime import date
+
+    from acquireos import chapi, pdfaccounts
+    from acquireos.importers.accounts import _upsert
+
+    # a "8" gross profit beside £34m turnover is a misread
+    f = pdfaccounts.extract("Turnover 34,000,000 31,000,000\nGross profit 8 9\n")
+    assert "gross_profit" not in f["figures"] and any("too small" in d for d in f["dropped"])
+    loaded.commit()
+    monkeypatch.setattr(chapi, "_document", lambda link, limit=0, accept="": b"%PDF")
+    monkeypatch.setattr(chapi, "_doc_formats", lambda link: ["application/pdf"])
+    monkeypatch.setattr(pdfaccounts, "pdf_text", lambda pdf, ocr_pages=20: ("Turnover 1,000,000 900,000\nGross profit 300,000 250,000\n", "ocr"))
+    with db.conn() as c:
+        num = "01000003"
+        c.execute("delete from financial_period where company_number = %s", (num,))
+        fy = date(2024, 9, 30)
+        _upsert(c, num, fy, {"turnover": 4_970_000}, "pdf:claude", balance_date=fy)   # saved by Claude
+        c.execute("""insert into filing (company_number, transaction_id, filed_on, type, category, description, detail)
+                     values (%s, 'aa24', '2025-01-01', 'AA', 'accounts', 'accounts', %s) on conflict do nothing""",
+                  (num, _j.dumps({"made_up_date": "2024-09-30", "document": "/document/zz"})))
+        r = pdfaccounts.read_and_save(c, num, "2024-09-30")
+        row = c.execute("select turnover, gross_profit from financial_period where company_number = %s and period_end = %s", (num, fy)).fetchone()
+        assert float(row["turnover"]) == 4_970_000          # not replaced by the reading
+        assert float(row["gross_profit"]) == 300_000         # the gap is filled
+        assert "already held" in (r["note"] or "")
+        c.rollback()

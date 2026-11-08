@@ -27,7 +27,7 @@ FIELDS = ("turnover", "gross_profit", "operating_profit", "profit_loss", "net_as
 
 # Labels at the start of a line (lower-cased, punctuation simplified).
 # Bump when reading improves: years that couldn't be read are tried again.
-VERSION = 4
+VERSION = 5
 
 _PL = r"(profit|loss|\(loss\)\s*/\s*profit|profit\s*/\s*\(loss\)|\(profit\)\s*/\s*loss|loss\s*/\s*\(profit\))"
 LABELS: list[tuple[str, re.Pattern]] = [
@@ -156,6 +156,13 @@ def extract(text: str) -> dict:
     for f in ("creditors_within", "creditors_after", "stock"):  # sizes: shown in brackets on balance sheets
         if f in found:
             found[f] = [abs(v) if v is not None else None for v in found[f]]
+    # A tiny figure beside a real turnover is a note number or a misread (e.g. "8"
+    # gross profit on £34m): drop it rather than save it.
+    if t and t >= 100_000:
+        for f in list(found):
+            if f != "turnover" and found[f][0] is not None and 0 < abs(found[f][0]) < 100:
+                dropped.append(f"{f.replace('_', ' ')} (too small to be right)")
+                del found[f]
     for f in list(found):
         if any(v is not None and abs(v) > 1e11 for v in found[f]):
             dropped.append(f"{f.replace('_', ' ')} (implausible)")
@@ -285,6 +292,18 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
                     cur = {k: v[0] for k, v in ex["figures"].items() if v[0] is not None}
                     if ex["employees"]:
                         cur["employees"] = ex["employees"]
+                    # Only fill gaps: figures already held for the year (from its data
+                    # accounts, or saved by you or Claude) are never replaced by a reading.
+                    def held(pe):
+                        r = conn.execute("""select * from financial_period where company_number = %s and not period_inferred
+                                            and abs(period_end - %s) <= 45 order by abs(period_end - %s) limit 1""",
+                                         (num, pe, pe)).fetchone()
+                        return {k for k, v in (r or {}).items() if v is not None}
+                    have_now = held(mu)
+                    kept = [k for k in cur if k in have_now]
+                    cur = {k: v for k, v in cur.items() if k not in have_now}
+                    if kept:
+                        result["note"] = f"already held, not replaced: {', '.join(k.replace('_', ' ') for k in kept)}"
                     if cur:
                         _upsert(conn, num, mu, cur, f"pdf:{method}", balance_date=mu)
                         prior = {k: v[1] for k, v in ex["figures"].items() if v[1] is not None}
@@ -295,9 +314,12 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
                         has_prior = conn.execute(
                             """select 1 from financial_period where company_number = %s and not period_inferred
                                and abs(period_end - %s) <= 45""", (num, pe)).fetchone()
-                        if prior and not has_prior:
+                        prior = {k: v for k, v in prior.items() if k not in held(pe)}
+                        if prior:
                             _upsert(conn, num, pe, prior, f"pdf:{method}", balance_date=mu)
                         result.update(status="done", figures=cur)
+                    elif kept:
+                        result.update(status="done", figures={})
                     else:
                         result["status"] = "nothing_found"
                         sk = re.search(r"\[OCR skipped page\(s\) [^\]]+\]", text)
