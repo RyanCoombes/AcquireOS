@@ -30,6 +30,9 @@ export default function Financials({ data }: { data: CompanyDetail }) {
   });
   const [tab, setTab] = useState("ov");
   const [view, setView] = useState<"chart" | "table">("chart");
+  // Figures in £m (£4.97m) or in full (£4,970,123); remembered.
+  const [full, setFullState] = useState(() => { try { return localStorage.getItem("ao.figures") === "full"; } catch { return false; } });
+  const setFull = (v: boolean) => { setFullState(v); try { localStorage.setItem("ao.figures", v ? "full" : "short"); } catch { /* ignore */ } };
   if (!ys.length) return <div className="faint">No accounts on file.</div>;
 
   const turnoverRow: Row = { label: "Turnover", get: (_f, i) => ys[i].turnover, change: true, est: (i) => ys[i].turnoverEst, key: false };
@@ -107,7 +110,10 @@ export default function Financials({ data }: { data: CompanyDetail }) {
         <div className="tabs2" role="tablist">
           {shown.map((t) => <button key={t.key} role="tab" aria-selected={t.key === cur.key} className={t.key === cur.key ? "on" : ""} onClick={() => setTab(t.key)}>{t.label}</button>)}
         </div>
+        <span className="fin2-opts">
         {cur.chart && cur.key !== "ov" && <span className="seg2"><button className={view === "chart" ? "on" : ""} onClick={() => setView("chart")}>Chart and table</button><button className={view === "table" ? "on" : ""} onClick={() => setView("table")}>Table only</button></span>}
+        {cur.key !== "ov" && <span className="seg2" title="How figures in the table are shown"><button className={!full ? "on" : ""} onClick={() => setFull(false)}>£4.97m</button><button className={full ? "on" : ""} onClick={() => setFull(true)}>£4,970,000</button></span>}
+        </span>
       </div>
       {cur.key === "ov" ? <Overview data={data} ys={ys} /> : <>
       {cur.chart && view === "chart" && cur.chart(ys)}
@@ -125,7 +131,7 @@ export default function Financials({ data }: { data: CompanyDetail }) {
                   const e = r.est?.(i);
                   return (
                     <td key={y.f.period_end} className={v !== null && v < 0 && r.fmt !== "pct" ? "neg" : ""}>
-                      {v === null ? <span className="faint">—</span> : <span className={e ? "fig-est" : ""} title={e ? "Estimate: staff × the company's own revenue per head" : undefined}>{fmt(v, r.fmt)}</span>}
+                      {v === null ? <span className="faint">—</span> : <span className={e ? "fig-est" : ""} title={e ? "Estimate: staff × the company's own revenue per head" : undefined}>{fmt(v, r.fmt, full && !e)}</span>}
                       {pct !== null && pct !== 0 && <span className={`chg2 ${pct < 0 ? "dn" : ""}`}>{pct > 0 ? "+" : ""}{pct}%</span>}
                     </td>
                   );
@@ -141,8 +147,8 @@ export default function Financials({ data }: { data: CompanyDetail }) {
   );
 }
 
-function fmt(v: number, f?: "money" | "int" | "pct") {
-  return f === "int" ? int(v) : f === "pct" ? `${v.toFixed(1)}%` : money(v);
+function fmt(v: number, f?: "money" | "int" | "pct", full = false) {
+  return f === "int" ? int(v) : f === "pct" ? `${v.toFixed(1)}%` : money(v, { precise: full });
 }
 
 /** Round axis steps (1, 2, 2.5 or 5 × a power of ten). */
@@ -176,7 +182,7 @@ function ComboChart({ years, bars, line }: {
         <defs><pattern id="estp" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <rect width="6" height="6" fill="#fcf1e1" /><line x1="0" y1="0" x2="0" y2="6" stroke="#e2a85a" strokeWidth="2.5" /></pattern></defs>
         {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className={t === 0 ? "zero" : "gl"} />
-          <text x={L - 8} y={y(t) + 4} className="ax" textAnchor="end">{live[0].fmt === "int" ? int(t) : money(t)}</text></g>)}
+          <text x={L - 8} y={y(t) + 4} className="ax" textAnchor="end">{live[0].fmt === "int" ? int(t) : money(t, { short: true })}</text></g>)}
         {years.map((lab, i) => {
           const x0 = L + slot * i + (slot - bw * live.length) / 2;
           return (
@@ -223,7 +229,7 @@ function MiniLine({ years, values, label, fmt }: { years: string[]; values: Val[
       <div className="label">{label}</div>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label}>
         {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className={t === 0 ? "zero" : "gl"} />
-          <text x={L - 8} y={y(t) + 4} className="ax" textAnchor="end">{f(t)}</text></g>)}
+          <text x={L - 8} y={y(t) + 4} className="ax" textAnchor="end">{fmt === "pct" ? f(t) : money(t, { short: true })}</text></g>)}
         <polyline points={pts.map((p) => `${p[0]},${p[1]}`).join(" ")} className="ml" />
         {pts.map((p, i) => <g key={i}><circle cx={p[0]} cy={p[1]} r={4} className="mc" /><text x={p[0]} y={p[1] - 9} textAnchor="middle" className="mv">{f(p[2])}</text></g>)}
       </svg>

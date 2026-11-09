@@ -112,7 +112,7 @@ def _m(v) -> str:
     v = float(v)
     sign, v = ("−" if v < 0 else ""), abs(v)
     if v >= 1_000_000:
-        return f"{sign}£{v / 1_000_000:.1f}m"
+        return f"{sign}£{v / 1_000_000:.2f}m"
     if v >= 1_000:
         return f"{sign}£{v / 1_000:.0f}k"
     return f"{sign}£{v:.0f}"

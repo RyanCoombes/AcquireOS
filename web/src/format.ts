@@ -1,13 +1,15 @@
 export const toNum = (v: string | number | null | undefined): number | null =>
   v === null || v === undefined || v === "" ? null : Number(v);
 
-export function money(v: string | number | null | undefined, opts: { precise?: boolean } = {}): string {
+export function money(v: string | number | null | undefined, opts: { precise?: boolean; short?: boolean } = {}): string {
   const n = toNum(v);
   if (n === null || Number.isNaN(n)) return "—";
   const sign = n < 0 ? "−" : "";
   const a = Math.abs(n);
   if (opts.precise) return sign + "£" + a.toLocaleString("en-GB", { maximumFractionDigits: 0 });
-  if (a >= 1_000_000) return `${sign}£${(a / 1_000_000).toFixed(a >= 10_000_000 ? 0 : 1)}m`;
+  // Millions to two decimals (£4.97m), so a figure isn't rounded by up to £50k.
+  // short: chart axes, where round numbers read better (£2m, £2.5m).
+  if (a >= 1_000_000) return `${sign}£${opts.short ? String(+(a / 1_000_000).toFixed(1)) : (a / 1_000_000).toFixed(2)}m`;
   if (a >= 1_000) return `${sign}£${Math.round(a / 1_000)}k`;
   return `${sign}£${Math.round(a)}`;
 }

@@ -1167,6 +1167,7 @@ svg.network:active { cursor: grabbing; }
                 border-bottom: 2.5px solid transparent; margin-bottom: -1px; cursor: pointer; }
 .tabs2 button:hover { color: var(--ink); }
 .tabs2 button.on { color: var(--teal-2); border-bottom-color: var(--teal); }
+.fin2-opts { display: inline-flex; gap: 8px; flex-wrap: wrap; }
 .seg2 { display: inline-flex; border: 1px solid var(--line-2); border-radius: 8px; overflow: hidden; margin-bottom: 6px; }
 .seg2 button { border: 0; border-right: 1px solid var(--line-2); background: var(--panel); padding: 4px 10px; font: inherit; font-size: 12px; color: var(--ink-2); cursor: pointer; }
 .seg2 button:last-child { border-right: 0; }

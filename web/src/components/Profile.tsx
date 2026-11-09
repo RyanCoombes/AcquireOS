@@ -57,7 +57,7 @@ export function BalanceChart({ series }: { series: FinSummary["series"] }) {
         {ticks.map((t) => (
           <g key={t}>
             <line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className={t === 0 ? "zero" : "grid"} />
-            <text x={L - 6} y={y(t) + 4} textAnchor="end">{money(t)}</text>
+            <text x={L - 6} y={y(t) + 4} textAnchor="end">{money(t, { short: true })}</text>
           </g>
         ))}
         {hasTA && <path d={area(ta)} className="a-assets" />}
