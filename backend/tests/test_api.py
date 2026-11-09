@@ -1439,6 +1439,8 @@ def test_deals_from_companies_house_and_research(loaded):
     assert "sold" in kinds and "acquired" in kinds and "buyback" in kinds
     sale = next(e for e in ev if e["kind"] == "sold" and e["source"] == "Companies House")
     assert sale["title"] == "Sold to BUYER GROUP LIMITED" and "Barclays" in sale["detail"]
-    assert any(e["source"] == "research" and "£4.2m" in e["detail"] for e in ev)
+    # The researched sale is the same deal: merged into the Companies House event, with its value and source.
+    assert "£4.2m" in sale["detail"] and sale["research_url"] == "https://news.example.com/deal"
+    assert not any(e["source"] == "research" and e["kind"] == "sold" for e in ev)
     assert next(e for e in ev if e["kind"] == "acquired")["counterparty_number"] == "79000003"
     c.rollback()
