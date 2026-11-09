@@ -1,5 +1,5 @@
 /* Review one company at a time, fast. Score your criteria with the number
-   keys, then shortlist, watch, assess, pass or reject with one key. */
+   keys, then shortlist, watch, assess, rule out with one key. */
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail, type Status } from "../api";
@@ -13,8 +13,8 @@ const ACTIONS: { key: string; status: Status; label: string; cls?: string }[] = 
   { key: "s", status: "approach", label: "Shortlist", cls: "primary" },
   { key: "a", status: "researching", label: "Assess further" },
   { key: "w", status: "watching", label: "Watch" },
-  { key: "p", status: "passed", label: "Pass" },
-  { key: "r", status: "rejected", label: "Reject" },
+  { key: "p", status: "passed", label: "Not now" },
+  { key: "r", status: "rejected", label: "Not suitable" },
 ];
 
 export default function Review() {
@@ -188,12 +188,12 @@ export default function Review() {
           <aside>
             <section className="rv-dec">
               <h2>Decide</h2>
-              {ACTIONS.map((a) => (
+              {ACTIONS.filter((a) => a.status !== "passed" && a.status !== "rejected").map((a) => (
                 <button key={a.key} className={`btn ${a.cls ?? ""} ${a.status === "rejected" ? "rej" : ""}`} onClick={() => act(a.status)}>
                   {a.label}<span className="kbd">{a.key.toUpperCase()}</span>
                 </button>
               ))}
-              <div className="rv-lbl">Ruling out? Pick a reason</div>
+              <div className="rv-lbl">Ruling out? Pick a reason · or <span className="kbd">R</span> not suitable, <span className="kbd">P</span> not now</div>
               <RuleOutChips compact onPick={(p) => act(p.status, p.stage_note)} />
               <textarea placeholder="Note (optional), saved with your decision" value={note} onChange={(e) => setNote(e.target.value)} />
               {criteria.length > 0 && <>
