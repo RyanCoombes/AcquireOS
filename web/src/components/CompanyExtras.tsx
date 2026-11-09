@@ -92,10 +92,16 @@ const BT = ["software", "saas", "data", "msp", "it_consultancy", "field_service"
 const BT_LABEL: Record<string, string> = { software: "Software", saas: "SaaS", data: "Data", msp: "Managed service provider",
   it_consultancy: "IT consultancy", field_service: "Field service", agency: "Agency", reseller: "Reseller", other: "Other" };
 
+const WEB_MSG: Record<string, string> = {};
+
 export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail; num: string; onSaved: () => void; finder?: React.ReactNode }) {
   const e = data.enrichment;
   const [edit, setEdit] = useState(false);
   const [allSources, setAllSources] = useState(false);
+  const [webBusy, setWebBusy] = useState(false);
+  // Survives the reload after a re-scan or removal (the box is rebuilt).
+  const [webMsg, setWebMsgState] = useState<string | null>(() => { const m = WEB_MSG[num] ?? null; delete WEB_MSG[num]; return m; });
+  const setWebMsg = (m: string | null) => { setWebMsgState(m); if (m) WEB_MSG[num] = m; };
   const [f, setF] = useState({ website: e?.website ?? "", business_type: e?.business_type ?? "", recurring_revenue: e?.recurring_revenue ?? "",
                                field_service: e?.field_service ?? "", summary: e?.summary ?? "", source_url: "",
                                linkedin: e?.linkedin ?? "", phone: e?.phone ?? "",
@@ -121,7 +127,19 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
       </div>
       <div className="enr">
         <div><span className="label">Website</span>{e?.website ? <a href={e.website} target="_blank" rel="noreferrer">{e.website.replace(/^https?:\/\/(www\.)?/, "")} ↗</a> : <span className="faint">Not found yet</span>}
-          {e?.website && sourceFor("website") && hostOf(sourceFor("website")!) !== hostOf(e.website) && <Src url={sourceFor("website")} />}</div>
+          {e?.website && sourceFor("website") && hostOf(sourceFor("website")!) !== hostOf(e.website) && <Src url={sourceFor("website")} />}
+          {e?.website && <span className="webacts">
+            <button className="linkish small" disabled={webBusy} title="Read the site again for its offices and the company number"
+                    onClick={async () => { setWebBusy(true); setWebMsg(null);
+                      try { const r = await api.findWebsite(num, e.website!, true); setWebMsg(r.message); onSaved(); } catch (x: any) { setWebMsg(x.message); }
+                      setWebBusy(false); }}>{webBusy ? "Scanning…" : "Re-scan"}</button>
+            <button className="linkish small red" disabled={webBusy} title="Remove it: wrong site, or let the automatic check look again"
+                    onClick={async () => { if (!confirm(`Remove ${e.website} as the website?`)) return;
+                      setWebBusy(true);
+                      try { await api.removeWebsite(num); setWebMsg("Removed. Find website or the automatic check can look again. Offices read from it stay until you edit them."); onSaved(); }
+                      catch (x: any) { setWebMsg(x.message); }
+                      setWebBusy(false); }}>Remove</button></span>}
+          {webMsg && <div className="small muted" style={{ marginTop: 4 }}>{webMsg}</div>}</div>
         <div><span className="label">Business type</span>{e?.business_type ? BT_LABEL[e.business_type] ?? e.business_type : <span className="faint">Not classified</span>}
           <Src url={sourceFor("classification")} /></div>
         <div><span className="label">Recurring revenue</span>{tri(e?.recurring_revenue)}</div>

@@ -1606,6 +1606,23 @@ def find_website(num: str, body: WebsiteCheckIn | None = None):
                         "No site could be confirmed. Ask Claude to search using the research brief, or enter one you know.")}
 
 
+@app.delete("/api/companies/{num}/website")
+def remove_website(num: str):
+    """Clear the saved website (a wrong one, or so the automatic check can
+    look again). Kept in the research history."""
+    num = num.strip().upper()
+    with db.conn() as c:
+        cur = c.execute("select website from enrichment where company_number = %s", (num,)).fetchone()
+        if not cur or not cur["website"]:
+            return {"removed": None}
+        c.execute("update enrichment set website = null, updated_at = now(), updated_by = 'me' where company_number = %s", (num,))
+        c.execute("delete from website_check where company_number = %s", (num,))
+        c.execute("""insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)
+                     values (%s, 'website', %s, %s, 'Removed by me', 'me', 'high')""",
+                  (num, f"Website removed: {cur['website']}", cur["website"]))
+    return {"removed": cur["website"]}
+
+
 @app.get("/api/website-check")
 def website_check_summary():
     """Totals so far: companies checked, confirmed sites, possible ones, none found."""

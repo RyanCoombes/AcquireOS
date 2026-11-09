@@ -1251,3 +1251,19 @@ def test_manually_saved_website_is_read_for_offices(loaded, monkeypatch):
     with db.conn() as c:
         e = c.execute("select website, locations from enrichment where company_number = %s", (num,)).fetchone()
         assert e["website"].startswith("https://example.co.uk") and any(l["postcode"] == "ZE1 0AX" for l in e["locations"])
+
+
+def test_remove_website_lets_the_check_look_again(loaded):
+    from acquireos import enrich
+    from acquireos.api import app
+
+    num = loaded.execute("select company_number from company limit 1").fetchone()["company_number"]
+    enrich.save_enrichment(loaded, num, source_url="manual", website="https://wrong.example", by="me")
+    loaded.execute("insert into website_check (company_number, result) values (%s, 'confirmed') on conflict do nothing", (num,))
+    loaded.commit()
+    r = TestClient(app).delete(f"/api/companies/{num}/website").json()
+    assert r["removed"] == "https://wrong.example"
+    with db.conn() as c:
+        assert c.execute("select website from enrichment where company_number = %s", (num,)).fetchone()["website"] is None
+        assert not c.execute("select 1 from website_check where company_number = %s", (num,)).fetchone()
+        assert c.execute("select 1 from research where company_number = %s and content like 'Website removed%%'", (num,)).fetchone()

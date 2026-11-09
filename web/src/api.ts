@@ -276,6 +276,7 @@ export const api = {
   addOutreach: (body: Record<string, unknown>) => req<Outreach>("/api/outreach", { method: "POST", body: JSON.stringify(body) }),
   reports: () => req<Record<string, any>>("/api/reports"),
   fetchDetails: (n: string) => req<CompanyDetail["ch"]>(`/api/companies/${encodeURIComponent(n)}/fetch-details`, { method: "POST" }),
+  removeWebsite: (n: string) => req<{ removed: string | null }>(`/api/companies/${encodeURIComponent(n)}/website`, { method: "DELETE" }),
   findWebsite: (n: string, url?: string, save = false) =>
     req<{ results: { url: string; reachable: boolean; confidence: "high" | "medium" | "low" | null; evidence: string; page?: string; title?: string | null }[];
           saved: string[] | null; message: string }>(`/api/companies/${encodeURIComponent(n)}/find-website`,
