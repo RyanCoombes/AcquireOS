@@ -122,6 +122,11 @@ export default function BuyBox() {
             <div className="bb-f"><label>Names, industries or research mentioning</label>
               <textarea style={{ minHeight: 52 }} value={c.exclude.keywords.join(", ")}
                         onChange={(e) => upd(["exclude", "keywords"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></div>
+            <div className="bb-f"><label>Industries<Hint text="Left out if any of its SIC codes is on this list. Tick the box to leave a company out only when every code it files is on the list, so a joiner that also lists property letting stays in." /></label>
+              <SicPicker value={c.exclude?.sic_prefixes ?? []} onChange={(v) => upd(["exclude", "sic_prefixes"], v)} />
+              {(c.exclude?.sic_prefixes ?? []).length > 0 && <label className="check" style={{ height: "auto", marginTop: 4 }}>
+                <input type="checkbox" checked={!!c.exclude?.sic_all} onChange={(e) => upd(["exclude", "sic_all"], e.target.checked)} />
+                Only when all its codes are on this list</label>}</div>
             <div className="bb-f"><label>Owned by</label><div>{xchecks(Object.entries(OWNERSHIP), ["exclude", "ownership"])}</div></div>
             <div className="bb-f"><label>Accounts filed as</label><div>{xchecks((meta.data?.account_sizes ?? []).map((x) => [x.value, x.label] as [string, string]), ["exclude", "accounts_types"])}</div></div>
             <div className="bb-f"><label>Already dealt with</label><div>{toggle(["exclude", "recently_sold"], "Sold in the last 3 years", true)}

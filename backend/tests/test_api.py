@@ -1215,3 +1215,14 @@ def test_pdf_redo_keeps_saves_and_flags_suspicious_years(loaded, monkeypatch):
         assert left == {"2022-03-31": "accounts:x", "2024-03-31": "pdf:claude"}
         assert not c.execute("select 1 from pdf_read where company_number = %s", (num,)).fetchone()
         assert not c.execute("select 1 from figure_check where company_number = %s", (num,)).fetchone()
+
+
+def test_buy_box_can_leave_out_industries():
+    from acquireos import scoring
+
+    c = {"company_number": "X1", "name": "HARBOUR JOINERY LTD", "status": "active", "sic_codes": ["43320", "68209"]}
+    out = lambda ex: scoring.score_company(c, {"exclude": ex})
+    assert out({"sic_prefixes": ["68"]})["exclusion"] == "Industry left out: 68209"
+    assert not out({"sic_prefixes": ["68"], "sic_all": True})["excluded"]          # still does joinery
+    assert out({"sic_prefixes": ["68", "4332"], "sic_all": True})["excluded"]       # everything it does is left out
+    assert not out({"sic_prefixes": ["62"]})["excluded"]

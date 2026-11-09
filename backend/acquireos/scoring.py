@@ -256,6 +256,14 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
             if kw and re.search(r"\b" + re.escape(kw.lower()) + r"\b", hay):
                 exclusion = f"Matches excluded keyword “{kw}”"
                 break
+    # Industry codes to leave out: any code on the list, or (all_sic) only when
+    # every code the company files is on it.
+    xsic = tuple(str(x) for x in ex.get("sic_prefixes") or [] if x)
+    codes_x = c.get("sic_codes") or []
+    if not exclusion and xsic and codes_x:
+        hits = [x for x in codes_x if x.startswith(xsic)]
+        if hits and (not ex.get("sic_all") or len(hits) == len(codes_x)):
+            exclusion = f"Industry left out: {', '.join(hits)}"
     out_regions = ex.get("regions") or []
     if not exclusion and region and region in out_regions:
         exclusion = f"Region excluded: {region}" + (" (where it trades)" if c.get("trading_region") else "")
