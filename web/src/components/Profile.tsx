@@ -408,6 +408,29 @@ type Who = {
   ownSince?: string | null; dirSince?: string | null; role?: string | null;
 };
 
+/** Shareholders with nothing else known: one compact row each, largest first. */
+function ShareholderList({ rows, showClass, title }: { rows: { key: string; name: string; personId?: number; company?: boolean; regNo?: string | null;
+  pct: number | null; colour?: string; classes: string[] }[]; showClass: boolean; title: string }) {
+  const [all, setAll] = useState(false);
+  const sorted = [...rows].sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1));
+  const shown = all ? sorted : sorted.slice(0, 8);
+  return (
+    <div className="shlist">
+      <div className="label" style={{ margin: "10px 0 4px" }}>{title} ({rows.length})</div>
+      {shown.map((r) => (
+        <div key={r.key} className="shrow">
+          <span className="dot" style={{ background: r.colour ?? "#c9ced6" }} />
+          <span className="nm">{r.personId ? <Link to={`/owners/${r.personId}`}>{r.name}</Link> : r.company && r.regNo ? <Link to={`/c/${r.regNo}`}>{r.name}</Link> : r.name}
+            {showClass && r.classes.length ? <span className="faint small"> · {r.classes.join(", ")}</span> : null}</span>
+          <span className="bar"><i style={{ width: `${Math.min(100, r.pct ?? 0)}%`, background: r.colour ?? "#9aa4b2" }} /></span>
+          <b>{r.pct != null ? `${r.pct}%` : "—"}</b>
+        </div>
+      ))}
+      {rows.length > 8 && <button className="linkish small" style={{ marginTop: 4 }} onClick={() => setAll(!all)}>{all ? "Show fewer" : `+${rows.length - 8} more`}</button>}
+    </div>
+  );
+}
+
 export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: React.ReactNode }) {
   const [view, setView] = useState<"now" | "time">("now");
   const [only, setOnly] = useState<null | "owners" | "directors" | "shareholders">(null);
@@ -606,10 +629,16 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
         </>
       )}
 
-      {people.length === 0 ? <div className="faint">No owners or directors on file.</div> : (
-        <div className="pcards">
-          {people.filter((w) => !only || (only === "directors" ? w.roles.has("Director")
-              : only === "owners" ? w.roles.has("Owner") : w.roles.has("Shareholder"))).map((w) => {
+      {people.length === 0 ? <div className="faint">No owners or directors on file.</div> : (() => {
+        const filtered = people.filter((w) => !only || (only === "directors" ? w.roles.has("Director")
+              : only === "owners" ? w.roles.has("Owner") : w.roles.has("Shareholder")));
+        // People who only hold shares (not directors, not on the owners register,
+        // nothing else known): a compact list, not a card each.
+        const plain = (w: (typeof people)[number]) => w.roles.size === 1 && w.roles.has("Shareholder") && !w.disq?.length && !w.note;
+        const cardsP = filtered.filter((w) => !plain(w)), listP = filtered.filter(plain);
+        return <>
+        {cardsP.length > 0 && <div className="pcards">
+          {cardsP.map((w) => {
             const all = w.officerKey ? others.filter((a) => a.officer_key === w.officerKey) : [];
             const theirs = all.filter((a) => !a.resigned_on);
             const yearAgo = Date.now() - 3.156e10;
@@ -650,7 +679,7 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                 </div>
                 <dl className="pc-facts">
                   {isDir && <><dt>Director since</dt><dd>{since(w.dirSince)}</dd></>}
-                  {isOwner && <><dt>Owner since</dt><dd>{since(w.ownSince ?? w.since)}</dd></>}
+                  {isOwner && (w.ownSince ?? w.since) && <><dt>Owner since</dt><dd>{since(w.ownSince ?? w.since)}</dd></>}
                   {!w.company && (w.residence || w.nationality) && <><dt>Lives in</dt><dd>{[w.residence && cap1(w.residence), w.nationality && cap1(w.nationality)].filter(Boolean).join(" · ")}</dd></>}
                   {isDir && <><dt>Other boards</dt><dd>{theirs.length ? <>{theirs.length} active: {list(theirs)}{theirs.length > 3 ? <span className="faint"> +{theirs.length - 3}</span> : null}</> : w.boards ? `${w.boards} active` : <span className="faint">none</span>}</dd></>}
                   {joined.length > 0 && <><dt>Recently joined</dt><dd>{list(joined)}</dd></>}
@@ -673,8 +702,12 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
               </div>
             );
           })}
-        </div>
-      )}
+        </div>}
+        {listP.length > 0 && <ShareholderList rows={listP.map((w) => ({ key: w.key, name: w.name, personId: w.personId, company: w.company, regNo: w.regNo,
+                                                       pct: w.pct ?? null, colour: w.colour, classes: w.classes ? [...w.classes] : [] }))}
+                                              showClass={allClasses.length > 1} title={cardsP.length ? "Other shareholders" : "Shareholders"} />}
+        </>;
+      })()}
 
       {!ch?.fetched && ch?.enabled && <div className="faint small" style={{ marginTop: 8 }}>Directors and exact shareholdings appear once fetched from Companies House.</div>}
       {(ch?.fetched?.psc_statements ?? []).filter((x) => !x.ceased_on).map((x, i) => (

@@ -116,11 +116,18 @@ def _build_walk(conn):
     conn.execute("analyze own_walk")
 
 
+# A person holding shares or voting rights (natures missing: assume so, as before).
+_HOLDER = ("(natures is null or cardinality(natures) = 0 or exists (select 1 from unnest(natures) nn "
+           "where nn ~ '(ownership-of-shares|voting-rights)'))")
+OWNERSHIP_VERSION = 2  # 2: people with control only (no shares or votes) aren't owners
+
+
 def _ownership_from_walk(conn, today):
 
     # A majority stake: more than 50% of shares or votes.
     majority = "exists (select 1 from unnest(natures) nn where nn ~ '(50-to-75|75-to-100)')"
     conn.execute("drop table if exists own_new")
+    holder = _HOLDER
     conn.execute(rf"""
         create temp table own_new as
         with agg as (
@@ -143,11 +150,15 @@ def _ownership_from_walk(conn, today):
                       and country_registered !~* %(uk_re)s) as foreign_parent,
               bool_or(depth = 0 and kind <> 'individual' and registration_number is not null) as via_holdco,
               bool_or(kind = 'corporate' and dead_end) as unresolved_corporate,
-              count(distinct person_id) filter (where kind = 'individual') as individuals,
-              bool_or(kind = 'individual' and depth > 0) as indirect,
-              min(birth_year) filter (where kind = 'individual') as oldest,
+              -- Owners are people holding shares or votes. Someone listed only for
+              -- "significant influence or control" (or appointing directors) isn't
+              -- evidenced as an owner: not counted, and their age isn't used.
+              count(distinct person_id) filter (where kind = 'individual' and {holder}) as individuals,
+              count(distinct person_id) filter (where kind = 'individual' and not {holder}) as control_only,
+              bool_or(kind = 'individual' and depth > 0 and {holder}) as indirect,
+              min(birth_year) filter (where kind = 'individual' and {holder}) as oldest,
               (jsonb_agg(jsonb_build_object('name', name, 'birth_year', birth_year, 'birth_month', birth_month,
-                    'person_id', person_id, 'via', to_jsonb(path[2:]))) filter (where kind = 'individual')) as people,
+                    'person_id', person_id, 'via', to_jsonb(path[2:]), 'control_only', not {holder})) filter (where kind = 'individual')) as people,
               (jsonb_agg(jsonb_build_object('name', name, 'kind', kind, 'via', to_jsonb(path[2:]), 'unresolved', true))
                     filter (where kind <> 'individual' and dead_end)) as dead
             from own_walk group by root
@@ -167,7 +178,7 @@ def _ownership_from_walk(conn, today):
                    coalesce(a.foreign_parent, false) as foreign_parent,
                    coalesce(a.via_holdco, false) as via_holdco,
                    coalesce(a.unresolved_corporate, false) as unresolved_corporate,
-                   coalesce(a.individuals, 0) as individuals,
+                   coalesce(a.individuals, 0) as individuals, coalesce(a.control_only, 0) as control_only,
                    coalesce(a.indirect, false) as indirect,
                    a.oldest, coalesce(d.recent, false) as recent, coalesce(d.has_active, false) as has_active,
                    coalesce(a.people, '[]'::jsonb) || coalesce(a.dead, '[]'::jsonb) as owners
@@ -191,12 +202,15 @@ def _ownership_from_walk(conn, today):
                    case when eot then 'eot' end, case when foreign_parent then 'foreign_parent' end,
                    case when investor then 'investor' end, case when recent then 'recent_change' end,
                    case when not has_active then 'no_psc_data' end, case when trust then 'trust' end,
-                   case when via_holdco then 'via_holdco' end, case when ebt then 'ebt' end], null)::text[] as flags,
+                   case when via_holdco then 'via_holdco' end, case when ebt then 'ebt' end,
+                   case when control_only > 0 then 'control_only' end], null)::text[] as flags,
                individuals as owner_count, oldest as oldest_birth_year, owners as ultimate_owners,
                case otype
                    when 'owner_held' then individuals || ' individual owner(s), held '
                         || case when via_holdco then 'through a holding company' else 'directly' end || '.'
-                   when 'unknown' then 'No active owner records found in the PSC data imported so far.'
+                   when 'unknown' then case when control_only > 0
+                        then 'Listed only as having significant influence or control, not as holding shares or votes: no owner is evidenced (often widely held).'
+                        else 'No active owner records found in the PSC data imported so far.' end
                    else 'Classed as ' || lower(case otype when 'group_owned' then 'Group-owned'
                         when 'investor_backed' then 'Investor-backed' when 'eot' then 'Employee-owned (EOT)'
                         when 'trust' then 'Held in trust' when 'foreign_owned' then 'Foreign parent' end)

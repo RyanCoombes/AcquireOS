@@ -192,7 +192,7 @@ ACCOUNT_TYPES = {
 
 UNKNOWN_SHARE = 0.5
 # Bump when the scoring rules change, so every company is scored again.
-SCORING_VERSION = 4  # 3: EBITDA adds back filed D&A; 4: an old own margin no longer caps the value range
+SCORING_VERSION = 5  # 5: ownership from a researched holding company; 3: EBITDA adds back filed D&A; 4: an old own margin no longer caps the value range
 
 
 def score_company(c: dict, criteria: dict, today: date | None = None, scope=None,
@@ -334,7 +334,7 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
             f"Oldest owner about {age}; succession more likely from {o['ideal']}")
 
     ow = cr["ownership"]
-    src = " (research)" if c.get("research_ownership") else f" ({investor_note})" if investor_note else ""
+    src = " (research on its holding company)" if c.get("ownership_from_parent") else " (research)" if c.get("research_ownership") else f" ({investor_note})" if investor_note else ""
     if not t or t == "unknown":
         add("ownership", "Ownership", ow["weight"], 0, STATUS_UNKNOWN, "Ownership not yet traced", unknown_share=owner_unknown)
     elif t in ow["good"]:
@@ -409,7 +409,8 @@ select c.company_number, c.name, c.status, c.review_tier, c.incorporation_date, 
        e.revenue_low, e.revenue_high, e.basis as revenue_basis,
        o.ownership_type, o.flags as ownership_flags, o.oldest_birth_year,
        concat_ws(' ', rt.txt, en.summary, en.business_type) as research_text, en.field_service,
-       en.ownership as research_ownership, en.trading_region,
+       coalesce(en.ownership, par.ownership) as research_ownership, en.ownership is null and par.ownership is not null as ownership_from_parent,
+       en.trading_region,
        {signals} as signals,
        (select array_agg(sh.name order by sh.name) from shareholder sh where sh.company_number = c.company_number) as shareholder_names,
        fm.margin as filed_margin, fm.period_end as filed_margin_period,
@@ -421,6 +422,12 @@ left join estimate e on e.company_number = c.company_number
 left join company_ownership o on o.company_number = c.company_number
 left join research_text rt on rt.company_number = c.company_number
 left join enrichment en on en.company_number = c.company_number
+-- Ownership researched on a holding company above it applies to it too.
+left join lateral (
+    select en2.ownership from jsonb_array_elements(case when jsonb_typeof(o.ultimate_owners) = 'array' then o.ultimate_owners else '[]'::jsonb end) u,
+         jsonb_array_elements_text(case when jsonb_typeof(u->'via') = 'array' then u->'via' else '[]'::jsonb end) v(num)
+    join enrichment en2 on en2.company_number = v.num
+    where en2.ownership is not null limit 1) par on en.ownership is null
 left join company_signal sg on sg.company_number = c.company_number
 left join lateral (
     select round(fp.operating_profit / fp.turnover * 100, 1) as margin, fp.period_end from financial_period fp

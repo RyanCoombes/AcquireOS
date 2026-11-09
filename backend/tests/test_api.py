@@ -1310,3 +1310,28 @@ def test_pdf_check_shows_lines_and_saves_corrections(loaded, monkeypatch):
         assert float(row["gross_profit"]) == 1_913_000 and row["operating_profit"] is None
         assert float(row["turnover"]) == 4_110_456 and row["source"] == "manual"
         assert c.execute("select 1 from figure_check where company_number = %s", (num,)).fetchone()
+
+
+def test_control_only_person_is_not_the_owner_and_research_flows_to_subsidiaries(loaded):
+    from acquireos import enrich, ownership, scoring
+
+    c = loaded
+    c.execute("insert into company (company_number, name, status) values ('77000001', 'LOOPTEST GROUP PLC', 'active'), "
+              "('77000002', 'LOOPTEST LIMITED', 'active') on conflict do nothing")
+    c.execute("""insert into person (person_key, kind, name, birth_year) values ('t:scott', 'individual', 'Andrew Scott', 1966),
+                 ('t:grp', 'corporate', 'LOOPTEST GROUP PLC', null) on conflict do nothing""")
+    c.execute("update person set registration_number = '77000001' where person_key = 't:grp'")
+    sid = c.execute("select id from person where person_key = 't:scott'").fetchone()["id"]
+    gid = c.execute("select id from person where person_key = 't:grp'").fetchone()["id"]
+    c.execute("""insert into company_person (row_key, company_number, person_id, role, natures) values
+                 ('t1', '77000001', %s, 'psc', '{significant-influence-or-control}'),
+                 ('t2', '77000002', %s, 'psc', '{ownership-of-shares-75-to-100-percent}') on conflict do nothing""", (sid, gid))
+    ownership.rebuild(c, links=False)
+    for num in ("77000001", "77000002"):
+        o = c.execute("select ownership_type, oldest_birth_year, flags from company_ownership where company_number = %s", (num,)).fetchone()
+        assert o["ownership_type"] != "owner_held" and o["oldest_birth_year"] is None and "control_only" in o["flags"], (num, o)
+    # Research on the group (investor-backed) applies to the subsidiary held through it.
+    enrich.save_enrichment(c, "77000001", source_url="https://example.com/news", ownership="investor_backed", by="claude")
+    f = scoring.load_facts(c, "77000002")[0]
+    assert f["research_ownership"] == "investor_backed" and f["ownership_from_parent"]
+    c.rollback()

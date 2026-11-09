@@ -1438,3 +1438,12 @@ section.oneline { padding-top: 10px; padding-bottom: 10px; } section.oneline .se
 .lc-key button.on { color: var(--ink); border-color: var(--line-2); }
 .lc-key button i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid; flex: none; }
 .lc-key button b { font-weight: 650; }
+
+/* Shareholders with nothing else known: compact rows */
+.shlist { max-width: 720px; }
+.shrow { display: grid; grid-template-columns: 10px minmax(0, 1fr) 160px 60px; gap: 10px; align-items: center; padding: 6px 4px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.shrow .dot { width: 10px; height: 10px; border-radius: 50%; }
+.shrow .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shrow .bar { height: 6px; border-radius: 3px; background: var(--canvas); overflow: hidden; } .shrow .bar i { display: block; height: 100%; border-radius: 3px; }
+.shrow b { text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .shrow { grid-template-columns: 10px minmax(0, 1fr) 60px; } .shrow .bar { display: none; } }

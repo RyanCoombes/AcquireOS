@@ -437,6 +437,31 @@ def run_job(kind: str = "refresh", accounts_months: int = 1, reread_old: bool = 
         JOB = None
 
 
+def _ownership_catch_up():
+    import time
+
+    from . import chsync, db, ownership, scoring
+
+    try:
+        time.sleep(30)
+        with db.conn(dedicated=True) as c:
+            done = int(chsync.get_setting(c, "ownership_version", 1) or 1)
+            if done >= ownership.OWNERSHIP_VERSION or c.execute("select count(*) as n from company").fetchone()["n"] == 0:
+                return
+            while chsync.busy(c):
+                time.sleep(300)
+            log("Reclassifying owners after the update")
+            ownership.rebuild(c, links=False)
+            c.commit()
+            log("Rescoring after the ownership update")
+            scoring.rescore_all(c)
+            chsync.set_setting(c, "ownership_version", ownership.OWNERSHIP_VERSION)
+            c.commit()
+            log("Ownership update done")
+    except Exception as e:
+        log(f"Ownership update failed: {e}")
+
+
 def scheduler():
     """Run refresh() once a month. Day and hour come from REFRESH_DAY and
     REFRESH_HOUR (defaults: the 6th at 03:00, after Companies House has
@@ -447,6 +472,11 @@ def scheduler():
     hour = int(os.environ.get("REFRESH_HOUR", "3"))
     months = int(os.environ.get("REFRESH_ACCOUNTS_MONTHS", "1"))
     log(f"Scheduler started: monthly refresh on day {day} at {hour:02d}:00")
+    import threading as _th
+
+    # After an update that changes how owners are classified: reclassify and
+    # rescore once, in the background (the next data load would do it anyway).
+    _th.Thread(target=_ownership_catch_up, daemon=True, name="ownership-catch-up").start()
     if os.environ.get("CH_SYNC", "on").lower() not in ("off", "0", "false", "no"):
         import threading
 
