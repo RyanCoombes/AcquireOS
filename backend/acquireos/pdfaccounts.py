@@ -386,9 +386,9 @@ where aa.made_up > current_date - interval '10 years 6 months'
               and fl.detail->>'made_up_date' = aa.made_up::text and fl.detail ? 'document')
   and not exists (select 1 from financial_period fp where fp.company_number = aa.company_number
                   and not fp.period_inferred and abs(fp.period_end - aa.made_up) <= 45
-                  and coalesce(fp.source, '') not like 'pdf:%%')
+                  and coalesce(fp.source, '') not in ('pdf:text', 'pdf:ocr'))  -- figures saved by you or Claude count
   and not exists (select 1 from pdf_read r where r.company_number = aa.company_number and r.made_up = aa.made_up
-                  and (r.status = 'done' or r.version >= %(version)s or r.tries >= 3))
+                  and (r.status in ('done', 'closed') or r.version >= %(version)s or r.tries >= 3))
 """
 
 QUEUE_SQL = """
@@ -427,13 +427,13 @@ def failures(conn, limit: int = 200) -> list[dict]:
         """select r.company_number, c.name, r.made_up, r.status, r.method, r.note, r.read_at, r.tries,
                   left(r.sample, 1500) as sample
            from pdf_read r join company c using (company_number)
-           where r.status <> 'done' order by r.read_at desc limit %s""", (limit,)).fetchall()
+           where r.status in ('failed', 'nothing_found') order by r.read_at desc limit %s""", (limit,)).fetchall()
 
 
 def retry(conn, company_number: str | None = None) -> int:
     """Try years that couldn't be read again (one company, or all)."""
     return conn.execute(
-        "delete from pdf_read where status <> 'done'" + (" and company_number = %s" if company_number else ""),
+        "delete from pdf_read where status in ('failed', 'nothing_found')" + (" and company_number = %s" if company_number else ""),
         (company_number,) if company_number else ()).rowcount
 
 
@@ -487,6 +487,8 @@ def status(conn) -> dict:
     r = conn.execute("""select count(*) filter (where status = 'done') as done,
                                count(*) filter (where status = 'done' and method = 'ocr') as by_ocr,
                                count(*) filter (where status = 'done' and method = 'data') as by_data,
+                               count(*) filter (where status = 'done' and method = 'claude') as by_claude,
+                               count(*) filter (where status = 'closed') as closed,
                                count(*) filter (where status = 'nothing_found') as nothing_found,
                                count(*) filter (where status = 'failed') as failed,
                                max(read_at) as last_at from pdf_read""").fetchone()
@@ -509,7 +511,8 @@ def redo(conn) -> dict:
     conn.execute("""delete from figure_check k using (select unnest(%s::text[]) as n, unnest(%s::date[]) as p) g
                     where k.company_number = g.n and k.period_end = g.p""",
                  ([r["company_number"] for r in gone], [r["period_end"] for r in gone]))
-    years = conn.execute("delete from pdf_read where coalesce(method, '') <> 'data' or status <> 'done'").rowcount
+    years = conn.execute("""delete from pdf_read where status in ('failed', 'nothing_found')
+                            or (status = 'done' and method in ('text', 'ocr'))""").rowcount
     nums = sorted({r["company_number"] for r in gone})
     # Rescore with rescore_later(nums) once this is committed.
     return {"figures_cleared": len(gone), "companies": len(nums), "years_queued": years, "_nums": nums}
@@ -690,3 +693,17 @@ def correct(conn, company_number: str, period_end: str, values: dict) -> dict:
                      (num, f"Corrected the {pe:%b %Y} accounts figures read from the PDF: " + "; ".join(changes)))
     mark_checked(conn, num, str(pe))
     return {"changed": changes}
+
+
+def mark_read_by_claude(conn, company_number: str, period_end) -> int:
+    """A year Claude read and saved: the PDF reading it replaces is done."""
+    return conn.execute("""update pdf_read set status = 'done', method = 'claude', note = 'Read and saved by Claude', read_at = now()
+                           where company_number = %s and abs(made_up - %s::date) <= 45 and status <> 'done'""",
+                        (company_number.strip().upper(), str(period_end))).rowcount
+
+
+def close(conn, company_number: str, made_up: str, reason: str) -> int:
+    """Checked and nothing to read (e.g. dormant, no profit and loss, illegible): off the list for good."""
+    return conn.execute("""update pdf_read set status = 'closed', note = %s, read_at = now()
+                           where company_number = %s and made_up = %s::date and status <> 'done'""",
+                        (f"Closed: {reason.strip()[:300]}", company_number.strip().upper(), made_up)).rowcount

@@ -1335,3 +1335,27 @@ def test_control_only_person_is_not_the_owner_and_research_flows_to_subsidiaries
     f = scoring.load_facts(c, "77000002")[0]
     assert f["research_ownership"] == "investor_backed" and f["ownership_from_parent"]
     c.rollback()
+
+
+def test_claude_saving_or_closing_takes_a_year_off_the_unreadable_list(loaded):
+    import json as _j
+
+    from acquireos import mcp_server as m, pdfaccounts
+
+    loaded.commit()
+    with db.conn() as c:
+        num = c.execute("select company_number from company order by company_number limit 1").fetchone()["company_number"]
+        c.execute("delete from pdf_read where company_number = %s", (num,))
+        c.execute("""insert into pdf_read (company_number, made_up, status, method, figures) values
+                     (%s, '2022-03-31', 'nothing_found', 'ocr', '{}'), (%s, '2021-03-31', 'failed', 'ocr', '{}')""", (num, num))
+    r = _j.loads(m.save_financials(company_number=num, period_end="2022-03-31", source_url="https://example.com", turnover=1_234_567))
+    assert r.get("checked")
+    assert "Closed." == m.close_unreadable_accounts(company_number=num, made_up_date="2021-03-31", reason="dormant")
+    with db.conn() as c:
+        assert not [f for f in pdfaccounts.failures(c, 500) if f["company_number"] == num]
+        rows = {str(x["made_up"]): (x["status"], x["method"]) for x in c.execute("select * from pdf_read where company_number = %s", (num,))}
+        assert rows == {"2022-03-31": ("done", "claude"), "2021-03-31": ("closed", "ocr")}
+        pdfaccounts.redo(c)  # a redo keeps Claude's reads and closed years
+        assert c.execute("select count(*) as n from pdf_read where company_number = %s", (num,)).fetchone()["n"] == 2
+        assert pdfaccounts.status(c)["closed"] >= 1
+        c.rollback()

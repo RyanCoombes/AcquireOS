@@ -156,12 +156,27 @@ def read_accounts_pdf(company_number: str, made_up_date: str | None = None) -> s
 
 @server.tool(description=(
     "Accounts years the automatic PDF reader couldn't read (company, year end, why, how: text or OCR), newest first. "
-    "Work through them with read_accounts_pdf and save_financials when the user asks."))
+    "Work through them with read_accounts_pdf and save_financials when the user asks: a year you save leaves the list; "
+    "one with nothing to save (dormant, no profit and loss, illegible) close with close_unreadable_accounts and the reason."))
 def list_unreadable_accounts(limit: int = 50) -> str:
     from . import pdfaccounts
 
     with db.conn() as c:
         return _j([{k: v for k, v in r.items() if k != "sample"} for r in pdfaccounts.failures(c, min(max(limit, 1), 500))])
+
+
+@server.tool(description=(
+    "Close a year on the 'couldn't be read' list that has no figures to save, after you have looked at the PDF: e.g. "
+    "dormant, a balance sheet with no profit and loss to add, illegible, or not the company's own accounts. Give the "
+    "reason. Years you read and save with save_financials leave the list by themselves: don't close those."))
+def close_unreadable_accounts(company_number: str, made_up_date: str, reason: str) -> str:
+    from . import pdfaccounts
+
+    if not reason.strip():
+        return "Give a reason."
+    with db.conn() as c:
+        n = pdfaccounts.close(c, company_number, made_up_date, reason)
+    return "Closed." if n else "No open entry for that company and year end (it may already be done or closed)."
 
 
 @server.tool(description=(
@@ -244,6 +259,10 @@ def save_financials(company_number: str, period_end: str, source_url: str, turno
             except (TypeError, ValueError):
                 return a == b
         not_kept = {k: {"sent": v, "stored": back.get(k)} for k, v in vals.items() if not same(back.get(k), v)}
+        if not not_kept:
+            from . import pdfaccounts
+
+            pdfaccounts.mark_read_by_claude(c, num, pe)  # off the "couldn't be read" list
         c.execute("""insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)
                      values (%s, 'fact', %s, %s, 'Accounts PDF', 'claude (mcp)', 'high')""",
                   (num, f"Figures read from the accounts to {period_end}: " +

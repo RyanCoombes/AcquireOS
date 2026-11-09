@@ -301,6 +301,8 @@ export const api = {
   pdfCorrect: (company_number: string, period_end: string, values: Record<string, number | null>) =>
     req<{ changed: string[] }>("/api/pdf-read/correct", { method: "POST", body: JSON.stringify({ company_number, period_end, values }) }),
   pdfChecked: (company_number: string, period_end: string) => req<{ ok: boolean }>("/api/pdf-read/checked", { method: "POST", body: JSON.stringify({ company_number, period_end }) }),
+  pdfClose: (company_number: string, made_up: string, reason: string) =>
+    req<PdfRead & { closed: number }>("/api/pdf-read/close", { method: "POST", body: JSON.stringify({ company_number, made_up, reason }) }),
   pdfReadSet: (paused: boolean) => req<PdfRead>("/api/pdf-read", { method: "PUT", body: JSON.stringify({ paused }) }),
   chSync: () => req<ChSync>("/api/ch-sync"),
   chSyncSet: (paused: boolean) => req<ChSync>("/api/ch-sync", { method: "PUT", body: JSON.stringify({ paused }) }),
@@ -416,7 +418,7 @@ export interface OwnerDetail {
 
 export type PdfFailure = { company_number: string; name: string; made_up: string; status: string; method: string | null;
   note: string | null; read_at: string; tries: number; sample: string | null };
-export type PdfRead = { done: number; by_ocr: number; by_data?: number; nothing_found: number; failed: number; last_at: string | null;
+export type PdfRead = { done: number; by_ocr: number; by_data?: number; by_claude?: number; closed?: number; nothing_found: number; failed: number; last_at: string | null;
   queue: number; ocr: boolean; paused: boolean; suspicious?: number };
 export type PdfYear = { company_number: string; name: string; period_end: string; made_up: string; method?: string | null;
   read_at?: string; checked: boolean; why: string[] };

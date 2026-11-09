@@ -1814,6 +1814,24 @@ def pdf_read_checked(body: CheckedIn):
         return {"ok": True}
 
 
+class CloseIn(BaseModel):
+    company_number: str
+    made_up: str
+    reason: str
+
+
+@app.post("/api/pdf-read/close")
+def pdf_read_close(body: CloseIn):
+    """Take a year off the 'couldn't be read' list for good, with the reason."""
+    from . import pdfaccounts
+
+    if not body.reason.strip():
+        raise HTTPException(400, "Give a reason")
+    with db.conn() as c:
+        n = pdfaccounts.close(c, body.company_number, body.made_up, body.reason)
+        return {"closed": n, **pdfaccounts.status(c)}
+
+
 @app.get("/api/pdf-read/years")
 def pdf_read_years(show: str = "check", q: str | None = None, limit: int = 200):
     """PDF-read years to check: those that look wrong (show=check) or all."""

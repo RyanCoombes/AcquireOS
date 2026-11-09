@@ -467,8 +467,8 @@ function PdfReadPanel() {
         <span className={`chip ${state[1]}`}>{state[0]}</span>
         <button className="btn quiet" style={{ marginLeft: "auto" }} onClick={toggle}>{st.paused ? "Resume" : "Pause"}</button></div>
       <p className="small" style={{ margin: 0 }}>
-        <b>{int(st.done)}</b> read{st.by_ocr || st.by_data ? <> ({[st.by_ocr ? `${int(st.by_ocr)} by OCR` : "", st.by_data ? `${int(st.by_data)} as data` : ""].filter(Boolean).join(", ")})</> : null}
-        {" · "}<b>{int(st.nothing_found + st.failed)}</b> couldn't be read
+        <b>{int(st.done)}</b> read{st.by_ocr || st.by_data || st.by_claude ? <> ({[st.by_ocr ? `${int(st.by_ocr)} by OCR` : "", st.by_data ? `${int(st.by_data)} as data` : "", st.by_claude ? `${int(st.by_claude)} by Claude` : ""].filter(Boolean).join(", ")})</> : null}
+        {" · "}<b>{int(st.nothing_found + st.failed)}</b> couldn't be read{st.closed ? <> · {int(st.closed)} closed</> : null}
         {" · "}<b>{int(st.queue)}</b> waiting{st.last_at ? <> · last {dateTime(st.last_at)}</> : null}
       </p>
       <PdfFailures count={st.nothing_found + st.failed} onRetried={setSt} />
@@ -697,7 +697,13 @@ function PdfFailures({ count, onRetried }: { count: number; onRetried: (s: PdfRe
                     <td>{why(r)}{r.tries > 1 ? <span className="faint"> · tried {r.tries}×</span> : null}</td>
                     <td className="nowrap">
                       {r.sample && <button className="linkish small" onClick={() => setOpen(open === k ? null : k)}>{open === k ? "Hide" : "What was read"}</button>}{" "}
-                      <a className="small" href={`https://find-and-update.company-information.service.gov.uk/company/${r.company_number}/filing-history`} target="_blank" rel="noreferrer">PDF ↗</a>
+                      <a className="small" href={`https://find-and-update.company-information.service.gov.uk/company/${r.company_number}/filing-history`} target="_blank" rel="noreferrer">PDF ↗</a>{" "}
+                      <button className="linkish small" title="Checked: nothing to read here. Takes it off this list for good." onClick={async () => {
+                        const why = prompt(`Close ${r.name}, year to ${String(r.made_up).slice(0, 10)}? Why (e.g. dormant, no profit and loss, illegible)?`);
+                        if (!why?.trim()) return;
+                        onRetried(await api.pdfClose(r.company_number, String(r.made_up).slice(0, 10), why.trim()));
+                        setRows((xs) => (xs ?? []).filter((x) => x !== r));
+                      }}>Close</button>
                     </td>
                   </tr>
                   {open === k && <tr><td colSpan={5}><pre className="pdfsample">{r.sample}</pre></td></tr>}
