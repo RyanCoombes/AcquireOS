@@ -7,7 +7,7 @@ import DealProgress from "../components/DealProgress";
 import MyScores from "../components/MyScores";
 import Financials from "../components/Financials";
 import { nextInList, RuleOutChips, type RuleOutPick } from "../components/RuleOut";
-import { Enrichment, Location } from "../components/CompanyExtras";
+import { Enrichment, Location, shortSummary } from "../components/CompanyExtras";
 import { Charges, Filings, Fold, Head, OwnersDirectors, WebsiteFinder } from "../components/Profile";
 import { ageFrom, CHANGE_KIND, chUrl, date, describeChange, int, isBadStatus, LINK_KIND, money, OWNERSHIP, range, relDays, years } from "../format";
 
@@ -225,7 +225,19 @@ export default function Company() {
             <p className="summary">{overviewSentence(data)}</p>
             <dl className="facts">
               <dt>Type</dt><dd>{companyType(c.company_type)}{prof.is_community_interest_company ? " · community interest company" : ""}</dd>
-              {activity && <><dt>What it does</dt><dd>{activity.principal_activity}<span className="faint small"> · its own words, {date(activity.period_end)} accounts</span></dd></>}
+              {data.enrichment?.summary ? <><dt>What it does</dt><dd>{shortSummary(data.enrichment.summary)}<span className="faint small"> · research{data.enrichment.updated_at ? `, ${date(data.enrichment.updated_at)}` : ""}</span>
+                  {activity && <div className="faint small">In its accounts: {activity.principal_activity}</div>}</dd></>
+                : activity && <><dt>What it does</dt><dd>{activity.principal_activity}<span className="faint small"> · its own words, {date(activity.period_end)} accounts</span></dd></>}
+              {data.enrichment?.website && <><dt>Website</dt><dd><a href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "")} ↗</a></dd></>}
+              {(data.enrichment?.facts ?? []).length > 0 && <><dt>Key facts</dt><dd><ul className="ov-facts">
+                {data.enrichment!.facts!.slice(0, 8).map((f, i) => <li key={i}><b>{f.label}:</b> {f.value}
+                  {f.source_url ? <> <a className="faint small" href={f.source_url} target="_blank" rel="noreferrer">{hostOf(f.source_url)} ↗</a></> : null}</li>)}
+              </ul></dd></>}
+              {(data.enrichment?.links ?? []).length > 0 && <><dt>News & links</dt><dd><ul className="ov-links">
+                {[...data.enrichment!.links!].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? ""))).slice(0, 6).map((l, i) => (
+                  <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.title} ↗</a>
+                    <span className="faint small"> · {[l.kind !== "news" ? (l.kind.charAt(0).toUpperCase() + l.kind.slice(1)) : null, hostOf(l.url), l.date ? date(l.date) : null].filter(Boolean).join(" · ")}</span></li>))}
+              </ul></dd></>}
               {yearEnd && <><dt>Year end</dt><dd>{yearEnd}{prof.accounts?.last_accounts?.type ? <span className="faint"> · last filed as {String(prof.accounts.last_accounts.type).replace(/-/g, " ")}</span> : null}</dd></>}
               {prof.foreign_company_details && <><dt>Overseas company</dt><dd>
                 {[prof.foreign_company_details.legal_form, prof.foreign_company_details.originating_registry?.country && `registered in ${prof.foreign_company_details.originating_registry.country}`,
@@ -236,7 +248,6 @@ export default function Company() {
                 {prof.branch_company_details.parent_company_number ? <> · <Link to={`/c/${prof.branch_company_details.parent_company_number}`}>{prof.branch_company_details.parent_company_number}</Link></> : null}
                 {prof.branch_company_details.business_activity ? <div className="faint small">{prof.branch_company_details.business_activity}</div> : null}</dd></>}
               <dt>Industry</dt><dd>{data.sics.length ? data.sics.map((x) => <div key={x.code}>{x.description} <span className="faint">· {x.code}</span></div>) : c.sic_codes.join(", ") || "—"}</dd>
-              {data.enrichment?.website && <><dt>Website</dt><dd><a href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "")} ↗</a></dd></>}
               <dt>Registered office</dt><dd>{c.registered_address ?? "—"} <Flags address={c.address_flag} /></dd>
               {c.region && <><dt>Region</dt><dd>{c.region}</dd></>}
               {(data.enrichment?.ownership || (own && own.ownership_type !== "unknown")) && <><dt>Ownership</dt><dd>
@@ -676,7 +687,7 @@ function Research({ data, num, onAdded }: { data: CompanyDetail; num: string; on
 }
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, " ");
-const hostOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u; } };
+const hostOf = (u: string) => { try { const h = new URL(u).hostname.replace(/^www\./, ""); return /company-information\.service\.gov\.uk$/.test(h) ? "Companies House" : h; } catch { return u; } };
 
 
 function overdue(d: string | null | undefined, status: string | null) {

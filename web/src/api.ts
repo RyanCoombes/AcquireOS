@@ -193,6 +193,7 @@ export interface CompanyDetail {
     ownership?: string | null; ownership_note?: string | null; trading_postcode?: string | null; trading_region?: string | null;
     locations?: { name: string | null; address: string | null; postcode: string | null; kind: string; lat?: number | null; lon?: number | null }[];
     facts?: { label: string; value: string; source_url: string | null }[];
+    links?: { title: string; url: string; date: string | null; kind: string }[] | null;
   } | null;
   issues: { id: number; issue: string; detail: string | null; suggested_fix: string | null; status: string; created_by: string | null; created_at: string; resolution: string | null }[];
   notes: Note[];

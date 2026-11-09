@@ -73,14 +73,49 @@ def _clean_facts(facts: list, source_url: str) -> list[dict]:
     return out
 
 
+def _clean_links(links: list) -> list[dict]:
+    out = []
+    for x in links or []:
+        if not isinstance(x, dict) or not re.match(r"^https?://", str(x.get("url") or "").strip()) or not str(x.get("title") or "").strip():
+            raise EnrichError("Each link is {title, url (http/https), date?, kind?: news|data|other}")
+        out.append({"title": str(x["title"]).strip()[:200], "url": str(x["url"]).strip(),
+                    "date": (str(x.get("date")).strip()[:10] or None) if x.get("date") else None,
+                    "kind": x.get("kind") if x.get("kind") in ("news", "data", "other") else "news"})
+    return out
+
+
+SUMMARY_MAX = 320
+
+
+def short_summary(text: str) -> str:
+    """What it does, in a sentence or two: the first sentences of the first
+    paragraph, without a heading like "WHAT IT DOES:"."""
+    first = next((p.strip() for p in re.split(r"\n\s*\n|\n(?=[A-Z][A-Z /&()-]{3,}:)", text.strip()) if p.strip()), "")
+    first = re.sub(r"^[A-Z][A-Z /&()-]{2,}:\s*", "", first).replace("\n", " ")
+    sents = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])", first)
+    out = ""
+    for sn in sents:
+        if out and len(out) + len(sn) + 1 > SUMMARY_MAX:
+            break
+        out = f"{out} {sn}".strip()
+        if len(out) >= 140:
+            break
+    return out if len(out) <= SUMMARY_MAX + 80 else out[:SUMMARY_MAX].rsplit(" ", 1)[0] + "…"
+
+
 def save_enrichment(conn, company_number: str, *, source_url: str, website: str | None = None,
                     business_type: str | None = None, recurring_revenue: str | None = None,
                     field_service: str | None = None, summary: str | None = None,
                     confidence: str = "medium", source_label: str | None = None, by: str = "claude",
                     locations: list | None = None, facts: list | None = None, linkedin: str | None = None,
                     phone: str | None = None, sources: list | None = None, ownership: str | None = None,
-                    ownership_note: str | None = None) -> dict:
+                    ownership_note: str | None = None, links: list | None = None) -> dict:
     num = company_number.strip().upper()
+    # The overview shows a sentence or two on what it does; a longer write-up is
+    # kept in full in the research history (below), not on the overview.
+    full_summary = summary
+    if summary and (len(summary) > SUMMARY_MAX + 80 or "\n" in summary.strip()):
+        summary = short_summary(summary)
     if not conn.execute("select 1 from company where company_number = %s", (num,)).fetchone():
         raise EnrichError(f"Company {num} is not in AcquireOS")
     if not source_url or not source_url.strip():
@@ -125,9 +160,12 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
         given["trading_region"] = region_for(head["postcode"]) if head else None
     if fct is not None:
         given["facts"] = json.dumps(fct)
+    lks = _clean_links(links) if links is not None else None
+    if lks is not None:
+        given["links"] = json.dumps(lks)
     if not given and not extra_sources:
         raise EnrichError("Nothing to save: give at least one of website, business_type, recurring_revenue, "
-                          "field_service, summary, locations, facts, linkedin, phone or sources")
+                          "field_service, summary, locations, facts, links, linkedin, phone or sources")
     if not given:  # sources only
         for url, label in extra_sources:
             conn.execute("""insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)
@@ -156,7 +194,7 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
     else:
         given_note = None
     src = None if source_url == "manual" else source_url
-    rows = [(kinds[k], v if k == "summary" else given_note if (k == "ownership" and given_note) else
+    rows = [(kinds[k], (full_summary or v) if k == "summary" else given_note if (k == "ownership" and given_note) else
              f"{labels[k]}: {(TYPE_LABELS.get(v, v) if v else 'as Companies House shows') if k == 'ownership' else v}", src, source_label)
             for k, v in given.items() if k in labels]
     for loc in locs or []:
@@ -166,6 +204,8 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
         rows.append(("fact", f"{f['label']}: {f['value']}", f["source_url"], None))
     for url, label in extra_sources:
         rows.append(("source", label or "Source", url, label))
+    for lk in lks or []:
+        rows.append(("link", lk["title"] + (f" ({lk['date']})" if lk.get("date") else ""), lk["url"], lk["kind"]))
     for kind, content, url, label in rows:
         conn.execute(
             """insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)

@@ -1456,3 +1456,8 @@ section.oneline { padding-top: 10px; padding-bottom: 10px; } section.oneline .se
 .pc-lines li { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 8px; }
 .pc-lines .k { color: var(--ink-3); }
 .pc-b.sh { background: #eef3ff; color: #2f62d8; }
+
+/* Overview: key facts and news as short bullets */
+.ov-facts, .ov-links { margin: 0; padding-left: 16px; display: grid; gap: 3px; }
+.ov-facts li, .ov-links li { line-height: 1.45; }
+.enr-full { margin: 8px 0; } .enr-full summary { cursor: pointer; color: var(--ink-2); }

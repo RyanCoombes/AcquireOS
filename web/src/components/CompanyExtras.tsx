@@ -94,6 +94,20 @@ const BT_LABEL: Record<string, string> = { software: "Software", saas: "SaaS", d
 
 const WEB_MSG: Record<string, string> = {};
 
+/** What it does in a sentence or two (older saves can be long write-ups). */
+export function shortSummary(text: string): string {
+  const first = (text.trim().split(/\n\s*\n|\n(?=[A-Z][A-Z /&()-]{3,}:)/).find((p) => p.trim()) ?? "").trim()
+    .replace(/^[A-Z][A-Z /&()-]{2,}:\s*/, "").replace(/\n/g, " ");
+  if (first.length <= 400) return first;
+  let out = "";
+  for (const sn of first.split(/(?<=[.!?])\s+(?=[A-Z0-9"'(])/)) {
+    if (out && out.length + sn.length + 1 > 320) break;
+    out = `${out} ${sn}`.trim();
+    if (out.length >= 140) break;
+  }
+  return out.length <= 400 ? out : out.slice(0, 320).replace(/\s+\S*$/, "") + "…";
+}
+
 export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail; num: string; onSaved: () => void; finder?: React.ReactNode }) {
   const e = data.enrichment;
   const [edit, setEdit] = useState(false);
@@ -150,17 +164,15 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
             {e?.linkedin && e?.phone && " · "}{e?.phone && <a href={`tel:${e.phone.replace(/\s/g, "")}`}>{e.phone}</a>}</div>
         )}
       </div>
-      {e?.summary && <div className="enr-summary"><Digest text={e.summary} /><Src url={sourceFor("summary")} /></div>}
-      {(e?.facts ?? []).length > 0 && (
-        <table className="facts">
-          <tbody>
-            {e!.facts!.map((f, i) => (
-              <tr key={i}><th>{f.label}</th><td>{f.value}</td>
-                <td className="src">{f.source_url ? <a href={f.source_url} target="_blank" rel="noreferrer">{hostOf(f.source_url)} ↗</a> : <span className="faint">no source</span>}</td></tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      {(() => {
+        // The full write-up (the longest research summary) folded away; the overview shows what it does, facts and links.
+        const full = [...data.research].filter((r) => r.kind === "summary").sort((a, b) => b.content.length - a.content.length)[0];
+        return full && full.content.length > (e?.summary?.length ?? 0) + 40 ? (
+          <details className="enr-full"><summary className="small">Full research write-up · {date(full.retrieved_at)}</summary>
+            <div className="enr-summary"><Digest text={full.content} /><Src url={full.source_url} /></div></details>
+        ) : null;
+      })()}
+      {((e?.facts ?? []).length > 0 || (e?.links ?? []).length > 0 || e?.summary) && <div className="faint small" style={{ margin: "6px 0" }}>What it does, key facts and news are on the Overview.</div>}
       {(e?.locations ?? []).length > 0 && (
         <div className="faint small" style={{ margin: "6px 0" }}>{e!.locations!.length} {e!.locations!.length === 1 ? "office" : "offices and sites"}: {e!.locations!.map((l) => l.name ?? l.postcode ?? cap(l.kind)).join(", ")} (see Locations)</div>
       )}

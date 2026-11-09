@@ -1273,6 +1273,7 @@ class EnrichIn(BaseModel):
     sources: list | None = None
     ownership: str | None = None
     ownership_note: str | None = None
+    links: list | None = None
 
 
 @app.post("/api/companies/{num}/enrichment")

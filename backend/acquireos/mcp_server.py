@@ -319,13 +319,17 @@ def audit_queue(check: str = "all", limit: int = 20, min_score: float = 0, pipel
     "Save researched facts about a company. source_url is required: the page where you verified it "
     "('manual' only if the user told you). business_type: " + "|".join(enrich.BUSINESS_TYPES) +
     ". recurring_revenue and field_service: yes|partly|no|unknown. confidence: high|medium|low. "
-    "summary may use short paragraphs and '- ' bullet lines; keep it to what the business does, its customers and "
-    "people. Never put accounts figures (turnover, profit, staff, assets) only in the summary: save each year you "
+    "summary: ONE or TWO plain sentences on what the business does and for whom (shown on the company's overview). "
+    "Longer analysis is kept in full in the research history, but only its first sentences show, so put each finding "
+    "in its proper field instead: facts for key points, links for news, locations for offices, ownership for who owns it. "
+    "Never put accounts figures (turnover, profit, staff, assets) only in the summary: save each year you "
     "read with save_financials, so they are used for scoring, the charts and the valuation. "
     "locations: every office or site found, as [{name, address, postcode, kind}] with kind "
     + "|".join(enrich.LOCATION_KINDS) + " (replaces the saved list, so send all of them). "
-    "facts: other key facts, each with its own source, as [{label, value, source_url}] e.g. "
+    "facts: 3 to 8 short key points shown as bullets, each with its own source, as [{label, value, source_url}] e.g. "
     "{label: 'Delisted from AIM', value: '11 Apr 2024', source_url: ...} (replaces the saved list). "
+    "links: relevant news articles and data pages, as [{title, url, date (YYYY-MM-DD), kind: news|data|other}] "
+    "(replaces the saved list; newest first). "
     "linkedin, phone: company contact links. sources: extra pages used, as [url] or [{url, label}]. "
     "ownership: what research shows, when it differs from Companies House (e.g. sold to a group): one of "
     "owner_held|group_owned|investor_backed|eot|trust|foreign_owned, with ownership_note saying what and when "
@@ -341,14 +345,14 @@ def save_enrichment(company_number: str, source_url: str, website: str | None = 
                     confidence: str = "medium", source_label: str | None = None,
                     locations: list[dict] | None = None, facts: list[dict] | None = None,
                     linkedin: str | None = None, phone: str | None = None, sources: list | None = None,
-                    ownership: str | None = None, ownership_note: str | None = None) -> str:
+                    ownership: str | None = None, ownership_note: str | None = None, links: list[dict] | None = None) -> str:
     with db.conn() as c:
         return _j(enrich.save_enrichment(c, company_number, source_url=source_url, website=website,
                                          business_type=business_type, recurring_revenue=recurring_revenue,
                                          field_service=field_service, summary=summary, confidence=confidence,
                                          source_label=source_label, locations=locations, facts=facts,
                                          linkedin=linkedin, phone=phone, sources=sources, ownership=ownership,
-                                         ownership_note=ownership_note, by="claude (mcp)"))
+                                         ownership_note=ownership_note, links=links, by="claude (mcp)"))
 
 
 @server.tool(description="Record a problem in the data for the user to review, e.g. wrong SIC code, owner link "

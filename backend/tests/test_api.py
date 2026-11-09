@@ -1394,3 +1394,19 @@ def test_trustees_are_not_owners_and_a_trust_holdco_is_not_a_buyer(loaded):
     sig = c.execute("select signals from company_signal where company_number = '78000002'").fetchone()
     assert not sig or "possible_buyer" not in sig["signals"]
     c.rollback()
+
+
+def test_long_summary_is_shortened_and_links_saved(loaded):
+    from acquireos import enrich
+
+    num = loaded.execute("select company_number from company order by company_number limit 1").fetchone()["company_number"]
+    long = ("WHAT IT DOES: Example gives firms phone lines inside Teams. Staff make calls from Teams in 100 countries.\n\n"
+            "LATEST: revenue £14.9m, adjusted EBITDA -£0.7m.\n\nOWNERSHIP: founders still co-CEOs.")
+    enrich.save_enrichment(loaded, num, source_url="https://example.com", summary=long, by="claude",
+                           links=[{"title": "Raises £12m", "url": "https://example.com/news", "date": "2024-11-04"}])
+    e = loaded.execute("select summary, links from enrichment where company_number = %s", (num,)).fetchone()
+    assert e["summary"] == "Example gives firms phone lines inside Teams. Staff make calls from Teams in 100 countries."
+    assert e["links"][0]["title"] == "Raises £12m" and e["links"][0]["kind"] == "news"
+    full = loaded.execute("select content from research where company_number = %s and kind = 'summary' order by id desc limit 1", (num,)).fetchone()
+    assert "OWNERSHIP: founders" in full["content"]   # the whole write-up is kept
+    loaded.rollback()
