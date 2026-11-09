@@ -382,6 +382,19 @@ const ownSentence = (t: string) => t
   .replace(/^Classed as (.+) from the owner records\.$/, (_m, x: string) => x.charAt(0).toUpperCase() + x.slice(1) + ".");
 
 /** What control an owner has besides shares, e.g. "appoints directors". */
+/** The owners-register entry in plain words: what they hold or control. */
+function pscText(natures: string[]): string {
+  const rng = (re: RegExp) => { const m = natures.map((n) => n.match(re)).find(Boolean); return m ? (m[2] === "100" ? `over ${m[1]}%` : `${m[1]}–${m[2]}%`) : null; };
+  const shares = rng(/ownership-of-shares-(\d+)-to-(\d+)-percent/), votes = rng(/voting-rights-(\d+)-to-(\d+)-percent/);
+  const bits = [shares && `holds ${shares} of the shares`, votes && `${votes} of the votes`,
+    natures.some((n) => n.startsWith("right-to-appoint-and-remove-directors")) && "can appoint the board"].filter(Boolean) as string[];
+  if (!shares && !votes) {
+    return bits.length ? `${bits.join(", ")}; no shareholding over 25%` : "influence or control only: no shareholding over 25%";
+  }
+  return bits.join(", ");
+}
+const monthYear = (d: string) => new Date(d).toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+
 function controlText(natures: string[]): string | null {
   const bits: string[] = [];
   if (natures.some((n) => n.startsWith("voting-rights"))) {
@@ -406,6 +419,7 @@ type Who = {
   occupation?: string | null; residence?: string | null; nationality?: string | null; classes?: Set<string>;
   disq?: { from: string | null; until: string | null; reason: string | null; companies: string[] }[];
   ownSince?: string | null; dirSince?: string | null; role?: string | null;
+  natures?: string[]; stmtPct?: number | null;
 };
 
 /** Shareholders with nothing else known: one compact row each, largest first. */
@@ -433,7 +447,7 @@ function ShareholderList({ rows, showClass, title }: { rows: { key: string; name
 
 export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: React.ReactNode }) {
   const [view, setView] = useState<"now" | "time">("now");
-  const [only, setOnly] = useState<null | "owners" | "directors" | "shareholders">(null);
+  const [only, setOnly] = useState<null | "psc" | "directors" | "shareholders">(null);
   const ch = data.ch;
   const own = data.ownership;
   const isCo = (n: string) => /\b(LIMITED|LTD|PLC|LLP|TRUST|NOMINEES?)\b/i.test(n);
@@ -493,18 +507,22 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
     w.since = w.since ?? p.notified_on;
     w.ownSince = w.ownSince && p.notified_on && w.ownSince < p.notified_on ? w.ownSince : p.notified_on ?? w.ownSince;
     w.control = controlText(p.natures);
+    w.natures = p.natures;
     const s = stmt.get(pk(p));
+    if (s) { w.stmtPct = s.pct; w.classes = classesOf.get(pk(p)); }
     if (useStatement && s) w.pct = s.pct;
     else if (s) w.note = { warn: false, text: `${stmtLabel.charAt(0).toUpperCase() + stmtLabel.slice(1)} showed ${s.pct}%` };
   }
   const ceasedKeys = new Set(ceased.map(pk));
+  const stmtOnly = new Set<string>();
   const stillHolding = new Set<string>();
   for (const [k, s] of stmt) {
     if (map.has(k)) continue;
+    stmtOnly.add(k);
     if (ceasedKeys.has(k) && !useStatement) continue;  // left the register after the statement: a previous owner
     const w = get(s.name, k.startsWith("C:"));
     w.roles.add("Shareholder");
-    w.pct = s.pct;
+    w.pct = s.pct; w.stmtPct = s.pct;
     w.classes = classesOf.get(k);
     stillHolding.add(k);
     const gone = ceased.find((p) => pk(p) === k);
@@ -519,6 +537,8 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
   }
   for (const o of (ch?.officers ?? []).filter((x) => !x.resigned_on)) {
     const w = get(o.name, /corporate/.test(o.role ?? ""));
+    const sh = stmt.get(keyOf(o.name, /corporate/.test(o.role ?? "")));
+    if (sh && w.stmtPct == null) { w.stmtPct = sh.pct; w.classes = w.classes ?? classesOf.get(keyOf(o.name, /corporate/.test(o.role ?? ""))); }
     w.roles.add((o.role ?? "").includes("secretary") ? "Secretary" : "Director");
     w.birthYear = w.birthYear ?? o.birth_year;
     w.since = o.appointed_on && (!w.since || o.appointed_on < w.since) ? o.appointed_on : w.since;
@@ -576,21 +596,19 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
         </div>
       )}
       {(() => {
-        const dirs = (ch?.officers ?? []).filter((o) => !o.resigned_on && !(o.role ?? "").includes("secretary")).length;
-        const owners = current.length;
-        const sh = stmt.size;
-        const prev = prevOwners.length + prevDirectors.length;
+        const dirs = (ch?.officers ?? []).filter((o) => !o.resigned_on).length;
+        const tabs: [typeof only, string, number, string][] = [
+          [null, "Everyone", map.size, ""],
+          ["psc", "PSCs", current.length, "People with significant control: the owners register (over 25% of shares or votes, or control)"],
+          ["directors", "Directors", dirs, !ch?.fetched ? "Fetch from Companies House to see directors" : "Directors and secretaries now in post"],
+          ["shareholders", "Shareholders", stmt.size, asAt ? `Exact holdings from the confirmation statement of ${date(asAt)}` : "From the latest confirmation statement that lists shareholders"],
+        ];
         return (
-          <div className="pc-counts" role="group" aria-label="Show only">
-            {([["owners", owners, owners === 1 ? "owner" : "owners", " on the register"], ["shareholders", sh, sh === 1 ? "shareholder" : "shareholders", ""],
-               ["directors", dirs, dirs === 1 ? "director" : "directors", !ch?.fetched ? " (fetch to see)" : ""]] as const)
-              .filter(([k, n]) => k !== "shareholders" || n > 0).map(([k, n, word, tail]) => (
-              <button key={k} className={only === k ? "on" : ""} aria-pressed={only === k} disabled={!n}
-                      onClick={() => setOnly(only === k ? null : k)} title={only === k ? "Show everyone" : `Show only ${word}`}>
-                <b>{n}</b> {word}{tail}</button>
+          <div className="seg2 own-tabs" role="tablist">
+            {tabs.map(([k, label, n, tip]) => (
+              <button key={label} role="tab" aria-selected={only === k} className={only === k ? "on" : ""} disabled={k !== null && !n}
+                      title={tip} onClick={() => setOnly(k)}>{label} <b>{n}</b></button>
             ))}
-            {prev > 0 && <span><b>{prev}</b> previous</span>}
-            {only && <button className="linkish small" onClick={() => setOnly(null)}>Show everyone</button>}
           </div>
         );
       })()}
@@ -602,9 +620,9 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
       {lastChange && (joined.length > 0 || leftOn.length > 0) && (
         <p className="small" style={{ margin: "0 0 10px" }}>
           <span className="chip">Ownership changed {date(lastChange)}</span>{" "}
-          {joined.length > 0 && <>{names(joined)} {joined.length === 1 ? "became an owner" : "became owners"}</>}
+          {joined.length > 0 && <>{names(joined)} joined the owners register</>}
           {joined.length > 0 && leftOn.length > 0 && "; "}
-          {leftOn.length > 0 && <>{names(leftOn)} left</>}.
+          {leftOn.length > 0 && <>{names(leftOn)} left it</>}.
         </p>
       )}
 
@@ -630,12 +648,14 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
       )}
 
       {people.length === 0 ? <div className="faint">No owners or directors on file.</div> : (() => {
-        const filtered = people.filter((w) => !only || (only === "directors" ? w.roles.has("Director")
-              : only === "owners" ? w.roles.has("Owner") : w.roles.has("Shareholder")));
+        const filtered = people.filter((w) => !only || (only === "directors" ? (w.roles.has("Director") || w.roles.has("Secretary"))
+              : only === "psc" ? w.roles.has("Owner") : w.stmtPct != null));
         // People who only hold shares (not directors, not on the owners register,
-        // nothing else known): a compact list, not a card each.
+        // nothing else known): a compact list, not a card each. The Shareholders
+        // tab lists every holder that way, exact percentages, largest first.
         const plain = (w: (typeof people)[number]) => w.roles.size === 1 && w.roles.has("Shareholder") && !w.disq?.length && !w.note;
-        const cardsP = filtered.filter((w) => !plain(w)), listP = filtered.filter(plain);
+        const cardsP = only === "shareholders" ? [] : only ? filtered : filtered.filter((w) => !plain(w));
+        const listP = only === "shareholders" ? filtered : only ? [] : filtered.filter(plain);
         return <>
         {cardsP.length > 0 && <div className="pcards">
           {cardsP.map((w) => {
@@ -647,7 +667,6 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
             const age = w.birthYear ? new Date().getFullYear() - w.birthYear : null;
             const pctText = (useStatement || !w.band) && w.pct != null ? `${w.pct}%` : w.band ? `${w.band[0]}–${w.band[1]}%` : null;
             const barW = (useStatement || !w.band) && w.pct != null ? w.pct : w.est ?? w.band?.[0] ?? 0;
-            const isOwner = w.roles.has("Owner") || w.roles.has("Shareholder");
             const isDir = w.roles.has("Director");
             const recent = (d?: string | null) => !!d && new Date(d).getTime() > yearAgo;
             const since = (d: string | null | undefined) => (d ? <>{new Date(d).toLocaleDateString("en-GB", { month: "short", year: "numeric" })} <span className="faint">({yearsSince(d) ?? 0} {yearsSince(d) === 1 ? "yr" : "yrs"})</span></> : <span className="faint">date not given</span>);
@@ -661,7 +680,8 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                   <div className="pc-title">
                     <div className="pc-name">
                       {w.personId ? <Link to={`/owners/${w.personId}`}>{w.name}</Link> : w.company && w.regNo ? <Link to={`/c/${w.regNo}`}>{w.name}</Link> : w.name}
-                      {isOwner && <span className="pc-b own">{w.control && !pctText ? "Controls" : "Owner"}</span>}
+                      {w.roles.has("Owner") && <span className="pc-b own" title="On the owners register (person with significant control)">PSC</span>}
+                      {w.stmtPct != null && <span className="pc-b sh" title="On the latest confirmation statement">Shareholder</span>}
                       {isDir && <span className="pc-b dir">Director</span>}
                       {w.roles.has("Secretary") && <span className="pc-b sec">Secretary</span>}
                       {(recent(w.dirSince) || recent(w.ownSince)) && <span className="pc-b new">New</span>}
@@ -669,7 +689,8 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                     </div>
                     <div className="pc-sub">
                       {w.company ? <>Company{w.regNo ? ` · ${w.regNo}` : ""}{w.ultimately.length ? <> · owned by {w.ultimately.join(", ")}</> : null}</>
-                        : <>{age ? `Age ${age}` : "Age not known"}{w.occupation ? <> · <span className={/retired/i.test(w.occupation) ? "pc-ret" : ""}>{cap1(w.occupation)}</span></> : null}</>}
+                        : <>{[age ? `Age ${age}` : null, w.residence ? `lives in ${cap1(w.residence)}` : null, w.nationality ? cap1(w.nationality) : null].filter(Boolean).join(" · ") || "Age not known"}
+                            {w.occupation ? <> · <span className={/retired/i.test(w.occupation) ? "pc-ret" : ""}>{cap1(w.occupation)}</span></> : null}</>}
                     </div>
                   </div>
                   <div className="pc-pct">
@@ -677,16 +698,16 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
                       {w.est != null && !(useStatement && w.pct != null) && w.band && w.band[0] !== w.band[1] && <div className="faint small">about {w.est}%</div>}</> : null}
                   </div>
                 </div>
-                <dl className="pc-facts">
-                  {isDir && <><dt>Director since</dt><dd>{since(w.dirSince)}</dd></>}
-                  {isOwner && (w.ownSince ?? w.since) && <><dt>Owner since</dt><dd>{since(w.ownSince ?? w.since)}</dd></>}
-                  {!w.company && (w.residence || w.nationality) && <><dt>Lives in</dt><dd>{[w.residence && cap1(w.residence), w.nationality && cap1(w.nationality)].filter(Boolean).join(" · ")}</dd></>}
-                  {isDir && <><dt>Other boards</dt><dd>{theirs.length ? <>{theirs.length} active: {list(theirs)}{theirs.length > 3 ? <span className="faint"> +{theirs.length - 3}</span> : null}</> : w.boards ? `${w.boards} active` : <span className="faint">none</span>}</dd></>}
-                  {joined.length > 0 && <><dt>Recently joined</dt><dd>{list(joined)}</dd></>}
-                  {left.length > 0 && <><dt>Recently left</dt><dd>{list(left)}</dd></>}
-                  {w.classes && (allClasses.length > 1 || [...w.classes].some((c) => !/^ordinary$/i.test(c))) && <><dt>Shares</dt><dd>{[...w.classes].join(", ")}</dd></>}
-                  {w.control && (!w.band || w.pct == null) && <><dt>Control</dt><dd>{w.control}</dd></>}
-                </dl>
+                <ul className="pc-lines">
+                  {w.roles.has("Owner") && <li><span className="k">Owners register</span><span>{pscText(w.natures ?? [])}{w.ownSince ? <span className="faint"> · since {monthYear(w.ownSince)}</span> : null}</span></li>}
+                  {w.stmtPct != null && <li><span className="k">Shares</span><span><b>{w.stmtPct}%</b>{w.classes && (allClasses.length > 1 || [...w.classes].some((c) => !/^ordinary$/i.test(c))) ? ` (${[...w.classes].join(", ")})` : ""}
+                    <span className="faint"> · confirmation statement{asAt ? ` of ${date(asAt)}` : ""}</span></span></li>}
+                  {isDir && <li><span className="k">Director</span><span>since {since(w.dirSince)}
+                    {theirs.length ? <> · also on {theirs.length} other {theirs.length === 1 ? "board" : "boards"}: {list(theirs)}{theirs.length > 3 ? <span className="faint"> +{theirs.length - 3}</span> : null}</> : w.boards ? <> · also on {w.boards} other boards</> : null}</span></li>}
+                  {w.roles.has("Secretary") && !isDir && <li><span className="k">Secretary</span><span>{w.since ? <>since {since(w.since)}</> : "in post"}</span></li>}
+                  {joined.length > 0 && <li><span className="k">Recently joined</span><span>{list(joined)}</span></li>}
+                  {left.length > 0 && <li><span className="k">Recently left</span><span>{list(left)}</span></li>}
+                </ul>
                 {w.disq?.map((d, i) => (
                   <div key={i} className="wnote warn"><b>Disqualified director</b> {d.from ? `from ${date(d.from)}` : ""}{d.until ? ` to ${date(d.until)}` : ""}
                     {d.reason ? `: ${d.reason}` : ""}{d.companies.length ? ` (${d.companies.slice(0, 3).join(", ")})` : ""}</div>
@@ -704,8 +725,8 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
           })}
         </div>}
         {listP.length > 0 && <ShareholderList rows={listP.map((w) => ({ key: w.key, name: w.name, personId: w.personId, company: w.company, regNo: w.regNo,
-                                                       pct: w.pct ?? null, colour: w.colour, classes: w.classes ? [...w.classes] : [] }))}
-                                              showClass={allClasses.length > 1} title={cardsP.length ? "Other shareholders" : "Shareholders"} />}
+                                                       pct: w.stmtPct ?? w.pct ?? null, colour: w.colour, classes: w.classes ? [...w.classes] : [] }))}
+                                              showClass={allClasses.length > 1} title={only === "shareholders" ? `Shareholders${asAt ? `, confirmation statement of ${date(asAt)}` : ""}` : cardsP.length ? "Other shareholders" : "Shareholders"} />}
         </>;
       })()}
 

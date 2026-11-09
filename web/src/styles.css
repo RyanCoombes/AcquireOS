@@ -1447,3 +1447,12 @@ section.oneline { padding-top: 10px; padding-bottom: 10px; } section.oneline .se
 .shrow .bar { height: 6px; border-radius: 3px; background: var(--canvas); overflow: hidden; } .shrow .bar i { display: block; height: 100%; border-radius: 3px; }
 .shrow b { text-align: right; font-variant-numeric: tabular-nums; }
 @media (max-width: 640px) { .shrow { grid-template-columns: 10px minmax(0, 1fr) 60px; } .shrow .bar { display: none; } }
+
+/* Owners & directors: tabs and plain card lines */
+.own-tabs { margin: 0 0 12px; }
+.own-tabs button b { margin-left: 4px; font-weight: 700; }
+.own-tabs button:disabled { opacity: .45; cursor: default; }
+.pc-lines { list-style: none; margin: 8px 0 0; padding: 0 14px 4px; display: grid; gap: 6px; font-size: 13px; }
+.pc-lines li { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 8px; }
+.pc-lines .k { color: var(--ink-3); }
+.pc-b.sh { background: #eef3ff; color: #2f62d8; }
