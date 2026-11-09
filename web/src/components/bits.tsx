@@ -119,10 +119,10 @@ export function placeSignal(k: string, region?: string | null, focus?: string | 
   return null;
 }
 
-export function Signals({ s, region, focus }: { s?: string[] | null; region?: string | null; focus?: string | null }) {
+export function Signals({ s, region, focus, titles }: { s?: string[] | null; region?: string | null; focus?: string | null; titles?: Record<string, string> }) {
   if (!s?.length) return null;
   const shown = s.map((k) => [k, SIGNALS[k] ?? placeSignal(k, region, focus)] as const).filter(([, v]) => v);
-  return <>{shown.map(([k, v]) => <span key={k} className={`sig ${v![1]}`} title={v![2]}>{v![0]}</span>)}</>;
+  return <>{shown.map(([k, v]) => <span key={k} className={`sig ${v![1]}`} title={titles?.[k] ?? v![2]}>{v![0]}</span>)}</>;
 }
 
 /** ☆ Watch / ★ Watching toggle for a company, owner or director. */

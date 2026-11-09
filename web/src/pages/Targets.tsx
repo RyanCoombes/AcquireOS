@@ -549,9 +549,8 @@ function TargetRow({ r, cols, cursor, onOpen, showBox, mode, sics, dim, href, ti
         <Link className="rowlink" to={href} onClick={(e) => e.stopPropagation()}>{r.name}</Link>
         {bad && <span className="tag red">{cap(r.company_status)}</span>}
         {recent && r.last_kinds?.length ? <span className="tag" title={`Changed ${relDays(r.last_change)}`}>{r.last_kinds.map((k) => CHANGE_KIND[k] ?? k).join(", ")}</span> : null}
-        <Signals s={r.signals} region={r.region} focus={focus} />
-        {r.sold_to && r.signals?.includes("recently_sold") ? <span className="sub" style={{ display: "block" }}>
-          Sold{r.sold_on ? ` ${date(r.sold_on)}` : ""} to {r.sold_to}</span> : null}
+        <Signals s={r.signals} region={r.region} focus={focus}
+                 titles={r.sold_to ? { recently_sold: `Sold${r.sold_on ? ` ${date(r.sold_on)}` : ""} to ${r.sold_to}` } : undefined} />
         {r.same_business?.length ? <Link className="sig grey" to={`/c/${r.same_business[0]}`} onClick={(e) => e.stopPropagation()}
           title="Same owner and address, or a director in common at the same postcode">
           Linked to {r.same_business.length === 1 ? "1 other" : `${r.same_business.length} others`}</Link> : null}
