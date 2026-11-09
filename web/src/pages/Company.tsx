@@ -730,16 +730,21 @@ function companyType(t: string | null): string {
 /** Companies that look related (same owner and address, or a director in
     common at the same postcode), for information. */
 function SameBusiness({ data }: { data: CompanyDetail }) {
-  const others = data.same_business ?? [];
+  const [all, setAll] = useState(false);
+  const others = [...(data.same_business ?? [])].sort((a, b) =>
+    (Number(b.revenue_high ?? 0) - Number(a.revenue_high ?? 0)) || ((b.employees ?? -1) - (a.employees ?? -1)) || a.name.localeCompare(b.name));
   if (!others.length) return null;
+  const shown = all ? others : others.slice(0, 5);
+  const size = (o: (typeof others)[number]) => [o.employees ? `${o.employees} staff` : null, o.revenue_low ? range(o.revenue_low, o.revenue_high) : null].filter(Boolean).join(", ");
   return (
     <div className="callout">
-      <b>Linked:</b>{" "}
-      {others.map((o, i) => (
+      <b>Linked to {others.length} {others.length === 1 ? "company" : "companies"}:</b>{" "}
+      {shown.map((o, i) => (
         <span key={o.company_number}>{i ? "; " : ""}<Link to={`/c/${o.company_number}`}>{o.name}</Link>
-          <span className="faint"> ({o.employees ?? "?"} staff{o.revenue_low ? `, ${range(o.revenue_low, o.revenue_high)}` : ""})</span></span>
+          {size(o) ? <span className="faint"> ({size(o)})</span> : null}</span>
       ))}
-      <Hint text="Same owner and address, or a director in common at the same postcode." />
+      {others.length > 5 && <> <button className="linkish small" onClick={() => setAll(!all)}>{all ? "Show fewer" : `+${others.length - 5} more`}</button></>}
+      <Hint text="Same owner and address, or a director in common at the same postcode. Largest first." />
     </div>
   );
 }
