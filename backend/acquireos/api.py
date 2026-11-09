@@ -628,6 +628,9 @@ def company(num: str, bb: str | None = None):
         from . import chapi
 
         ch_details = chapi.details(c, num)
+        from . import deals as _deals
+
+        deals_list = _deals.events(c, num)
         sc = c.execute(
             "select * from score where company_number = %s and buy_box_id = %s", (num, bb["id"])
         ).fetchone()
@@ -724,7 +727,7 @@ def company(num: str, bb: str | None = None):
         "watched_owners": [r["ref"] for r in c.execute("select ref from watch where kind = 'owner'")],
         "signals": signals, "sold": sold, "same_business": same_business,
         "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
-        "changes": changes, "valuation": val, "fin_summary": fintrends.summary(fin), "ch": ch_details,
+        "changes": changes, "valuation": val, "fin_summary": fintrends.summary(fin), "ch": ch_details, "deals": deals_list,
         "company": row, "financials": fin, "estimate": est, "ownership": own, "people": people,
         "links": links, "score": sc, "state": state or {"status": "new", "rating": None, "tags": []},
         "notes": notes, "research": research, "outreach": outreach,
@@ -1274,6 +1277,7 @@ class EnrichIn(BaseModel):
     ownership: str | None = None
     ownership_note: str | None = None
     links: list | None = None
+    deals: list | None = None
 
 
 @app.post("/api/companies/{num}/enrichment")

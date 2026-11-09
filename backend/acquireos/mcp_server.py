@@ -330,6 +330,11 @@ def audit_queue(check: str = "all", limit: int = 20, min_score: float = 0, pipel
     "{label: 'Delisted from AIM', value: '11 Apr 2024', source_url: ...} (replaces the saved list). "
     "links: relevant news articles and data pages, as [{title, url, date (YYYY-MM-DD), kind: news|data|other}] "
     "(replaces the saved list; newest first). "
+    "deals: sales, acquisitions, mergers, investment rounds, EOT sales, MBOs, listings and delistings involving the "
+    "company, as [{date (YYYY, YYYY-MM or YYYY-MM-DD), kind: acquired|sold|merged|investment|eot|mbo|mbi|disposal|"
+    "listing|delisting|refinancing|other, title (e.g. 'Bought Acme IT Ltd'), counterparty, value (as reported, e.g. "
+    "'£4.2m' or 'undisclosed'), note, source_url}] (replaces the saved list). Companies House events (sold to a company, "
+    "companies it took control of, buy-backs, renames) are shown automatically: add only what research adds. "
     "linkedin, phone: company contact links. sources: extra pages used, as [url] or [{url, label}]. "
     "ownership: what research shows, when it differs from Companies House (e.g. sold to a group): one of "
     "owner_held|group_owned|investor_backed|eot|trust|foreign_owned, with ownership_note saying what and when "
@@ -345,14 +350,14 @@ def save_enrichment(company_number: str, source_url: str, website: str | None = 
                     confidence: str = "medium", source_label: str | None = None,
                     locations: list[dict] | None = None, facts: list[dict] | None = None,
                     linkedin: str | None = None, phone: str | None = None, sources: list | None = None,
-                    ownership: str | None = None, ownership_note: str | None = None, links: list[dict] | None = None) -> str:
+                    ownership: str | None = None, ownership_note: str | None = None, links: list[dict] | None = None, deals: list[dict] | None = None) -> str:
     with db.conn() as c:
         return _j(enrich.save_enrichment(c, company_number, source_url=source_url, website=website,
                                          business_type=business_type, recurring_revenue=recurring_revenue,
                                          field_service=field_service, summary=summary, confidence=confidence,
                                          source_label=source_label, locations=locations, facts=facts,
                                          linkedin=linkedin, phone=phone, sources=sources, ownership=ownership,
-                                         ownership_note=ownership_note, links=links, by="claude (mcp)"))
+                                         ownership_note=ownership_note, links=links, deals=deals, by="claude (mcp)"))
 
 
 @server.tool(description="Record a problem in the data for the user to review, e.g. wrong SIC code, owner link "

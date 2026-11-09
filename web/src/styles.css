@@ -1461,3 +1461,11 @@ section.oneline { padding-top: 10px; padding-bottom: 10px; } section.oneline .se
 .ov-facts, .ov-links { margin: 0; padding-left: 16px; display: grid; gap: 3px; }
 .ov-facts li, .ov-links li { line-height: 1.45; }
 .enr-full { margin: 8px 0; } .enr-full summary { cursor: pointer; color: var(--ink-2); }
+
+/* Overview: deals timeline */
+.ov-deals { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.ov-deals li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 6px; line-height: 1.45; }
+.ov-deals .ic { color: var(--ink-3); text-align: center; font-weight: 700; }
+.ov-deals li.sold .ic, .ov-deals li.eot .ic, .ov-deals li.mbo .ic { color: var(--red); }
+.ov-deals li.acquired .ic, .ov-deals li.merged .ic, .ov-deals li.investment .ic { color: var(--teal); }
+.ov-deals li.more { display: block; }

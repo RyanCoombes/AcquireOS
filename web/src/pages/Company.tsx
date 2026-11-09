@@ -247,6 +247,7 @@ export default function Company() {
               {prof.branch_company_details && <><dt>Branch of</dt><dd>{prof.branch_company_details.parent_company_name ?? "an overseas company"}
                 {prof.branch_company_details.parent_company_number ? <> · <Link to={`/c/${prof.branch_company_details.parent_company_number}`}>{prof.branch_company_details.parent_company_number}</Link></> : null}
                 {prof.branch_company_details.business_activity ? <div className="faint small">{prof.branch_company_details.business_activity}</div> : null}</dd></>}
+              {(data.deals ?? []).length > 0 && <><dt>Deals</dt><dd><DealList deals={data.deals!} /></dd></>}
               <dt>Industry</dt><dd>{data.sics.length ? data.sics.map((x) => <div key={x.code}>{x.description} <span className="faint">· {x.code}</span></div>) : c.sic_codes.join(", ") || "—"}</dd>
               <dt>Registered office</dt><dd>{c.registered_address ?? "—"} <Flags address={c.address_flag} /></dd>
               {c.region && <><dt>Region</dt><dd>{c.region}</dd></>}
@@ -735,6 +736,32 @@ const COMPANY_TYPES: Record<string, string> = {
 function companyType(t: string | null): string {
   if (!t) return "—";
   return COMPANY_TYPES[t.toLowerCase()] ?? t;
+}
+
+
+const DEAL_ICON: Record<string, string> = { sold: "→", acquired: "＋", formed: "＋", merged: "⇄", investment: "£", eot: "♦", mbo: "→", mbi: "→",
+  disposal: "−", listing: "▲", delisting: "▼", refinancing: "£", buyback: "↺", renamed: "✎", owner: "→", other: "•" };
+
+/** Sales, purchases, mergers and other corporate events, newest first; five, then the rest on request. */
+function DealList({ deals }: { deals: NonNullable<CompanyDetail["deals"]> }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? deals : deals.slice(0, 5);
+  const when = (d: (typeof deals)[number]) => d.date_text && d.date_text.length < 10 ? d.date_text : d.date ? date(d.date) : "date unknown";
+  return (
+    <ul className="ov-deals">
+      {shown.map((d, i) => (
+        <li key={i} className={d.kind}>
+          <span className="ic" aria-hidden>{DEAL_ICON[d.kind] ?? "•"}</span>
+          <span><span className="faint small">{when(d)}</span> · {d.counterparty_number && d.title.includes(d.counterparty ?? "\u0000")
+              ? <>{d.title.replace(d.counterparty!, "")}<Link to={`/c/${d.counterparty_number}`}>{d.counterparty}</Link></> : d.title}
+            {d.detail ? <span className="faint"> · {d.detail}</span> : null}
+            <span className="faint small"> · {d.source_url ? <a href={d.source_url} target="_blank" rel="noreferrer">{d.source === "research" ? hostOf(d.source_url) : d.source} ↗</a> : d.source}
+              {d.research_url ? <> · <a href={d.research_url} target="_blank" rel="noreferrer" title={d.research_title ?? undefined}>{hostOf(d.research_url)} ↗</a></> : null}</span></span>
+        </li>
+      ))}
+      {deals.length > 5 && <li className="more"><button className="linkish small" onClick={() => setAll(!all)}>{all ? "Show fewer" : `+${deals.length - 5} more`}</button></li>}
+    </ul>
+  );
 }
 
 

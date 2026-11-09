@@ -84,6 +84,22 @@ def _clean_links(links: list) -> list[dict]:
     return out
 
 
+def _clean_deals(deals: list, source_url: str) -> list[dict]:
+    from .deals import KINDS
+
+    out = []
+    for d in deals or []:
+        if not isinstance(d, dict) or not str(d.get("title") or "").strip() or not re.match(r"^\d{4}(-\d{2}(-\d{2})?)?$", str(d.get("date") or "")):
+            raise EnrichError("Each deal is {date (YYYY, YYYY-MM or YYYY-MM-DD), kind, title, counterparty?, value?, note?, source_url}")
+        src = (d.get("source_url") or source_url or "").strip()
+        out.append({"date": str(d["date"]), "kind": d.get("kind") if d.get("kind") in KINDS else "other",
+                    "title": str(d["title"]).strip()[:200], "counterparty": (str(d.get("counterparty")).strip()[:200] or None) if d.get("counterparty") else None,
+                    "value": (str(d.get("value")).strip()[:80] or None) if d.get("value") else None,
+                    "note": (str(d.get("note")).strip()[:300] or None) if d.get("note") else None,
+                    "source_url": None if src in ("", "manual") else src})
+    return out
+
+
 SUMMARY_MAX = 320
 
 
@@ -109,7 +125,7 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
                     confidence: str = "medium", source_label: str | None = None, by: str = "claude",
                     locations: list | None = None, facts: list | None = None, linkedin: str | None = None,
                     phone: str | None = None, sources: list | None = None, ownership: str | None = None,
-                    ownership_note: str | None = None, links: list | None = None) -> dict:
+                    ownership_note: str | None = None, links: list | None = None, deals: list | None = None) -> dict:
     num = company_number.strip().upper()
     # The overview shows a sentence or two on what it does; a longer write-up is
     # kept in full in the research history (below), not on the overview.
@@ -163,9 +179,12 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
     lks = _clean_links(links) if links is not None else None
     if lks is not None:
         given["links"] = json.dumps(lks)
+    dls = _clean_deals(deals, source_url) if deals is not None else None
+    if dls is not None:
+        given["deals"] = json.dumps(dls)
     if not given and not extra_sources:
         raise EnrichError("Nothing to save: give at least one of website, business_type, recurring_revenue, "
-                          "field_service, summary, locations, facts, links, linkedin, phone or sources")
+                          "field_service, summary, locations, facts, links, deals, linkedin, phone or sources")
     if not given:  # sources only
         for url, label in extra_sources:
             conn.execute("""insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)
@@ -204,6 +223,8 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
         rows.append(("fact", f"{f['label']}: {f['value']}", f["source_url"], None))
     for url, label in extra_sources:
         rows.append(("source", label or "Source", url, label))
+    for d in dls or []:
+        rows.append(("deal", f"{d['date']}: {d['title']}" + (f" ({d['value']})" if d.get("value") else ""), d["source_url"], None))
     for lk in lks or []:
         rows.append(("link", lk["title"] + (f" ({lk['date']})" if lk.get("date") else ""), lk["url"], lk["kind"]))
     for kind, content, url, label in rows:

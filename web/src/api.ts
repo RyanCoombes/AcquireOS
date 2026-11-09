@@ -180,6 +180,8 @@ export interface CompanyDetail {
   signals?: string[];
   watching?: boolean; watched_officers?: string[]; watched_owners?: string[];
   sold?: { sold_on: string | null; sold_to: string | null } | null;
+  deals?: { date: string | null; date_text?: string | null; kind: string; title: string; detail: string; counterparty?: string | null;
+             counterparty_number?: string | null; source: string; source_url: string | null; research_title?: string | null; research_url?: string | null }[];
   same_business?: { company_number: string; name: string; postcode: string | null; employees: number | null;
                     revenue_low: string | null; revenue_high: string | null; revenue_basis: string | null }[];
   manual: { criteria: ManualCriterion[]; values: Record<string, ManualValue> };

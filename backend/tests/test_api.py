@@ -1410,3 +1410,35 @@ def test_long_summary_is_shortened_and_links_saved(loaded):
     full = loaded.execute("select content from research where company_number = %s and kind = 'summary' order by id desc limit 1", (num,)).fetchone()
     assert "OWNERSHIP: founders" in full["content"]   # the whole write-up is kept
     loaded.rollback()
+
+
+def test_deals_from_companies_house_and_research(loaded):
+    from acquireos import deals, enrich
+
+    c = loaded
+    c.execute("""insert into company (company_number, name, status, incorporation_date) values
+                 ('79000001', 'TARGET IT LIMITED', 'active', '1995-01-01'), ('79000002', 'BUYER GROUP LIMITED', 'active', '2001-01-01'),
+                 ('79000003', 'SMALLCO LIMITED', 'active', '2005-01-01') on conflict do nothing""")
+    c.execute("""insert into person (person_key, kind, name, birth_year, registration_number) values
+                 ('t:own', 'individual', 'Jane Owner', 1960, null), ('t:buyer', 'corporate', 'BUYER GROUP LIMITED', null, '79000002'),
+                 ('t:tgt', 'corporate', 'TARGET IT LIMITED', null, '79000001') on conflict do nothing""")
+    ids = {r["person_key"]: r["id"] for r in c.execute("select id, person_key from person where person_key in ('t:own','t:buyer','t:tgt')")}
+    c.execute("""insert into company_person (row_key, company_number, person_id, role, natures, notified_on, ceased_on) values
+                 ('e1', '79000001', %(o)s, 'psc', '{ownership-of-shares-75-to-100-percent}', '2016-04-06', '2024-03-28'),
+                 ('e2', '79000001', %(b)s, 'psc', '{ownership-of-shares-75-to-100-percent}', '2024-03-28', null),
+                 ('e3', '79000003', %(t)s, 'psc', '{ownership-of-shares-50-to-75-percent}', '2022-06-01', null)""",
+              {"o": ids["t:own"], "b": ids["t:buyer"], "t": ids["t:tgt"]})
+    c.execute("""insert into filing (company_number, transaction_id, filed_on, type, category, description) values
+                 ('79000001', 'sh1', '2019-05-01', 'SH03', 'capital', 'purchase of own shares')""")
+    c.execute("""insert into charge (company_number, charge_id, status, holders, created_on) values
+                 ('79000001', 'ch1', 'outstanding', '{Barclays Bank UK PLC}', '2024-03-28')""")
+    enrich.save_enrichment(c, "79000001", source_url="https://news.example.com/deal", by="claude",
+                           deals=[{"date": "2024-03", "kind": "sold", "title": "Sold to Buyer Group", "value": "£4.2m"}])
+    ev = deals.events(c, "79000001")
+    kinds = [e["kind"] for e in ev]
+    assert "sold" in kinds and "acquired" in kinds and "buyback" in kinds
+    sale = next(e for e in ev if e["kind"] == "sold" and e["source"] == "Companies House")
+    assert sale["title"] == "Sold to BUYER GROUP LIMITED" and "Barclays" in sale["detail"]
+    assert any(e["source"] == "research" and "£4.2m" in e["detail"] for e in ev)
+    assert next(e for e in ev if e["kind"] == "acquired")["counterparty_number"] == "79000003"
+    c.rollback()
