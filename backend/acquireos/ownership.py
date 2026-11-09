@@ -117,9 +117,11 @@ def _build_walk(conn):
 
 
 # A person holding shares or voting rights (natures missing: assume so, as before).
+# Shares held "as trust" (trustees, e.g. of an employee ownership trust) aren't the trustee's own.
 _HOLDER = ("(natures is null or cardinality(natures) = 0 or exists (select 1 from unnest(natures) nn "
-           "where nn ~ '(ownership-of-shares|voting-rights)'))")
-OWNERSHIP_VERSION = 2  # 2: people with control only (no shares or votes) aren't owners
+           "where nn ~ '(ownership-of-shares|voting-rights)' and nn !~ 'as-trust'))")
+_TRUSTEE = "exists (select 1 from unnest(natures) nn where nn ~ 'as-trust')"
+OWNERSHIP_VERSION = 3  # 2: people with control only aren't owners; 3: nor are trustees, anywhere up the chain
 
 
 def _ownership_from_walk(conn, today):
@@ -127,7 +129,7 @@ def _ownership_from_walk(conn, today):
     # A majority stake: more than 50% of shares or votes.
     majority = "exists (select 1 from unnest(natures) nn where nn ~ '(50-to-75|75-to-100)')"
     conn.execute("drop table if exists own_new")
-    holder = _HOLDER
+    holder, trustee = _HOLDER, _TRUSTEE
     conn.execute(rf"""
         create temp table own_new as
         with agg as (
@@ -154,7 +156,8 @@ def _ownership_from_walk(conn, today):
               -- "significant influence or control" (or appointing directors) isn't
               -- evidenced as an owner: not counted, and their age isn't used.
               count(distinct person_id) filter (where kind = 'individual' and {holder}) as individuals,
-              count(distinct person_id) filter (where kind = 'individual' and not {holder}) as control_only,
+              count(distinct person_id) filter (where kind = 'individual' and not {holder} and not {trustee}) as control_only,
+              bool_or({trustee}) as trust_walk,
               bool_or(kind = 'individual' and depth > 0 and {holder}) as indirect,
               min(birth_year) filter (where kind = 'individual' and {holder}) as oldest,
               (jsonb_agg(jsonb_build_object('name', name, 'birth_year', birth_year, 'birth_month', birth_month,
@@ -172,7 +175,7 @@ def _ownership_from_walk(conn, today):
         ), base as (
             select c.company_number,
                    coalesce(a.eot, false) as eot,
-                   coalesce(a.trust_node, false) or coalesce(d.trust_nature, false) as trust,
+                   coalesce(a.trust_node, false) or coalesce(d.trust_nature, false) or coalesce(a.trust_walk, false) as trust,
                    coalesce(a.investor_strong, false) or (coalesce(a.investor_weak, false) and coalesce(a.individuals, 0) = 0) as investor,
                    coalesce(a.ebt, false) and not coalesce(a.eot, false) as ebt,
                    coalesce(a.foreign_parent, false) as foreign_parent,

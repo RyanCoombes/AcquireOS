@@ -1368,3 +1368,29 @@ def test_cli_commands_still_run(loaded):
     loaded.commit()
     cli.main(["rescore"])
     cli.main(["reclassify-owners"])
+
+
+def test_trustees_are_not_owners_and_a_trust_holdco_is_not_a_buyer(loaded):
+    from acquireos import ownership
+
+    c = loaded
+    # Trading co <- holdco <- trust (trustees hold its shares "as trust"), like an EOT sale.
+    c.execute("""insert into company (company_number, name, status, incorporation_date) values
+                 ('78000001', 'DEANS TEST SERVICES LIMITED', 'active', '1982-01-01'),
+                 ('78000002', 'DTS IT MANAGEMENT LIMITED', 'active', '2023-12-01') on conflict do nothing""")
+    c.execute("""insert into person (person_key, kind, name, birth_year, registration_number) values
+                 ('t:pr', 'individual', 'Peter Rogerson', 1940, null), ('t:gb', 'individual', 'Graham Berks', 1960, null),
+                 ('t:hold', 'corporate', 'DTS IT MANAGEMENT LIMITED', null, '78000002') on conflict do nothing""")
+    ids = {r["person_key"]: r["id"] for r in c.execute("select id, person_key from person where person_key in ('t:pr', 't:gb', 't:hold')")}
+    c.execute("""insert into company_person (row_key, company_number, person_id, role, natures, notified_on) values
+                 ('d1', '78000001', %(h)s, 'psc', '{ownership-of-shares-75-to-100-percent}', current_date - 300),
+                 ('d2', '78000002', %(p)s, 'psc', '{ownership-of-shares-75-to-100-percent-as-trust,voting-rights-75-to-100-percent-as-trust}', current_date - 300),
+                 ('d3', '78000002', %(g)s, 'psc', '{ownership-of-shares-75-to-100-percent-as-trust}', current_date - 300)
+                 on conflict do nothing""", {"h": ids["t:hold"], "p": ids["t:pr"], "g": ids["t:gb"]})
+    ownership.rebuild(c, links=False)
+    o = c.execute("select ownership_type, oldest_birth_year from company_ownership where company_number = '78000001'").fetchone()
+    assert o["ownership_type"] == "trust" and o["oldest_birth_year"] is None, o
+    c.execute("select ao_refresh_company_signals()")
+    sig = c.execute("select signals from company_signal where company_number = '78000002'").fetchone()
+    assert not sig or "possible_buyer" not in sig["signals"]
+    c.rollback()

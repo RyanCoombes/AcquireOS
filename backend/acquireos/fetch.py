@@ -443,6 +443,7 @@ def reclassify_owners(c):
 
     log("Reclassifying owners with the current rules")
     ownership.rebuild(c, links=False)
+    c.execute("select ao_refresh_company_signals()")  # sold / possible buyer depend on ownership
     c.commit()
     log("Rescoring after reclassifying owners")
     scoring.rescore_all(c)
