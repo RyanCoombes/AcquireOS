@@ -76,11 +76,18 @@ export default function Financials({ data }: { data: CompanyDetail }) {
         { label: "Total liabilities", get: (f) => dv(f, "total_liabilities"), hint: "Everything owed: total assets less net assets" },
         { label: "Net assets (net worth)", get: (f) => n(f.net_assets), key: true, change: true },
       ],
-      chart: (ys) => <LinesChart years={ys.map((y) => y.label)} series={[
+      chart: (ys) => <LinesChart memo="bs" years={ys.map((y) => y.label)} series={[
         { label: "Net worth (net assets)", values: ys.map((y) => n(y.f.net_assets)), colour: "#16213a", strong: true },
         { label: "Total assets", values: ys.map((y) => dv(y.f, "total_assets")), colour: "#0e7c6b" },
         { label: "Total liabilities", values: ys.map((y) => dv(y.f, "total_liabilities")), colour: "#c8352b" },
         { label: "Cash", values: ys.map((y) => n(y.f.cash)), colour: "#c98a2b", dashed: true },
+        { label: "Current assets", values: ys.map((y) => n(y.f.current_assets)), colour: "#2f62d8", off: true },
+        { label: "Fixed assets", values: ys.map((y) => n(y.f.fixed_assets)), colour: "#7a5af8", off: true },
+        { label: "Owed within a year", values: ys.map((y) => withinYr(y.f)), colour: "#e07b39", off: true },
+        { label: "Owed after a year", values: ys.map((y) => afterYr(y.f)), colour: "#9c2f6b", off: true },
+        { label: "Net current assets", values: ys.map((y) => n(y.f.net_current_assets)), colour: "#3aa6a0", off: true, dashed: true },
+        { label: "Debtors", values: ys.map((y) => n(y.f.debtors)), colour: "#8a6d3b", off: true },
+        { label: "Stock", values: ys.map((y) => n(y.f.stock)), colour: "#6b7280", off: true },
       ]} /> },
     { key: "cash", label: "Cash & debt", rows: [
         { label: "Cash", get: (f) => n(f.cash), key: true, change: true },
@@ -215,7 +222,7 @@ function ComboChart({ years, bars, line }: {
                 return (
                   <g key={j}>
                     <rect x={x0 + j * bw + 2} y={top} width={bw - 4} height={h} rx={5} fill={est ? "url(#estp)" : v < 0 ? "#c8352b" : b.colour}>
-                      <title>{`${b.label} ${lab}: ${bf(b, v)}${est ? " (estimate)" : ""}`}</title></rect>
+                      <title>{`${b.label} ${lab}: ${b.fmt === "int" ? int(v) : money(v, { precise: true })}${est ? " (estimate)" : ""}`}</title></rect>
                     <text x={lx(j)} y={v >= 0 ? top - 6 : top + h + 14} className={`bv ${est ? "est" : ""}`} textAnchor={anchor[j]}>{bf(b, v)}</text>
                   </g>
                 );
@@ -235,41 +242,69 @@ function ComboChart({ years, bars, line }: {
 }
 
 /** A small line chart for a second measure (a margin, revenue per head), with its own scale. */
-/** Several measures as lines on one money axis, a dot per year with its value on hover;
-    the legend shows each one's latest figure. */
-function LinesChart({ years, series }: { years: string[]; series: { label: string; values: Val[]; colour: string; strong?: boolean; dashed?: boolean }[] }) {
-  const live = series.filter((sr) => sr.values.filter((v) => v !== null).length >= 1);
-  if (!live.length) return null;
+type LineSeries = { label: string; values: Val[]; colour: string; strong?: boolean; dashed?: boolean; off?: boolean };
+
+/** Several measures as lines on one money axis. The legend switches lines on
+    and off (remembered); hovering a year shows every visible line's exact figure. */
+function LinesChart({ years, series, memo }: { years: string[]; series: LineSeries[]; memo: string }) {
+  const avail = series.filter((sr) => sr.values.some((v) => v !== null));
+  const [shown, setShownState] = useState<string[]>(() => {
+    try { const v = JSON.parse(localStorage.getItem(`ao.lines.${memo}`) ?? "null"); if (Array.isArray(v)) return v; } catch { /* ignore */ }
+    return series.filter((sr) => !sr.off).map((sr) => sr.label);
+  });
+  const toggle = (l: string) => {
+    const next = shown.includes(l) ? shown.filter((x) => x !== l) : [...shown, l];
+    setShownState(next); try { localStorage.setItem(`ao.lines.${memo}`, JSON.stringify(next)); } catch { /* ignore */ }
+  };
+  const [hi, setHi] = useState<number | null>(null);
+  if (!avail.length) return null;
+  const live = avail.filter((sr) => shown.includes(sr.label));
   const W = 1000, H = 250, L = 200, R = 0, T = 16, B = 28;
   const all = live.flatMap((sr) => sr.values).filter((v): v is number => v !== null);
-  const ticks = niceTicks(Math.min(0, ...all), Math.max(0, ...all));
-  const lo = ticks[0], hi = ticks[ticks.length - 1], span = hi - lo || 1;
+  const ticks = niceTicks(Math.min(0, ...all), Math.max(0, ...all, 1));
+  const lo = ticks[0], top = ticks[ticks.length - 1], span = top - lo || 1;
   const slot = (W - L - R) / years.length;
   const x = (i: number) => L + slot * i + slot / 2;
   const y = (v: number) => T + (H - T - B) * (1 - (v - lo) / span);
   const lastOf = (vals: Val[]) => [...vals].reverse().find((v) => v !== null) ?? null;
+  const exact = (v: number) => money(v, { precise: true });
   return (
-    <div className="combo">
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={live.map((sr) => sr.label).join(", ")}>
-        {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className={t === 0 ? "zero" : "gl"} />
-          <text x={L - 8} y={y(t) + 4} className="ax" textAnchor="end">{money(t, { short: true })}</text></g>)}
-        {live.map((sr) => {
-          // Break the line where a year is missing, rather than joining across it.
-          const segs: [number, number][][] = [[]];
-          sr.values.forEach((v, i) => { if (v === null) { if (segs[segs.length - 1].length) segs.push([]); } else segs[segs.length - 1].push([x(i), y(v)]); });
-          return <g key={sr.label}>
-            {segs.filter((sg) => sg.length > 1).map((sg, k) => <polyline key={k} points={sg.map((p) => p.join(",")).join(" ")} fill="none"
-              stroke={sr.colour} strokeWidth={sr.strong ? 3 : 2} strokeDasharray={sr.dashed ? "6 5" : undefined} strokeLinejoin="round" />)}
-            {sr.values.map((v, i) => v === null ? null : <circle key={i} cx={x(i)} cy={y(v)} r={sr.strong ? 4.5 : 3.5} fill="#fff" stroke={sr.colour} strokeWidth={2}>
-              <title>{`${sr.label} ${years[i]}: ${money(v)}`}</title></circle>)}
-          </g>;
+    <div className="combo lines">
+      <div className="lc-wrap" onMouseLeave={() => setHi(null)}>
+        <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={live.map((sr) => sr.label).join(", ")}>
+          {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className={t === 0 ? "zero" : "gl"} />
+            <text x={L - 8} y={y(t) + 4} className="ax" textAnchor="end">{money(t, { short: true })}</text></g>)}
+          {hi !== null && <line x1={x(hi)} x2={x(hi)} y1={T} y2={H - B} className="lc-guide" />}
+          {live.map((sr) => {
+            // Break the line where a year is missing, rather than joining across it.
+            const segs: [number, number][][] = [[]];
+            sr.values.forEach((v, i) => { if (v === null) { if (segs[segs.length - 1].length) segs.push([]); } else segs[segs.length - 1].push([x(i), y(v)]); });
+            return <g key={sr.label}>
+              {segs.filter((sg) => sg.length > 1).map((sg, k) => <polyline key={k} points={sg.map((p) => p.join(",")).join(" ")} fill="none"
+                stroke={sr.colour} strokeWidth={sr.strong ? 3 : 2} strokeDasharray={sr.dashed ? "6 5" : undefined} strokeLinejoin="round" />)}
+              {sr.values.map((v, i) => v === null ? null : <circle key={i} cx={x(i)} cy={y(v)} r={hi === i ? 6 : sr.strong ? 4.5 : 3.5}
+                fill={hi === i ? sr.colour : "#fff"} stroke={sr.colour} strokeWidth={2} />)}
+            </g>;
+          })}
+          {years.map((lab, i) => <text key={lab + i} x={x(i)} y={H - 8} className="ax" textAnchor="middle">{lab}</text>)}
+          {years.map((_, i) => <rect key={`h${i}`} x={L + slot * i} y={0} width={slot} height={H} fill="transparent"
+                                     onMouseEnter={() => setHi(i)} onClick={() => setHi(i)} />)}
+        </svg>
+        {hi !== null && live.some((sr) => sr.values[hi] !== null) && (
+          <div className={`lc-tip ${x(hi) > W * 0.7 ? "left" : ""}`} style={{ left: `${(100 * x(hi)) / W}%` }}>
+            <div className="t">{years[hi]}</div>
+            {live.filter((sr) => sr.values[hi] !== null).sort((a, b) => (b.values[hi] ?? 0) - (a.values[hi] ?? 0)).map((sr) => (
+              <div key={sr.label} className="r"><i style={{ background: sr.colour }} />{sr.label}<b>{exact(sr.values[hi]!)}</b></div>))}
+          </div>
+        )}
+      </div>
+      <div className="combo-key lc-key">
+        {avail.map((sr) => {
+          const on = shown.includes(sr.label);
+          return <button key={sr.label} className={on ? "on" : ""} onClick={() => toggle(sr.label)} title={on ? "Hide this line" : "Show this line"}>
+            <i style={{ background: on ? sr.colour : "transparent", borderColor: sr.colour }} />{sr.label}
+            {on && lastOf(sr.values) !== null ? <b>{money(lastOf(sr.values))}</b> : null}</button>;
         })}
-        {years.map((lab, i) => <text key={lab + i} x={x(i)} y={H - 8} className="ax" textAnchor="middle">{lab}</text>)}
-      </svg>
-      <div className="combo-key">
-        {live.map((sr) => <span key={sr.label}><i style={{ background: sr.colour, height: sr.strong ? 4 : 3, borderRadius: 2 }} />{sr.label}
-          {lastOf(sr.values) !== null ? <b style={{ marginLeft: 4 }}>{money(lastOf(sr.values))}</b> : null}</span>)}
-        <span className="faint">Hover a dot for the year's figure</span>
       </div>
     </div>
   );
