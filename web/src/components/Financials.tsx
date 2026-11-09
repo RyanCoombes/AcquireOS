@@ -28,6 +28,9 @@ export default function Financials({ data }: { data: CompanyDetail }) {
     return { f, label: new Date(f.period_end).toLocaleDateString("en-GB", fin.length > 8 ? { year: "numeric" } : { month: "short", year: "numeric" }),
              turnover: n(f.turnover) ?? e, turnoverEst: f.turnover == null && e != null };
   });
+  // Totals small accounts imply but rarely state (from the summary): assets, liabilities, debt ratio.
+  const der = new Map((data.fin_summary?.series ?? []).map((r: any) => [String(r.period_end).slice(0, 10), r]));
+  const dv = (f: F, k: "total_assets" | "total_liabilities" | "debt_ratio") => { const r: any = der.get(String(f.period_end).slice(0, 10)); return r && r[k] != null ? Number(r[k]) : null; };
   const [tab, setTab] = useState("ov");
   const [view, setView] = useState<"chart" | "table">("chart");
   // Figures in £m (£4.97m) or in full (£4,970,123); remembered.
@@ -69,11 +72,16 @@ export default function Financials({ data }: { data: CompanyDetail }) {
         { label: "Owed after a year", get: (f) => afterYr(f) },
         { label: "Retained earnings", get: (f) => n(f.retained_earnings), hint: "Profits kept in the business" },
         { label: "Share capital", get: (f) => n(f.share_capital) },
-        { label: "Net assets", get: (f) => n(f.net_assets), key: true, change: true },
+        { label: "Total assets", get: (f) => dv(f, "total_assets"), hint: "Fixed plus current assets" },
+        { label: "Total liabilities", get: (f) => dv(f, "total_liabilities"), hint: "Everything owed: total assets less net assets" },
+        { label: "Net assets (net worth)", get: (f) => n(f.net_assets), key: true, change: true },
       ],
-      chart: (ys) => <ComboChart years={ys.map((y) => y.label)}
-        bars={[{ label: "Net assets", values: ys.map((y) => n(y.f.net_assets)), colour: "#0e7c6b" },
-               { label: "Net current assets", values: ys.map((y) => n(y.f.net_current_assets)), colour: "#7fb8ad" }]} /> },
+      chart: (ys) => <LinesChart years={ys.map((y) => y.label)} series={[
+        { label: "Net worth (net assets)", values: ys.map((y) => n(y.f.net_assets)), colour: "#16213a", strong: true },
+        { label: "Total assets", values: ys.map((y) => dv(y.f, "total_assets")), colour: "#0e7c6b" },
+        { label: "Total liabilities", values: ys.map((y) => dv(y.f, "total_liabilities")), colour: "#c8352b" },
+        { label: "Cash", values: ys.map((y) => n(y.f.cash)), colour: "#c98a2b", dashed: true },
+      ]} /> },
     { key: "cash", label: "Cash & debt", rows: [
         { label: "Cash", get: (f) => n(f.cash), key: true, change: true },
         { label: "Bank loans and overdrafts", get: (f) => bank(f), key: true, hint: "Repaid from the price on a cash-free, debt-free deal" },
@@ -81,10 +89,12 @@ export default function Financials({ data }: { data: CompanyDetail }) {
         { label: "Owed within a year", get: (f) => withinYr(f) },
         { label: "Owed after a year", get: (f) => afterYr(f) },
         { label: "Interest paid", get: (f) => n(f.interest_payable) },
+        { label: "Debt ratio", get: (f) => dv(f, "debt_ratio"), fmt: "pct", hint: "Total liabilities ÷ total assets: under 50% means it owns more than it owes" },
       ],
       chart: (ys) => <ComboChart years={ys.map((y) => y.label)}
         bars={[{ label: "Cash", values: ys.map((y) => n(y.f.cash)), colour: "#0e7c6b" },
-               { label: "Bank debt", values: ys.map((y) => bank(y.f)), colour: "#c8352b" }]} /> },
+               { label: "Bank debt", values: ys.map((y) => bank(y.f)), colour: "#c8352b" }]}
+        line={{ label: "Debt ratio (liabilities ÷ assets)", values: ys.map((y) => dv(y.f, "debt_ratio")), fmt: "pct" }} /> },
     { key: "staff", label: "Staff & pay", rows: [
         { label: "Average staff", get: (f) => n(f.employees), fmt: "int", key: true, change: true },
         { label: "Revenue per head", get: (f) => (n(f.turnover) && n(f.employees) ? n(f.turnover)! / n(f.employees)! : null),
@@ -225,6 +235,46 @@ function ComboChart({ years, bars, line }: {
 }
 
 /** A small line chart for a second measure (a margin, revenue per head), with its own scale. */
+/** Several measures as lines on one money axis, a dot per year with its value on hover;
+    the legend shows each one's latest figure. */
+function LinesChart({ years, series }: { years: string[]; series: { label: string; values: Val[]; colour: string; strong?: boolean; dashed?: boolean }[] }) {
+  const live = series.filter((sr) => sr.values.filter((v) => v !== null).length >= 1);
+  if (!live.length) return null;
+  const W = 1000, H = 250, L = 200, R = 0, T = 16, B = 28;
+  const all = live.flatMap((sr) => sr.values).filter((v): v is number => v !== null);
+  const ticks = niceTicks(Math.min(0, ...all), Math.max(0, ...all));
+  const lo = ticks[0], hi = ticks[ticks.length - 1], span = hi - lo || 1;
+  const slot = (W - L - R) / years.length;
+  const x = (i: number) => L + slot * i + slot / 2;
+  const y = (v: number) => T + (H - T - B) * (1 - (v - lo) / span);
+  const lastOf = (vals: Val[]) => [...vals].reverse().find((v) => v !== null) ?? null;
+  return (
+    <div className="combo">
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={live.map((sr) => sr.label).join(", ")}>
+        {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className={t === 0 ? "zero" : "gl"} />
+          <text x={L - 8} y={y(t) + 4} className="ax" textAnchor="end">{money(t, { short: true })}</text></g>)}
+        {live.map((sr) => {
+          // Break the line where a year is missing, rather than joining across it.
+          const segs: [number, number][][] = [[]];
+          sr.values.forEach((v, i) => { if (v === null) { if (segs[segs.length - 1].length) segs.push([]); } else segs[segs.length - 1].push([x(i), y(v)]); });
+          return <g key={sr.label}>
+            {segs.filter((sg) => sg.length > 1).map((sg, k) => <polyline key={k} points={sg.map((p) => p.join(",")).join(" ")} fill="none"
+              stroke={sr.colour} strokeWidth={sr.strong ? 3 : 2} strokeDasharray={sr.dashed ? "6 5" : undefined} strokeLinejoin="round" />)}
+            {sr.values.map((v, i) => v === null ? null : <circle key={i} cx={x(i)} cy={y(v)} r={sr.strong ? 4.5 : 3.5} fill="#fff" stroke={sr.colour} strokeWidth={2}>
+              <title>{`${sr.label} ${years[i]}: ${money(v)}`}</title></circle>)}
+          </g>;
+        })}
+        {years.map((lab, i) => <text key={lab + i} x={x(i)} y={H - 8} className="ax" textAnchor="middle">{lab}</text>)}
+      </svg>
+      <div className="combo-key">
+        {live.map((sr) => <span key={sr.label}><i style={{ background: sr.colour, height: sr.strong ? 4 : 3, borderRadius: 2 }} />{sr.label}
+          {lastOf(sr.values) !== null ? <b style={{ marginLeft: 4 }}>{money(lastOf(sr.values))}</b> : null}</span>)}
+        <span className="faint">Hover a dot for the year's figure</span>
+      </div>
+    </div>
+  );
+}
+
 function MiniLine({ years, values, label, fmt }: { years: string[]; values: Val[]; label: string; fmt: "money" | "pct" }) {
   const W = 1000, H = 110, L = 200, R = 0, T = 22, B = 8;
   const vs = values.filter((v): v is number => v !== null);
