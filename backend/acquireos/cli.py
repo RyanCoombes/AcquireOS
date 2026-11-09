@@ -70,13 +70,13 @@ def main(argv=None):
         print(secrets.token_urlsafe(32))
         return
     if a.cmd == "reclassify-owners":
-        from . import db, jobs
+        from . import db as _db, jobs as _jobs
         from .fetch import reclassify_owners
 
-        job = jobs.Job("reclassify-owners", ["Reclassify owners and rescore"])
+        job = _jobs.Job("reclassify-owners", ["Reclassify owners and rescore"])
         job.stage("Reclassify owners and rescore")
         try:
-            with db.conn(dedicated=True) as c:
+            with _db.conn(dedicated=True) as c:
                 reclassify_owners(c)
             job.finish({})
         except Exception as e:

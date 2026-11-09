@@ -1359,3 +1359,12 @@ def test_claude_saving_or_closing_takes_a_year_off_the_unreadable_list(loaded):
         assert c.execute("select count(*) as n from pdf_read where company_number = %s", (num,)).fetchone()["n"] == 2
         assert pdfaccounts.status(c)["closed"] >= 1
         c.rollback()
+
+
+def test_cli_commands_still_run(loaded):
+    """Every command shares main(): a local import there once broke all the others."""
+    from acquireos import cli
+
+    loaded.commit()
+    cli.main(["rescore"])
+    cli.main(["reclassify-owners"])
