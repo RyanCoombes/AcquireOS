@@ -185,6 +185,16 @@ function ComboChart({ years, bars, line }: {
           <text x={L - 8} y={y(t) + 4} className="ax" textAnchor="end">{live[0].fmt === "int" ? int(t) : money(t, { short: true })}</text></g>)}
         {years.map((lab, i) => {
           const x0 = L + slot * i + (slot - bw * live.length) / 2;
+          // Value labels: when two sit side by side at about the same height and
+          // are wider than their bars, lean them apart (first left, second right)
+          // so they stay on their own bars without touching.
+          const anchor: ("middle" | "end" | "start")[] = live.map(() => "middle");
+          if (live.length === 2) {
+            const [va, vc] = [live[0].values[i], live[1].values[i]];
+            if (va !== null && vc !== null && va >= 0 && vc >= 0 && Math.abs(y(va) - y(vc)) < 15
+                && (bf(live[0], va).length + bf(live[1], vc).length) * 3.6 > bw) { anchor[0] = "end"; anchor[1] = "start"; }
+          }
+          const lx = (j: number) => x0 + j * bw + (anchor[j] === "end" ? bw - 2 : anchor[j] === "start" ? 2 : bw / 2);
           return (
             <g key={lab + i}>
               {live.map((b, j) => {
@@ -196,7 +206,7 @@ function ComboChart({ years, bars, line }: {
                   <g key={j}>
                     <rect x={x0 + j * bw + 2} y={top} width={bw - 4} height={h} rx={5} fill={est ? "url(#estp)" : v < 0 ? "#c8352b" : b.colour}>
                       <title>{`${b.label} ${lab}: ${bf(b, v)}${est ? " (estimate)" : ""}`}</title></rect>
-                    <text x={x0 + j * bw + bw / 2} y={v >= 0 ? top - 6 : top + h + 14} className={`bv ${est ? "est" : ""}`} textAnchor="middle">{bf(b, v)}</text>
+                    <text x={lx(j)} y={v >= 0 ? top - 6 : top + h + 14} className={`bv ${est ? "est" : ""}`} textAnchor={anchor[j]}>{bf(b, v)}</text>
                   </g>
                 );
               })}
