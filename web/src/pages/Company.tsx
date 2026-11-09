@@ -6,7 +6,7 @@ import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
 import MyScores from "../components/MyScores";
 import Financials from "../components/Financials";
-import { listFrom, nextInList, RuleOutChips, type RuleOutPick } from "../components/RuleOut";
+import { nextInList, RuleOutChips, type RuleOutPick } from "../components/RuleOut";
 import { Enrichment, Location } from "../components/CompanyExtras";
 import { Charges, Filings, Fold, Head, OwnersDirectors, WebsiteFinder } from "../components/Profile";
 import { ageFrom, CHANGE_KIND, chUrl, date, describeChange, int, isBadStatus, LINK_KIND, money, OWNERSHIP, range, relDays, years } from "../format";
@@ -125,7 +125,7 @@ export default function Company() {
 
   return (
     <>
-      <UndoBar key={num} />
+      <UndoBar num={num} />
       <div className="pagehead">
         <div>
           <div className="crumb">
@@ -461,6 +461,7 @@ function CallBar({ data, num, setState, onNote }: {
           </div>
         )}
         {nextStage && !closed && <button className="btn primary" onClick={() => move(nextStage.value)}>Move to {nextStage.label} →</button>}
+        {listNext && !closed && <Link className="btn" to={`/c/${listNext}${window.location.search}`} title="Next company in the list you came from">Next in list →</Link>}
         <div className="cb-stage"><StageSelect value={s.status} onChange={(v) => move(v)} /></div>
         <div className="rating small" title="Rating (keys 1–5)">
           {[1, 2, 3, 4, 5].map((n) => (
@@ -744,19 +745,24 @@ function SameBusiness({ data }: { data: CompanyDetail }) {
 }
 
 
-/** After ruling one out and moving on: say so, with Undo. */
-function UndoBar() {
-  const [u, setU] = useState<{ num: string; name: string; prev: string; note: string } | null>(() => {
-    try { const v = JSON.parse(sessionStorage.getItem("ao.undo") ?? "null"); sessionStorage.removeItem("ao.undo"); return v; } catch { return null; }
-  });
+/** After ruling one out and moving on: one line with Undo, replaced by the
+    next one and gone after a few seconds. */
+function UndoBar({ num }: { num: string }) {
+  const [u, setU] = useState<{ num: string; name: string; prev: string; note: string } | null>(null);
+  useEffect(() => {
+    let v = null;
+    try { v = JSON.parse(sessionStorage.getItem("ao.undo") ?? "null"); sessionStorage.removeItem("ao.undo"); } catch { /* ignore */ }
+    setU(v);
+    if (!v) return;
+    const t = setTimeout(() => setU(null), 8000);
+    return () => clearTimeout(t);
+  }, [num]);
   if (!u) return null;
-  const from = listFrom();
   return (
-    <div className="callout undo">
+    <div className="undo-toast" role="status">
       <span><b>{u.name}</b> · {u.note}</span>
-      <button className="btn quiet" onClick={async () => { await api.setState(u.num, { status: u.prev, stage_note: "Undone" }); setU(null); }}>Undo</button>
-      {from && <Link className="faint small" to={from}>Back to the list</Link>}
-      <button className="linkish small" style={{ marginLeft: "auto" }} onClick={() => setU(null)}>Dismiss</button>
+      <button className="linkish" onClick={async () => { await api.setState(u.num, { status: u.prev, stage_note: "Undone" }); setU(null); }}>Undo</button>
+      <button className="linkish faint" aria-label="Dismiss" onClick={() => setU(null)}>×</button>
     </div>
   );
 }
