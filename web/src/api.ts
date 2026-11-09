@@ -276,10 +276,10 @@ export const api = {
   addOutreach: (body: Record<string, unknown>) => req<Outreach>("/api/outreach", { method: "POST", body: JSON.stringify(body) }),
   reports: () => req<Record<string, any>>("/api/reports"),
   fetchDetails: (n: string) => req<CompanyDetail["ch"]>(`/api/companies/${encodeURIComponent(n)}/fetch-details`, { method: "POST" }),
-  findWebsite: (n: string, url?: string) =>
+  findWebsite: (n: string, url?: string, save = false) =>
     req<{ results: { url: string; reachable: boolean; confidence: "high" | "medium" | "low" | null; evidence: string; page?: string; title?: string | null }[];
           saved: string[] | null; message: string }>(`/api/companies/${encodeURIComponent(n)}/find-website`,
-      { method: "POST", body: JSON.stringify({ url: url ?? null }) }),
+      { method: "POST", body: JSON.stringify({ url: url ?? null, save }) }),
   chCheck: (n: string) => req<NonNullable<CompanyDetail["ch"]> & { changed: boolean; changes: number }>(
     `/api/companies/${encodeURIComponent(n)}/ch-check`, { method: "POST" }),
   catchUp: () => req<{ accounts_months_old: number; accounts_months_current: number; accounts_months_total: number; loader_version: number }>("/api/catch-up"),

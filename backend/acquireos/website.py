@@ -43,7 +43,49 @@ def name_stems(name: str) -> list[str]:
     return stems
 
 
-def candidates(names: list[str], limit: int = 16) -> list[str]:
+def _person_parts(name: str) -> tuple[str, str] | None:
+    """(first name, surname) from "HARRIS, John Michael" or "Mr John Michael Harris"."""
+    n = re.sub(r"^(MR|MRS|MS|MISS|DR|SIR|PROF)\.?\s+", "", (name or "").strip(), flags=re.I)
+    if "," in n:
+        last, rest = n.split(",", 1)
+        first = (rest.split() or [""])[0]
+    else:
+        w = n.split()
+        if len(w) < 2:
+            return None
+        first, last = w[0], w[-1]
+    clean = lambda x: re.sub(r"[^a-z]", "", x.lower())
+    return (clean(first), clean(last)) if clean(last) else None
+
+
+def extra_stems(name: str, people: list[str] | None = None, town: str | None = None) -> list[str]:
+    """Domains small firms often use that aren't their registered name: the
+    owner's surname with the trade ("harrisjoinery"), "harrisandsons", the
+    owner's full name, and the name or trade with the town."""
+    words = [w for w in re.sub(r"[^a-z0-9 ]+", " ", _SUFFIX.sub(" ", re.sub(r"&", " and ", name or "")).lower()).split()]
+    trade = words[-1] if words and len(words[-1]) >= 4 else None
+    out: list[str] = []
+    for p in (people or [])[:3]:
+        parts = _person_parts(p)
+        if not parts:
+            continue
+        first, last = parts
+        if trade and trade != last:
+            out += [last + trade, f"{last}-{trade}"]
+        out += [last + "andsons", first + last]
+    t = re.sub(r"[^a-z]", "", (town or "").lower())
+    if t and words:
+        out += ["".join(words) + t]
+        if trade:
+            out += [t + trade, f"{t}-{trade}"]
+    seen: list[str] = []
+    for x in out:
+        if 4 <= len(x) <= 40 and x not in seen:
+            seen.append(x)
+    return seen
+
+
+def candidates(names: list[str], limit: int = 16, people: list[str] | None = None, town: str | None = None) -> list[str]:
     out: list[str] = []
     for n in names:
         for stem in name_stems(n):
@@ -51,7 +93,13 @@ def candidates(names: list[str], limit: int = 16) -> list[str]:
                 d = stem + tld
                 if d not in out:
                     out.append(d)
-    return out[:limit]
+    out = out[:limit]
+    # Then guesses from the owners and the town, on the two usual endings.
+    for stem in extra_stems(names[0] if names else "", people, town):
+        for tld in (".co.uk", ".com"):
+            if stem + tld not in out:
+                out.append(stem + tld)
+    return out
 
 
 def _resolves(domain: str) -> bool:
@@ -67,7 +115,7 @@ def _fetch(url: str, limit: int = 600_000) -> tuple[str, str] | None:
     """(final url, text) or None."""
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "text/html"})
     try:
-        with urllib.request.urlopen(req, timeout=8) as r:
+        with urllib.request.urlopen(req, timeout=6) as r:
             if "html" not in (r.headers.get("Content-Type") or "html"):
                 return None
             return r.geturl(), r.read(limit).decode("utf-8", errors="replace")
@@ -138,6 +186,10 @@ def addresses(text: str) -> list[dict]:
     return out[:8]
 
 
+_PARKED = re.compile(r"(this domain (is|may be) for sale|domain (is )?parked|buy this domain|parkingcrew|sedoparking|"
+                     r"domain has been registered|coming soon|under construction|web hosting by)", re.I)
+
+
 def check(url: str, company_number: str, postcode: str | None, names: list[str]) -> dict:
     """Fetch a site's home page (and its contact/about/legal pages if needed)
     and say how sure we are it belongs to the company."""
@@ -148,6 +200,8 @@ def check(url: str, company_number: str, postcode: str | None, names: list[str])
         return {"url": url, "reachable": False, "confidence": None, "evidence": "site did not answer"}
     final, html = got
     home_text = _text(html)
+    if _PARKED.search(home_text[:3000]) and len(home_text) < 4000:
+        return {"url": final, "reachable": True, "confidence": None, "evidence": "parked or for-sale domain", "addresses": []}
     conf, why = evidence(home_text, company_number, postcode, names)
     page = final
     # Strict confirmation: the company number AND the registered name (with
@@ -162,13 +216,14 @@ def check(url: str, company_number: str, postcode: str | None, names: list[str])
     extra = [urllib.parse.urljoin(final, h) for h in links
              if re.search(r"(contact|about|privacy|terms|legal|cookie|imprint|locations?|offices?)", h, re.I)]
     # Contact pages first: they also list the offices (trading addresses).
-    for link in list(dict.fromkeys(contact + extra))[:5]:
-        if urllib.parse.urlparse(link).netloc != host:
-            continue
+    from concurrent.futures import ThreadPoolExecutor
+
+    todo = [l for l in list(dict.fromkeys(contact + extra))[:5] if urllib.parse.urlparse(l).netloc == host
+            and not (has_number and has_name and l not in contact)]
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        subs = list(zip(todo, pool.map(_fetch, todo)))
+    for link, sub in subs:
         is_contact = link in contact
-        if has_number and has_name and not is_contact:
-            continue
-        sub = _fetch(link)
         if not sub:
             continue
         sub_text = _text(sub[1])
@@ -190,26 +245,48 @@ def check(url: str, company_number: str, postcode: str | None, names: list[str])
 
 
 def find(names: list[str], company_number: str, postcode: str | None, max_checks: int = 12,
-         strict: bool = False) -> list[dict]:
-    """Try likely domains; return checked sites, best first. With strict,
-    keep going until a site shows both the number and the registered name."""
+         strict: bool = False, people: list[str] | None = None, town: str | None = None) -> list[dict]:
+    """Try likely domains; return checked sites, best first. Every guess is
+    looked up at once (most don't exist), then the live ones are read a few at
+    a time, most likely first, stopping once one is confirmed."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    doms = candidates(names, people=people, town=town)
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        live = [d for d, ok in zip(doms, pool.map(_resolves, doms)) if ok][:max_checks]
     out = []
-    for d in candidates(names):
-        if len(out) >= max_checks:
-            break
-        if not _resolves(d):
-            continue
-        r = check("https://" + d, company_number, postcode, names)
-        if r["reachable"]:
-            out.append(r)
-        if r.get("strict") or (not strict and r.get("confidence") == "high"):
-            break
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for i in range(0, len(live), 4):
+            batch = list(pool.map(lambda d: check("https://" + d, company_number, postcode, names), live[i:i + 4]))
+            out += [r for r in batch if r["reachable"]]
+            if any(r.get("strict") or (not strict and r.get("confidence") == "high") for r in batch):
+                break
     rank = {"high": 3, "medium": 2, "low": 1, None: 0}
     out.sort(key=lambda r: (bool(r.get("strict")), rank[r["confidence"]]), reverse=True)
     return out
 
 
-def bulk_check(conn, numbers: list[str], progress=None, cancel=None, workers: int = 8) -> dict:
+def add_offices(conn, num: str, registered_postcode: str | None, result: dict, confidence: str = "high") -> list[dict]:
+    """Offices listed on the company's own site, added to any already saved
+    (the registered office is skipped). Returns the ones added."""
+    from . import enrich
+
+    cur = conn.execute("select locations from enrichment where company_number = %s", (num,)).fetchone()
+    locs = list((cur or {}).get("locations") or [])
+    have = {l.get("postcode") for l in locs} | {registered_postcode}
+    new = []
+    for a in result.get("addresses") or []:
+        if a["postcode"] not in have:
+            have.add(a["postcode"])
+            new.append(a)
+    if new:
+        locs += [{"kind": "office", "name": None, "address": a["address"], "postcode": a["postcode"]} for a in new]
+        enrich.save_enrichment(conn, num, source_url=new[0]["page"], locations=locs, confidence=confidence,
+                               source_label="Offices listed on the company's website", by="website check")
+    return new
+
+
+def bulk_check(conn, numbers: list[str], progress=None, cancel=None, workers: int = 12) -> dict:
     """Find and confirm websites for many companies, several at a time. A site
     is saved only when it shows both the company number and the registered
     name (Ltd/Limited), with any office addresses listed on it. Weaker matches
@@ -224,7 +301,8 @@ def bulk_check(conn, numbers: list[str], progress=None, cancel=None, workers: in
     def look(b):
         names = [b["name"], *b["previous_names"], *b["parent_companies"], *b["subsidiaries"]]
         try:
-            return b, find(names, b["company_number"], b["postcode"], max_checks=8, strict=True)
+            return b, find(names, b["company_number"], b["postcode"], max_checks=8, strict=True,
+                           people=b.get("owners"), town=b.get("town"))
         except Exception:
             return b, []
 
@@ -234,14 +312,7 @@ def bulk_check(conn, numbers: list[str], progress=None, cancel=None, workers: in
         if best:
             enrich.save_enrichment(conn, num, source_url=best.get("page") or best["url"], website=best["url"], confidence="high",
                                    source_label="Website check: company number and registered name on the site", by="website check")
-            cur = conn.execute("select locations from enrichment where company_number = %s", (num,)).fetchone()
-            locs = list((cur or {}).get("locations") or [])
-            have = {l.get("postcode") for l in locs} | {b["postcode"]}
-            new = [a for a in best.get("addresses") or [] if a["postcode"] not in have]
-            if new:
-                locs += [{"kind": "office", "name": None, "address": a["address"], "postcode": a["postcode"]} for a in new]
-                enrich.save_enrichment(conn, num, source_url=new[0]["page"], locations=locs, confidence="high",
-                                       source_label="Offices listed on the company's website", by="website check")
+            add_offices(conn, num, b["postcode"], best)
             result = "confirmed"
         else:
             maybe = next((r for r in results if r.get("confidence") in ("high", "medium")), None)
@@ -308,7 +379,7 @@ def brief(conn, company_number: str) -> dict:
     return {
         "company_number": num, "name": c["name"], "previous_names": prev, "registered_address": c["registered_address"],
         "postcode": c["postcode"], "town": town, "industry": sics, "owners": people, "parent_companies": parents,
-        "subsidiaries": subs, "domain_guesses": candidates([c["name"], *prev, *parents, *subs])[:12],
+        "subsidiaries": subs, "domain_guesses": candidates([c["name"], *prev, *parents, *subs], people=people, town=town)[:20],
         "search_queries": [x for x in q if x],
         "how_to_confirm": ("A UK company must show its registered number on its website: look for it in the footer, "
                            "contact, privacy or terms page. Failing that, the registered address or postcode. The site "

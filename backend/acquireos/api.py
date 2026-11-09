@@ -1566,12 +1566,14 @@ def research_brief(num: str):
 
 class WebsiteCheckIn(BaseModel):
     url: str | None = None
+    save: bool = False  # you found it: save it whatever the check says, and read its offices
 
 
 @app.post("/api/companies/{num}/find-website")
 def find_website(num: str, body: WebsiteCheckIn | None = None):
     """Check a given site, or try likely domains, and save a site confirmed
-    by the company number or postcode as the company's website."""
+    by the company number or postcode as the company's website. With save,
+    the given site is saved as yours and still read for its offices."""
     from . import website
 
     with db.conn() as c:
@@ -1579,8 +1581,18 @@ def find_website(num: str, body: WebsiteCheckIn | None = None):
         if not b:
             raise HTTPException(404, "Company not found")
         names = [b["name"], *b["previous_names"], *b["parent_companies"], *b["subsidiaries"]]
+        if body and body.url and body.save:
+            site = body.url if re.match(r"^https?://", body.url) else "https://" + body.url.strip().lstrip("/")
+            r = website.check(site, b["company_number"], b["postcode"], names)
+            label = "Added by me" + (f"; the check found {r['evidence']}" if r.get("confidence") else "")
+            saved = enrich.save_enrichment(c, b["company_number"], source_url=site, website=r["url"] if r.get("reachable") else site,
+                                           confidence="high", source_label=label, by="me")["saved"]
+            added = website.add_offices(c, b["company_number"], b["postcode"], r) if r.get("reachable") else []
+            msg = (f"Saved {site.replace('https://', '')} as the website." + (f" Added {len(added)} office address(es) from it." if added
+                   else " No other offices are listed on it." if r.get("reachable") else " The site didn't answer, so no offices were read."))
+            return {"results": [r], "saved": saved, "offices_added": added, "message": msg}
         results = ([website.check(body.url, b["company_number"], b["postcode"], names)] if body and body.url
-                   else website.find(names, b["company_number"], b["postcode"]))
+                   else website.find(names, b["company_number"], b["postcode"], people=b["owners"], town=b["town"]))
         best = next((r for r in results if r.get("confidence") in ("high", "medium")), None)
         saved = None
         added = []
@@ -1588,20 +1600,7 @@ def find_website(num: str, body: WebsiteCheckIn | None = None):
             saved = enrich.save_enrichment(
                 c, b["company_number"], source_url=best.get("page") or best["url"], website=best["url"],
                 confidence=best["confidence"], source_label=f"Website check: {best['evidence']}", by="website check")["saved"]
-            # Offices listed on the company's own (confirmed) site: trading
-            # addresses, added to any already saved. The registered office is skipped.
-            cur = c.execute("select locations from enrichment where company_number = %s", (b["company_number"],)).fetchone()
-            locs = list((cur or {}).get("locations") or [])
-            have = {l.get("postcode") for l in locs} | {b["postcode"]}
-            for a in best.get("addresses") or []:
-                if a["postcode"] not in have:
-                    locs.append({"kind": "office", "name": None, "address": a["address"], "postcode": a["postcode"]})
-                    have.add(a["postcode"])
-                    added.append(a)
-            if added:
-                enrich.save_enrichment(c, b["company_number"], source_url=added[0]["page"], locations=locs,
-                                       confidence=best["confidence"], source_label="Offices listed on the company's website",
-                                       by="website check")
+            added = website.add_offices(c, b["company_number"], b["postcode"], best, best["confidence"])
     return {"results": results, "saved": saved, "offices_added": added,
             "message": (f"Saved {best['url']} ({best['evidence']})." + (f" Added {len(added)} office address(es) from the site." if added else "") if best else
                         "No site could be confirmed. Ask Claude to search using the research brief, or enter one you know.")}

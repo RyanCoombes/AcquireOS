@@ -214,29 +214,24 @@ export function WebsiteFinder({ num, onSaved }: { num: string; onSaved: () => vo
     try { const r = await api.findWebsite(num, u); setRes(r); if (r.saved) onSaved(); } catch (e: any) { setErr(e.message); }
     setBusy(false);
   };
-  // You found it yourself: save it as the website without the check.
-  const [manual, setManual] = useState<string | null>(null);
+  // You found it yourself: save it as the website whatever the check says,
+  // and still read it for the offices it lists.
   const saveManual = async (u: string) => {
     setBusy(true); setErr(null);
-    try {
-      const site = /^https?:\/\//.test(u) ? u : `https://${u.replace(/^\/+/, "")}`;
-      await api.saveEnrichment(num, { website: site, source_url: site, confidence: "high", source_label: "Added by me (not checked)" });
-      setManual(site); setRes(null); onSaved();
-    } catch (e: any) { setErr(e.message); }
+    try { const r = await api.findWebsite(num, u, true); setRes(r); onSaved(); } catch (e: any) { setErr(e.message); }
     setBusy(false);
   };
   return (
     <div className="webfind">
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <button className="btn" disabled={busy} onClick={() => go()}>{busy ? "Checking likely sites…" : "Find website"}</button>
+        <button className="btn" disabled={busy} onClick={() => go()}>{busy ? "Checking…" : "Find website"}</button>
         <span className="faint small">or check one:</span>
         <input type="text" value={url} placeholder="example.co.uk" style={{ width: 200 }} onChange={(e) => setUrl(e.target.value)}
                onKeyDown={(e) => { if (e.key === "Enter" && url.trim()) go(url.trim()); }} />
         <button className="btn quiet" disabled={busy || !url.trim()} onClick={() => go(url.trim())}>Check</button>
         <button className="btn quiet" disabled={busy || !url.trim()} onClick={() => saveManual(url.trim())}
-                title="Save it as the website without checking it">Save without checking</button>
+                title="Save it as the website even if it can't be confirmed; its offices are still read">Save as the website</button>
       </div>
-      {manual && <div className="pos" style={{ marginTop: 8 }}>Saved {manual.replace(/^https?:\/\/(www\.)?/, "")} as the website (added by you).</div>}
       {err && <div className="callout red">{err}</div>}
       {res && (
         <div style={{ marginTop: 8 }}>

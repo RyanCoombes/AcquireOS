@@ -694,7 +694,7 @@ def test_bulk_website_check_saves_only_strict_matches(loaded, monkeypatch):
     pages = {"https://examplesystems.co.uk": "<footer>Example Systems Ltd · Registered in England 01000001 · "
                                               "Unit 4, Chester Business Park, Chester, CH4 9QZ</footer>",
              "https://sampledata.co.uk": "<footer>Sample Data · Swansea SA1 1AA</footer>"}
-    monkeypatch.setattr(website, "candidates", lambda names, limit=16: [
+    monkeypatch.setattr(website, "candidates", lambda names, limit=16, **k: [
         "examplesystems.co.uk" if "EXAMPLE" in names[0] else "sampledata.co.uk"])
     monkeypatch.setattr(website, "_resolves", lambda d: True)
     monkeypatch.setattr(website, "_fetch", lambda url, limit=600_000: (url, pages[url]) if url in pages else None)
@@ -1226,3 +1226,28 @@ def test_buy_box_can_leave_out_industries():
     assert not out({"sic_prefixes": ["68"], "sic_all": True})["excluded"]          # still does joinery
     assert out({"sic_prefixes": ["68", "4332"], "sic_all": True})["excluded"]       # everything it does is left out
     assert not out({"sic_prefixes": ["62"]})["excluded"]
+
+
+def test_website_guesses_use_owners_and_town():
+    from acquireos import website
+
+    assert website._person_parts("HARRIS, John Michael") == ("john", "harris")
+    assert website._person_parts("Mr John Michael Harris") == ("john", "harris")
+    s = website.extra_stems("HARBOUR JOINERY LIMITED", ["HARRIS, John"], "Bridgend")
+    assert "harrisjoinery" in s and "harrisandsons" in s and "johnharris" in s and "bridgendjoinery" in s
+    c = website.candidates(["HARBOUR JOINERY LIMITED"], people=["Mr John Harris"], town="Bridgend")
+    assert c[0] == "harbourjoinery.co.uk" and "harrisjoinery.co.uk" in c
+
+
+def test_manually_saved_website_is_read_for_offices(loaded, monkeypatch):
+    from acquireos import website
+    from acquireos.api import app
+
+    monkeypatch.setattr(website, "_fetch", lambda url, limit=0: (url, "<html><title>Us</title><p>Office: 1 High St, Lerwick ZE1 0AX</p></html>"))
+    loaded.commit()
+    num = loaded.execute("select company_number from company limit 1").fetchone()["company_number"]
+    r = TestClient(app).post(f"/api/companies/{num}/find-website", json={"url": "example.co.uk", "save": True}).json()
+    assert r["saved"] and [a["postcode"] for a in r["offices_added"]] == ["ZE1 0AX"]
+    with db.conn() as c:
+        e = c.execute("select website, locations from enrichment where company_number = %s", (num,)).fetchone()
+        assert e["website"].startswith("https://example.co.uk") and any(l["postcode"] == "ZE1 0AX" for l in e["locations"])
