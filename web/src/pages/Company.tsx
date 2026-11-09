@@ -76,7 +76,7 @@ export default function Company() {
   const [inView, setInView] = useState("overview");
   useEffect(() => {
     if (!data) return;
-    const ids = ["overview", "activity", "financials", "ownership", "group", "value", "compare", "charges", "filings", "group", "score", "research", "deal", "changes"];
+    const ids = ["overview", "activity", "financials", "ownership", "group", "value", "compare", "charges", "filings", "group", "score", "research", "news", "deal", "changes"];
     const els = ids.map((id) => document.getElementById(id)).filter(Boolean) as HTMLElement[];
     const io = new IntersectionObserver((entries) => {
       const vis = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
@@ -214,7 +214,7 @@ export default function Company() {
           <nav className="secnav" aria-label="Sections">
             {[["overview", "Overview"], ["activity", "Activity"], ["financials", "Financials"], ["ownership", "Owners & directors"],
               ["group", "Group"], ["value", "Value"], ["score", "Score"], ["charges", "Charges"], ["filings", "Filings"],
-              ["research", "Research"], ["deal", "Deal"], ["changes", "History"]].map(([id, l]) => (
+              ["research", "Research"], ...((data.enrichment?.links ?? []).length ? [["news", "News"]] : []), ["deal", "Deal"], ["changes", "History"]].map(([id, l]) => (
               <a key={id} href={`#${id}`} className={inView === id ? "on" : ""} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{l}</a>
             ))}
           </nav>
@@ -233,11 +233,6 @@ export default function Company() {
                 {data.enrichment!.facts!.slice(0, 8).map((f, i) => <li key={i}><b>{f.label}:</b> {f.value}
                   {f.source_url ? <> <a className="faint small" href={f.source_url} target="_blank" rel="noreferrer">{hostOf(f.source_url)} ↗</a></> : null}</li>)}
               </ul></dd></>}
-              {(data.enrichment?.links ?? []).length > 0 && <><dt>News & links</dt><dd><ul className="ov-links">
-                {[...data.enrichment!.links!].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? ""))).slice(0, 6).map((l, i) => (
-                  <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.title} ↗</a>
-                    <span className="faint small"> · {[l.kind !== "news" ? (l.kind.charAt(0).toUpperCase() + l.kind.slice(1)) : null, hostOf(l.url), l.date ? date(l.date) : null].filter(Boolean).join(" · ")}</span></li>))}
-              </ul></dd></>}
               {yearEnd && <><dt>Year end</dt><dd>{yearEnd}{prof.accounts?.last_accounts?.type ? <span className="faint"> · last filed as {String(prof.accounts.last_accounts.type).replace(/-/g, " ")}</span> : null}</dd></>}
               {prof.foreign_company_details && <><dt>Overseas company</dt><dd>
                 {[prof.foreign_company_details.legal_form, prof.foreign_company_details.originating_registry?.country && `registered in ${prof.foreign_company_details.originating_registry.country}`,
@@ -253,7 +248,6 @@ export default function Company() {
               {c.region && <><dt>Region</dt><dd>{c.region}</dd></>}
               {(data.enrichment?.ownership || (own && own.ownership_type !== "unknown")) && <><dt>Ownership</dt><dd>
                 {data.enrichment?.ownership ? <>{OWNERSHIP[data.enrichment.ownership]} <span className="faint small">· from research</span></> : OWNERSHIP[own!.ownership_type]}</dd></>}
-              {c.review_tier && <><dt>Review tier</dt><dd>{c.review_tier}</dd></>}
               {c.last_accounts_date && <><dt>Last accounts</dt><dd>Made up to {date(c.last_accounts_date)}
                 {c.accounts_category ? <span className="faint"> · {accountsLabel(c.accounts_category)}</span> : null}</dd></>}
               {c.accounts_next_due && <><dt>Next accounts due</dt><dd className={overdue(c.accounts_next_due, c.status) ? "neg" : ""}>
@@ -376,6 +370,16 @@ export default function Company() {
           <Enrichment key={JSON.stringify(data.enrichment)} data={data} num={num} onSaved={reload}
                       finder={<WebsiteFinder num={num} onSaved={reload} />} />
           </div>
+          {(data.enrichment?.links ?? []).length > 0 && (
+            <section id="news">
+              <Head icon="file" tone="grey" title="News & links" />
+              <ul className="ov-links">
+                {[...data.enrichment!.links!].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? ""))).map((l, i) => (
+                  <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.title} ↗</a>
+                    <span className="faint small"> · {[l.kind !== "news" ? l.kind.charAt(0).toUpperCase() + l.kind.slice(1) : null, hostOf(l.url), l.date ? date(l.date) : null].filter(Boolean).join(" · ")}</span></li>))}
+              </ul>
+            </section>
+          )}
           <section id="changes">
             <Head icon="clock" tone="grey" title="Change history" />
             {data.changes.length ? (
