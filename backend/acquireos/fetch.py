@@ -437,6 +437,20 @@ def run_job(kind: str = "refresh", accounts_months: int = 1, reread_old: bool = 
         JOB = None
 
 
+def reclassify_owners(c):
+    """Classify every company's owners with the current rules, then rescore."""
+    from . import chsync, ownership, scoring
+
+    log("Reclassifying owners with the current rules")
+    ownership.rebuild(c, links=False)
+    c.commit()
+    log("Rescoring after reclassifying owners")
+    scoring.rescore_all(c)
+    chsync.set_setting(c, "ownership_version", ownership.OWNERSHIP_VERSION)
+    c.commit()
+    log("Owners reclassified and rescored")
+
+
 def _ownership_catch_up():
     import time
 
@@ -450,14 +464,7 @@ def _ownership_catch_up():
                 return
             while chsync.busy(c):
                 time.sleep(300)
-            log("Reclassifying owners after the update")
-            ownership.rebuild(c, links=False)
-            c.commit()
-            log("Rescoring after the ownership update")
-            scoring.rescore_all(c)
-            chsync.set_setting(c, "ownership_version", ownership.OWNERSHIP_VERSION)
-            c.commit()
-            log("Ownership update done")
+            reclassify_owners(c)
     except Exception as e:
         log(f"Ownership update failed: {e}")
 

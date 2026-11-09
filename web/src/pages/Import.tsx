@@ -409,6 +409,19 @@ function CatchUp() {
             </div>
           </div>
         )}
+        {acc && acc.owners_current !== undefined && (
+          <div>
+            <div className="small"><b>Owners classified with the latest rules</b></div>
+            <div className="faint small">
+              {acc.owners_current ? "✓ Up to date"
+                : job?.running ? "Rules changed: they'll be applied automatically once the running load finishes."
+                : <>Rules changed (people with control only no longer count as owners).{" "}
+                    <button className="linkish small" onClick={async () => {
+                      try { await api.reclassifyOwners(); setMsg("Reclassifying owners, then rescoring: progress shows above."); refresh(); }
+                      catch (e: any) { setMsg(e.message); } }}>Reclassify owners now</button></>}
+            </div>
+          </div>
+        )}
         {ex && (
           <>
             <div>

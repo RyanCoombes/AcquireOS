@@ -1740,8 +1740,24 @@ def catch_up():
                          from (select distinct on (filename) filename, loader_version from import_run
                                where kind = 'accounts' and finished_at is not null
                                order by filename, loader_version desc) x""", (LOADER_VERSION, LOADER_VERSION)).fetchone()
+        from . import chsync, ownership
+
+        owners_current = int(chsync.get_setting(c, "ownership_version", 1) or 1) >= ownership.OWNERSHIP_VERSION
     return {"accounts_months_old": r["old"], "accounts_months_current": r["current"], "accounts_months_total": r["total"],
-            "loader_version": LOADER_VERSION}
+            "loader_version": LOADER_VERSION, "owners_current": owners_current}
+
+
+@app.post("/api/ownership/reclassify")
+def reclassify_owners():
+    """Classify every company's owners with the current rules and rescore, as a background job."""
+    from . import jobs
+
+    with db.conn() as c:
+        cur = jobs.current(c)
+        if cur and cur["status"] == "running":
+            raise HTTPException(409, "A job is running: owners are reclassified automatically once it finishes")
+    _run_detached(["reclassify-owners"], after=clear_cache)
+    return {"started": True}
 
 
 @app.get("/api/pdf-read/failures")

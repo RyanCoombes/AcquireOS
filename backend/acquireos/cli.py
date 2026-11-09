@@ -52,6 +52,7 @@ def main(argv=None):
     p.add_argument("--sheet")
 
     sub.add_parser("rebuild", help="Recompute ownership, links and scores")
+    sub.add_parser("reclassify-owners", help="Classify owners with the current rules and rescore (used by the web app)")
     sub.add_parser("demo", help="Load a fictional demo dataset (for trying the app out)")
     sub.add_parser("rescore", help="Recompute scores against the active buy box")
     sub.add_parser("score-pending", help="Score buy boxes marked as needing it (used by the web app)")
@@ -67,6 +68,20 @@ def main(argv=None):
         import secrets
 
         print(secrets.token_urlsafe(32))
+        return
+    if a.cmd == "reclassify-owners":
+        from . import db, jobs
+        from .fetch import reclassify_owners
+
+        job = jobs.Job("reclassify-owners", ["Reclassify owners and rescore"])
+        job.stage("Reclassify owners and rescore")
+        try:
+            with db.conn(dedicated=True) as c:
+                reclassify_owners(c)
+            job.finish({})
+        except Exception as e:
+            job.finish({}, status="failed", error=str(e))
+            raise
         return
     if a.cmd == "scheduler":
         from .fetch import scheduler
