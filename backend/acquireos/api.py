@@ -1798,6 +1798,60 @@ def pdf_read_checked(body: CheckedIn):
         return {"ok": True}
 
 
+@app.get("/api/pdf-read/years")
+def pdf_read_years(show: str = "check", q: str | None = None, limit: int = 200):
+    """PDF-read years to check: those that look wrong (show=check) or all."""
+    from . import pdfaccounts
+
+    with db.conn() as c:
+        return pdfaccounts.years_to_check(c, "check" if show == "check" else "all", q, min(max(limit, 1), 1000))
+
+
+@app.get("/api/pdf-read/check")
+def pdf_read_check(company_number: str, period_end: str):
+    """One PDF-read year: the figures saved, what the reader saw, and which line each came from."""
+    from . import pdfaccounts
+
+    with db.conn() as c:
+        d = pdfaccounts.check_detail(c, company_number, period_end)
+    if not d:
+        raise HTTPException(404, "Company not found")
+    return d
+
+
+@app.get("/api/pdf-read/pdf")
+def pdf_read_pdf(company_number: str, made_up: str):
+    """The accounts PDF, fetched from Companies House when asked (not stored)."""
+    from fastapi.responses import Response
+
+    from . import chapi, pdfaccounts
+
+    if not chapi.enabled():
+        raise HTTPException(400, "Needs CH_API_KEY")
+    with db.conn() as c:
+        pdf = pdfaccounts.pdf_bytes(c, company_number, made_up)
+    if not pdf:
+        raise HTTPException(404, "Companies House did not return the PDF")
+    return Response(pdf, media_type="application/pdf", headers={"Cache-Control": "private, max-age=3600"})
+
+
+class CorrectIn(BaseModel):
+    company_number: str
+    period_end: str
+    values: dict[str, float | None] = {}
+
+
+@app.post("/api/pdf-read/correct")
+def pdf_read_correct(body: CorrectIn):
+    """Save your corrections to a PDF-read year (as yours) and mark it checked."""
+    from . import pdfaccounts
+
+    with db.conn() as c:
+        r = pdfaccounts.correct(c, body.company_number, body.period_end, body.values)
+    pdfaccounts.rescore_later([body.company_number.strip().upper()])
+    return r
+
+
 @app.post("/api/companies/{num}/refresh")
 def refresh_company(num: str):
     """Everything from Companies House now (profile, filings, owners, officers,

@@ -27,7 +27,7 @@ FIELDS = ("turnover", "gross_profit", "operating_profit", "profit_loss", "net_as
 
 # Labels at the start of a line (lower-cased, punctuation simplified).
 # Bump when reading improves: years that couldn't be read are tried again.
-VERSION = 5
+VERSION = 6  # 6: keeps the full text and each figure's line, for checking
 
 _PL = r"(profit|loss|\(loss\)\s*/\s*profit|profit\s*/\s*\(loss\)|\(profit\)\s*/\s*loss|loss\s*/\s*\(profit\))"
 LABELS: list[tuple[str, re.Pattern]] = [
@@ -84,7 +84,9 @@ def extract(text: str) -> dict:
     checks applied. Values in pounds."""
     scale = 1000.0 if _THOUSANDS.search(text) else 1.0
     found: dict[str, list[float | None]] = {}
-    lines = [_clean(" ".join(raw.replace("’", "'").split())) for raw in text.splitlines()]
+    src: dict[str, str] = {}  # the line (as read) each figure came from
+    raw_lines = text.splitlines()
+    lines = [_clean(" ".join(raw.replace("’", "'").split())) for raw in raw_lines]
     for i, line in enumerate(lines):
         low = line.lower().lstrip("•*- ").strip()
         if not low:
@@ -122,9 +124,12 @@ def extract(text: str) -> dict:
             if field in ("operating_profit", "profit_loss", "gross_profit") and low.startswith("loss") and cur > 0:
                 cur, prior = -cur, (-prior if prior and prior > 0 else prior)
             found[field] = [cur, prior]
+            src[field] = " ".join(raw_lines[i].split())
             break
     m = _EMPLOYEES.search(" ".join(text.lower().split()))
     employees = int(m.group(1)) if m and 0 < int(m.group(1)) < 100_000 else None
+    if employees:
+        src["employees"] = m.group(0)
 
     dropped = []
     # Net assets must agree with total equity when both are given.
@@ -167,7 +172,10 @@ def extract(text: str) -> dict:
         if any(v is not None and abs(v) > 1e11 for v in found[f]):
             dropped.append(f"{f.replace('_', ' ')} (implausible)")
             del found[f]
-    return {"figures": found, "employees": employees, "dropped": dropped, "thousands": scale == 1000.0}
+    if "net_assets" in found and "net_assets" not in src and "equity" in src:
+        src["net_assets"] = src["equity"]
+    return {"figures": found, "employees": employees, "dropped": dropped, "thousands": scale == 1000.0,
+            "lines": {k: v for k, v in src.items() if k in found or k == "employees"}}
 
 
 def pdf_text(pdf: bytes, ocr_pages: int = 20) -> tuple[str, str]:
@@ -176,7 +184,7 @@ def pdf_text(pdf: bytes, ocr_pages: int = 20) -> tuple[str, str]:
         from pypdf import PdfReader
 
         reader = PdfReader(io.BytesIO(pdf))
-        text = "\n".join((pg.extract_text() or "") for pg in reader.pages[:60])
+        text = "\n".join(f"[[page {i + 1}]]\n" + (pg.extract_text() or "") for i, pg in enumerate(reader.pages[:60]))
     except Exception:
         text = ""
     if len(re.sub(r"[^A-Za-z0-9]", "", text)) >= 400 and re.search(r"\d{1,3},\d{3}", text):
@@ -227,7 +235,7 @@ def ocr(pdf: bytes, pages: int = 20) -> str:
             try:
                 r = subprocess.run(["tesseract", os.path.join(d, name), "stdout", *_TESS_ARGS], env=_TESS_ENV,
                                    check=False, timeout=PAGE_TIMEOUT, preexec_fn=_nice, capture_output=True, text=True)
-                out.append(r.stdout or "")
+                out.append(f"[[page {int(re.sub(r'\D', '', name) or 0)}]]\n" + (r.stdout or ""))
             except subprocess.TimeoutExpired:
                 skipped.append(re.sub(r"\D", "", name).lstrip("0") or "?")
                 continue
@@ -258,7 +266,7 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
         """select transaction_id, detail from filing where company_number = %s and type = 'AA'
            and detail->>'made_up_date' = %s order by filed_on desc limit 1""", (num, made_up)).fetchone()
     link = (f or {}).get("detail", {}).get("document") if f else None
-    result = {"status": "failed", "method": None, "figures": {}, "note": None, "sample": None}
+    result = {"status": "failed", "method": None, "figures": {}, "note": None, "sample": None, "full_text": None, "lines": None}
     try:
         if not link:
             result["note"] = "no document link for these accounts"
@@ -284,10 +292,12 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
                 text, method = pdf_text(pdf)
                 result["method"] = method
                 result["sample"] = _sample(text)
+                result["full_text"] = text[:300_000]
                 if not text.strip():
                     result["note"] = "no text could be read" + ("" if ocr_available() else " (OCR is not installed)")
                 else:
                     ex = extract(text)
+                    result["lines"] = ex.get("lines") or None
                     mu = date.fromisoformat(made_up)
                     cur = {k: v[0] for k, v in ex["figures"].items() if v[0] is not None}
                     if ex["employees"]:
@@ -332,13 +342,13 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
     import json
 
     conn.execute(
-        """insert into pdf_read (company_number, made_up, status, method, figures, note, sample, version)
-           values (%s, %s, %s, %s, %s, %s, %s, %s)
+        """insert into pdf_read (company_number, made_up, status, method, figures, note, sample, version, full_text, lines)
+           values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            on conflict (company_number, made_up) do update set status = excluded.status, method = excluded.method,
              figures = excluded.figures, note = excluded.note, sample = excluded.sample, version = excluded.version,
-             tries = pdf_read.tries + 1, read_at = now()""",
+             full_text = excluded.full_text, lines = excluded.lines, tries = pdf_read.tries + 1, read_at = now()""",
         (num, made_up, result["status"], result["method"], json.dumps(result["figures"]), result["note"],
-         result["sample"], VERSION))
+         result["sample"], VERSION, result["full_text"], json.dumps(result["lines"]) if result["lines"] else None))
     if result["status"] == "done":
         from . import scoring
         from .importers.companies import refresh_estimates
@@ -548,7 +558,8 @@ flagged as (
              case when f.turnover > 0 and abs(f.operating_profit) > f.turnover then 'operating profit bigger than turnover' end,
              case when f.turnover >= 100000 and (abs(f.gross_profit) between 0.01 and 99 or abs(f.operating_profit) between 0.01 and 99
                        or abs(f.net_assets) between 0.01 and 99 or abs(f.cash) between 0.01 and 99)
-                  then 'a figure under £100 beside turnover of ' || round(f.turnover / 1000) || 'k' end,
+                  then 'a figure under £100 beside turnover of ' || case when f.turnover >= 1000000
+                       then '£' || round(f.turnover / 1000000, 2) || 'm' else '£' || round(f.turnover / 1000) || 'k' end end,
              case when f.turnover > 0 and f.employees > 0 and f.turnover / f.employees > 5000000
                   then 'over £5m turnover per employee' end,
              case when f.turnover > 0 and f.employees >= 5 and f.turnover / f.employees < 5000
@@ -576,3 +587,106 @@ def suspicious_count(conn) -> int:
 def mark_checked(conn, company_number: str, period_end: str) -> None:
     conn.execute("insert into figure_check (company_number, period_end) values (%s, %s) on conflict do nothing",
                  (company_number.strip().upper(), period_end))
+
+
+# --- Checking a reading against the PDF (Data page) ---------------------------
+
+CHECK_FIELDS = ["turnover", "gross_profit", "operating_profit", "profit_loss", "employees", "net_assets", "cash",
+                "debtors", "fixed_assets", "current_assets", "net_current_assets", "total_assets_less_cl",
+                "creditors_within", "creditors_after", "stock", "staff_costs", "director_pay", "dividends",
+                "depreciation", "amortisation", "interest_payable", "tax", "bank_loans"]
+
+
+def years_to_check(conn, show: str = "check", q: str | None = None, limit: int = 200) -> list[dict]:
+    """PDF-read years: those worth checking (figures that look wrong), or all of
+    them, newest read first. Optionally filtered by company name or number."""
+    if show == "check":
+        rows = [dict(r, made_up=r["period_end"], checked=False) for r in suspicious(conn, 2000)]
+        if q:
+            ql = q.lower().strip()
+            rows = [r for r in rows if ql in r["name"].lower() or ql == r["company_number"].lower()]
+        return rows[:limit]
+    where, params = "", {"limit": limit}
+    if q:
+        where = "and (c.name ilike %(q)s or c.company_number = upper(%(qn)s))"
+        params.update(q=f"%{q.strip()}%", qn=q.strip())
+    return conn.execute(f"""
+        select r.company_number, c.name, r.made_up, r.made_up as period_end, r.method, r.read_at,
+               exists (select 1 from figure_check k where k.company_number = r.company_number
+                       and abs(k.period_end - r.made_up) <= 45) as checked,
+               '{{}}'::text[] as why
+        from pdf_read r join company c using (company_number)
+        where r.status = 'done' and r.method in ('text', 'ocr') {where}
+        order by r.read_at desc limit %(limit)s""", params).fetchall()
+
+
+def _reading_for(conn, num: str, period_end: str):
+    """The PDF reading that supplied a year: its own accounts, or the next
+    year's (whose prior-year column it was)."""
+    r = conn.execute("""select *, 'current' as col from pdf_read where company_number = %(n)s and status = 'done'
+                        and abs(made_up - %(p)s::date) <= 45 order by read_at desc limit 1""",
+                     {"n": num, "p": period_end}).fetchone()
+    if r:
+        return r
+    return conn.execute("""select *, 'prior' as col from pdf_read where company_number = %(n)s and status = 'done'
+                           and abs(made_up - (%(p)s::date + interval '1 year')::date) <= 45
+                           order by read_at desc limit 1""", {"n": num, "p": period_end}).fetchone()
+
+
+def check_detail(conn, company_number: str, period_end: str) -> dict | None:
+    num = company_number.strip().upper()
+    c = conn.execute("select name from company where company_number = %s", (num,)).fetchone()
+    if not c:
+        return None
+    fp = conn.execute("""select * from financial_period where company_number = %s and not period_inferred
+                         and abs(period_end - %s::date) <= 45 order by abs(period_end - %s::date) limit 1""",
+                      (num, period_end, period_end)).fetchone()
+    r = _reading_for(conn, num, str(fp["period_end"]) if fp else period_end)
+    why = next((x["why"] for x in suspicious(conn, 5000) if x["company_number"] == num
+                and fp and x["period_end"] == fp["period_end"]), [])
+    return {
+        "company_number": num, "name": c["name"], "period_end": str(fp["period_end"]) if fp else period_end,
+        "source": fp["source"] if fp else None,
+        "figures": {k: (float(fp[k]) if fp and fp.get(k) is not None else None) for k in CHECK_FIELDS},
+        "made_up": str(r["made_up"]) if r else None, "column": r["col"] if r else None,
+        "method": r["method"] if r else None, "note": r["note"] if r else None, "read_at": r["read_at"] if r else None,
+        "text": (r["full_text"] or r["sample"]) if r else None, "full": bool(r and r["full_text"]),
+        "lines": (r["lines"] or {}) if r else {}, "why": why,
+        "checked": bool(fp and conn.execute("select 1 from figure_check where company_number = %s and period_end = %s",
+                                            (num, fp["period_end"])).fetchone()),
+    }
+
+
+def pdf_bytes(conn, company_number: str, made_up: str) -> bytes | None:
+    from . import chapi
+
+    f = conn.execute("""select detail from filing where company_number = %s and type = 'AA'
+                        and detail->>'made_up_date' = %s order by filed_on desc limit 1""",
+                     (company_number.strip().upper(), made_up)).fetchone()
+    link = (f or {}).get("detail", {}).get("document") if f else None
+    return chapi._document(link, limit=25_000_000) if link else None
+
+
+def correct(conn, company_number: str, period_end: str, values: dict) -> dict:
+    """Your corrections to a PDF-read year: saved as yours (a later re-read never
+    replaces them), a blank clears a wrong figure, and the year is marked checked."""
+    from .importers.accounts import _upsert
+
+    num = company_number.strip().upper()
+    pe = date.fromisoformat(period_end)
+    old = conn.execute("select * from financial_period where company_number = %s and period_end = %s", (num, pe)).fetchone() or {}
+    keep = {k: v for k, v in values.items() if k in CHECK_FIELDS and v is not None}
+    clear = [k for k, v in values.items() if k in CHECK_FIELDS and v is None and old.get(k) is not None]
+    if keep:
+        _upsert(conn, num, pe, keep, "manual", balance_date=pe)
+    if clear:
+        conn.execute(f"update financial_period set {', '.join(f'{k} = null' for k in clear)}, source = 'manual' "
+                     "where company_number = %s and period_end = %s", (num, pe))
+    changes = [f"{k.replace('_', ' ')}: {old.get(k) if old.get(k) is not None else 'blank'} → {keep.get(k, 'blank')}"
+               for k in [*keep, *clear] if (float(old[k]) if old.get(k) is not None else None) != keep.get(k)]
+    if changes:
+        conn.execute("""insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)
+                        values (%s, 'other', %s, 'manual', 'Checked against the PDF', 'me', 'high')""",
+                     (num, f"Corrected the {pe:%b %Y} accounts figures read from the PDF: " + "; ".join(changes)))
+    mark_checked(conn, num, str(pe))
+    return {"changed": changes}

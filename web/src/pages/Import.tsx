@@ -2,9 +2,9 @@ import type React from "react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { duration, elapsed, useJob } from "../components/JobBar";
 import { Link } from "react-router-dom";
-import { api, type ChSync, type PdfFailure, type PdfRead, type Preview, type Suspicious } from "../api";
+import { api, type ChSync, type PdfFailure, type PdfRead, type PdfCheck, type PdfYear, type Preview } from "../api";
 import { ErrorLine, Hint, useAsync } from "../components/bits";
-import { dateTime, int, money } from "../format";
+import { dateTime, int } from "../format";
 
 const KINDS = {
   companies: {
@@ -459,7 +459,7 @@ function PdfReadPanel() {
         {" · "}<b>{int(st.queue)}</b> waiting{st.last_at ? <> · last {dateTime(st.last_at)}</> : null}
       </p>
       <PdfFailures count={st.nothing_found + st.failed} onRetried={setSt} />
-      <PdfSuspicious count={st.suspicious ?? 0} />
+      <PdfCheckList count={st.suspicious ?? 0} />
       <PdfRedo onDone={setSt} />
       {!st.ocr && <div className="callout amber" style={{ marginTop: 8 }}>OCR isn't installed here, so only PDFs with a text layer can be read. Update the stack to get the new image.</div>}
       <p className="faint small">Years with no figures, newest first, back up to 10 years.<Hint text="For every company fetched from Companies House. Read as data where Companies House has it, otherwise from the PDF (text, or OCR for scans). Your pipeline first. PDF figures are marked on the company page." /></p>
@@ -488,37 +488,172 @@ function PdfRedo({ onDone }: { onDone: (s: PdfRead) => void }) {
   );
 }
 
-function PdfSuspicious({ count }: { count: number }) {
-  const [rows, setRows] = useState<Suspicious[] | null>(null);
-  if (!count) return null;
-  const checked = async (r: Suspicious) => {
-    await api.pdfChecked(r.company_number, String(r.period_end).slice(0, 10));
-    setRows((xs) => (xs ?? []).filter((x) => x !== r));
-  };
+const FIG_LABEL: Record<string, string> = {
+  turnover: "Turnover", gross_profit: "Gross profit", operating_profit: "Operating profit", profit_loss: "Profit after tax",
+  employees: "Staff", net_assets: "Net assets", cash: "Cash", debtors: "Debtors", fixed_assets: "Fixed assets",
+  current_assets: "Current assets", net_current_assets: "Net current assets", total_assets_less_cl: "Total assets less current liabilities",
+  creditors_within: "Creditors within a year", creditors_after: "Creditors after a year", stock: "Stock", staff_costs: "Staff costs",
+  director_pay: "Directors' pay", dividends: "Dividends", depreciation: "Depreciation", amortisation: "Amortisation",
+  interest_payable: "Interest paid", tax: "Tax", bank_loans: "Bank loans",
+};
+
+/** Check what the PDF reader read: a list of years, each opening a side-by-side check. */
+function PdfCheckList({ count }: { count: number }) {
+  const [show, setShow] = useState<"check" | "all">("check");
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<PdfYear[] | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!shown) return;
+    let live = true;
+    const t = setTimeout(() => api.pdfYears(show, q.trim() || undefined).then((r) => live && setRows(r)).catch(() => live && setRows([])), 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [show, q, shown]);
+  const key = (r: PdfYear) => `${r.company_number}-${String(r.period_end).slice(0, 10)}`;
   return (
-    <details style={{ marginTop: 8 }} onToggle={(e) => { if ((e.target as HTMLDetailsElement).open && !rows) api.pdfSuspicious().then(setRows); }}>
-      <summary className="small" style={{ cursor: "pointer" }}><b>{int(count)}</b> PDF years worth checking</summary>
-      <p className="faint small" style={{ margin: "6px 0" }}>Figures that look wrong. Check them against the PDF, or ask Claude to (list_suspicious_figures).</p>
-      {!rows ? <div className="faint small">Loading…</div> : (
-        <table className="small">
-          <thead><tr><th>Company</th><th>Year end</th><th>Turnover</th><th>Why</th><th /></tr></thead>
+    <details style={{ marginTop: 8 }} onToggle={(e) => setShown((e.target as HTMLDetailsElement).open)}>
+      <summary className="small" style={{ cursor: "pointer" }}>Check readings{count ? <> · <b>{int(count)}</b> worth checking</> : null}</summary>
+      <div style={{ display: "flex", gap: 8, margin: "8px 0", flexWrap: "wrap", alignItems: "center" }}>
+        <span className="seg2"><button className={show === "check" ? "on" : ""} onClick={() => setShow("check")}>Worth checking</button>
+          <button className={show === "all" ? "on" : ""} onClick={() => setShow("all")}>All read from PDFs</button></span>
+        <input type="search" placeholder="Company name or number" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 220 }} />
+      </div>
+      {!rows ? <div className="faint small">Loading…</div> : rows.length === 0 ? <div className="faint small">{show === "check" ? "Nothing looks wrong." : "No years read from PDFs yet."}</div> : (
+        <table className="small pdfcheck-list">
+          <thead><tr><th>Company</th><th>Year end</th><th>{show === "check" ? "Why" : "Read"}</th><th /></tr></thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={`${r.company_number}-${r.period_end}`}>
-                <td><Link to={`/c/${r.company_number}`}>{r.name}</Link></td>
-                <td className="nowrap">{String(r.period_end).slice(0, 10)}</td>
-                <td className="nowrap">{r.turnover != null ? money(r.turnover) : "—"}</td>
-                <td>{r.why.join("; ")}</td>
-                <td className="nowrap">
-                  <button className="linkish small" onClick={() => checked(r)}>It's right</button>{" "}
-                  <a className="small" href={`https://find-and-update.company-information.service.gov.uk/company/${r.company_number}/filing-history`} target="_blank" rel="noreferrer">PDF ↗</a>
-                </td>
-              </tr>
+              <Fragment key={key(r)}>
+                <tr className={openKey === key(r) ? "on" : ""} onClick={() => setOpenKey(openKey === key(r) ? null : key(r))} style={{ cursor: "pointer" }}>
+                  <td><Link to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></td>
+                  <td className="nowrap">{String(r.period_end).slice(0, 10)}</td>
+                  <td>{show === "check" ? r.why.join("; ") : <>{r.method === "ocr" ? "OCR (scanned)" : "Text"}{r.read_at ? ` · ${dateTime(r.read_at)}` : ""}</>}
+                    {r.checked ? <span className="chip green" style={{ marginLeft: 6 }}>Checked</span> : null}</td>
+                  <td className="nowrap"><button className="linkish small">{openKey === key(r) ? "Close" : "Check"}</button></td>
+                </tr>
+                {openKey === key(r) && <tr><td colSpan={4} style={{ padding: 0 }}>
+                  <PdfCheckPanel num={r.company_number} pe={String(r.period_end).slice(0, 10)}
+                                 onDone={() => { setOpenKey(null); setRows((xs) => (xs ?? []).filter((x) => show === "all" ? true : key(x) !== key(r))); }} />
+                </td></tr>}
+              </Fragment>
             ))}
           </tbody>
         </table>
       )}
     </details>
+  );
+}
+
+function PdfCheckPanel({ num, pe, onDone }: { num: string; pe: string; onDone: () => void }) {
+  const [d, setD] = useState<PdfCheck | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [sel, setSel] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  // The PDF is fetched once per panel (not stored), then shown from memory.
+  const [pdf, setPdf] = useState<{ url: string | null; err: string | null } | null>(null);
+  useEffect(() => {
+    if (!d?.made_up) return;
+    let url: string | null = null, live = true;
+    fetch(`/api/pdf-read/pdf?company_number=${encodeURIComponent(num)}&made_up=${d.made_up}`)
+      .then(async (r) => {
+        if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail ?? m; } catch { /* not json */ }
+          if (live) setPdf({ url: null, err: m === "Needs CH_API_KEY" ? "Add your Companies House API key to the stack to see the PDF here." : m }); return; }
+        url = URL.createObjectURL(await r.blob());
+        if (live) setPdf({ url, err: null });
+      }).catch((e) => live && setPdf({ url: null, err: e.message }));
+    return () => { live = false; if (url) URL.revokeObjectURL(url); };
+  }, [num, d?.made_up]);
+  useEffect(() => {
+    api.pdfCheck(num, pe).then((x) => {
+      setD(x);
+      setVals(Object.fromEntries(Object.entries(x.figures).filter(([, v]) => v !== null).map(([k, v]) => [k, Math.round(v!).toLocaleString("en-GB")])));
+      setSel(Object.keys(x.lines)[0] ?? null);
+    }).catch((e) => setErr(e.message));
+  }, [num, pe]);
+  if (err) return <div className="callout red">{err}</div>;
+  if (!d) return <div className="faint small" style={{ padding: 12 }}>Loading…</div>;
+  const parse = (s: string) => { const t = s.replace(/[£,\s]/g, "").replace(/^\((.*)\)$/, "-$1"); return t === "" ? null : Number(t); };
+  const now = (k: string) => (k in vals ? parse(vals[k]) : null);
+  const changed = Object.keys(FIG_LABEL).filter((k) => {
+    const w = d.figures[k] ?? null, n = now(k);
+    if (n !== null && Number.isNaN(n)) return true;
+    return (w === null ? null : Math.round(w)) !== (n === null ? null : Math.round(n));
+  });
+  const bad = changed.filter((k) => k in vals && vals[k].trim() !== "" && Number.isNaN(parse(vals[k])));
+  const shownFields = Object.keys(FIG_LABEL).filter((k) => d.figures[k] !== null || k in vals);
+  // Pages: split on the reader's page markers.
+  const pages: { n: number | null; text: string }[] = [];
+  for (const part of (d.text ?? "").split(/\[\[page (\d+)\]\]\n?/)) {
+    if (/^\d+$/.test(part)) { pages.push({ n: Number(part), text: "" }); continue; }
+    if (!pages.length) pages.push({ n: null, text: "" });
+    pages[pages.length - 1].text += part;
+  }
+  const selLine = sel ? d.lines[sel] : null;
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+  const pageOf = selLine ? pages.find((p) => p.text.split("\n").some((l) => norm(l) === norm(selLine)))?.n ?? null : null;
+  const pdfUrl = d.made_up ? `/api/pdf-read/pdf?company_number=${encodeURIComponent(num)}&made_up=${d.made_up}` : null;
+  const save = async (asIs: boolean) => {
+    setBusy(true); setMsg(null);
+    try {
+      const values: Record<string, number | null> = {};
+      if (!asIs) for (const k of changed) values[k] = k in vals ? parse(vals[k]) : null;
+      const r = await api.pdfCorrect(num, d.period_end, values);
+      setMsg(r.changed.length ? `Saved: ${r.changed.join("; ")}` : "Marked as checked.");
+      setTimeout(onDone, 900);
+    } catch (e: any) { setMsg(e.message); }
+    setBusy(false);
+  };
+  return (
+    <div className="pdfcheck">
+      <div className="pc-head">
+        <b>{d.name} · {new Date(d.period_end).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</b>
+        <span className={`chip ${d.method === "ocr" ? "amber" : ""}`}>{d.method === "ocr" ? "Read by OCR (scanned)" : d.method === "text" ? "Read from the text layer" : "Not read from a PDF"}</span>
+        {d.column === "prior" && <span className="faint small">from the prior-year column of the {d.made_up?.slice(0, 4)} accounts</span>}
+        {d.why.length > 0 && <span className="chip red">{d.why.join("; ")}</span>}
+        {d.checked && <span className="chip green">Checked before</span>}
+      </div>
+      <div className="pc-grid">
+        <div className="pc-col">
+          <div className="pc-lbl">Figures saved{d.source && !d.source.startsWith("pdf:") ? ` (now ${d.source === "manual" ? "yours" : d.source})` : ""}</div>
+          {shownFields.map((k) => (
+            <div key={k} className={`pc-fig ${sel === k ? "on" : ""} ${changed.includes(k) ? "edited" : ""}`} onClick={() => setSel(k)}>
+              <span className="n">{FIG_LABEL[k]}{d.lines[k] ? "" : <span className="faint" title="Not from this reading (another filing, or saved by you)"> ·</span>}</span>
+              <input value={vals[k] ?? ""} onChange={(e) => setVals({ ...vals, [k]: e.target.value })} onFocus={() => setSel(k)} inputMode="numeric" />
+            </div>
+          ))}
+          <div className="pc-acts">
+            <button className="btn primary" disabled={busy || !changed.length || bad.length > 0} onClick={() => save(false)}>Save corrections{changed.length ? ` (${changed.length})` : ""}</button>
+            <button className="btn" disabled={busy || changed.length > 0} onClick={() => save(true)}>It's all right</button>
+          </div>
+          {bad.length > 0 && <div className="small" style={{ color: "var(--red)" }}>Not a number: {bad.map((k) => FIG_LABEL[k]).join(", ")}</div>}
+          {msg && <div className="small pos" style={{ marginTop: 6 }}>{msg}</div>}
+          <p className="faint small">Corrections are saved as yours, so a later re-read never replaces them. Clear a box to remove a wrong figure.</p>
+        </div>
+        <div className="pc-col">
+          <div className="pc-lbl">What the reader saw{!d.full && d.text ? " (key lines only: read before full text was kept)" : ""}</div>
+          {!d.text ? <div className="faint small">No text stored for this year.</div> : (
+            <pre className="pc-text">{pages.filter((p) => p.text.trim()).map((p, i) => (
+              <Fragment key={i}>{p.n !== null && <span className="pg">Page {p.n}</span>}
+                {p.text.split("\n").map((l, j) => selLine && norm(l) === norm(selLine)
+                  ? <mark key={j} ref={(el) => el?.scrollIntoView({ block: "center", behavior: "smooth" })}>{l + "\n"}</mark>
+                  : <Fragment key={j}>{l + "\n"}</Fragment>)}
+              </Fragment>))}</pre>
+          )}
+          {sel && !selLine && <div className="faint small">{FIG_LABEL[sel]} didn't come from this reading.</div>}
+        </div>
+        <div className="pc-col">
+          <div className="pc-lbl">The PDF from Companies House{pageOf ? ` · page ${pageOf}` : ""}
+            {pdf?.url && <a className="small" style={{ marginLeft: 8, textTransform: "none", letterSpacing: 0 }} href={pdf.url} target="_blank" rel="noreferrer">Open full PDF ↗</a>}</div>
+          {!pdfUrl ? <div className="faint small">No PDF for this year.</div>
+            : !pdf ? <div className="faint small">Fetching the PDF from Companies House…</div>
+            : pdf.err ? <div className="faint small">{pdf.err} <a href={`https://find-and-update.company-information.service.gov.uk/company/${num}/filing-history`} target="_blank" rel="noreferrer">Filing history ↗</a></div>
+            : <iframe key={pageOf ?? 0} className="pc-pdf" title="Accounts PDF" src={`${pdf.url}#page=${pageOf ?? 1}&view=FitH`} />}
+        </div>
+      </div>
+    </div>
   );
 }
 

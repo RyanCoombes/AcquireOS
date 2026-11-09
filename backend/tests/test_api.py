@@ -1267,3 +1267,46 @@ def test_remove_website_lets_the_check_look_again(loaded):
         assert c.execute("select website from enrichment where company_number = %s", (num,)).fetchone()["website"] is None
         assert not c.execute("select 1 from website_check where company_number = %s", (num,)).fetchone()
         assert c.execute("select 1 from research where company_number = %s and content like 'Website removed%%'", (num,)).fetchone()
+
+
+def test_pdf_check_shows_lines_and_saves_corrections(loaded, monkeypatch):
+    import json as _j
+    from datetime import date
+
+    from acquireos import chapi, pdfaccounts
+    from acquireos.api import app
+
+    text = "[[page 6]]\nTurnover 4,110,456 2,704,331\nGross profit 1,913,374 1,292,427\nOperating profit 80,214 90,877\n" \
+           "[[page 7]]\nNet assets 1,702,118 1,320,551\n"
+    ex = pdfaccounts.extract(text)
+    assert ex["lines"]["turnover"] == "Turnover 4,110,456 2,704,331" and ex["lines"]["net_assets"].startswith("Net assets")
+    monkeypatch.setattr(chapi, "_document", lambda link, limit=0, accept="": b"%PDF-1.4 test")
+    monkeypatch.setattr(chapi, "_doc_formats", lambda link: ["application/pdf"])
+    monkeypatch.setattr(chapi, "enabled", lambda: True)
+    monkeypatch.setattr(pdfaccounts, "pdf_text", lambda pdf, ocr_pages=20: (text, "ocr"))
+    monkeypatch.setattr(pdfaccounts, "rescore_later", lambda nums: None)
+    loaded.commit()
+    with db.conn() as c:
+        num = c.execute("select company_number from company order by company_number limit 1").fetchone()["company_number"]
+        c.execute("delete from financial_period where company_number = %s", (num,))
+        c.execute("delete from pdf_read where company_number = %s", (num,))
+        c.execute("""insert into filing (company_number, transaction_id, filed_on, type, category, description, detail)
+                     values (%s, 'aa23', '2024-01-01', 'AA', 'accounts', 'accounts', %s) on conflict do nothing""",
+                  (num, _j.dumps({"made_up_date": "2023-09-30", "document": "/document/yy"})))
+        assert pdfaccounts.read_and_save(c, num, "2023-09-30")["status"] == "done"
+    cl = TestClient(app)
+    d = cl.get(f"/api/pdf-read/check?company_number={num}&period_end=2023-09-30").json()
+    assert d["figures"]["turnover"] == 4_110_456 and d["full"] and "[[page 7]]" in d["text"]
+    assert d["lines"]["gross_profit"] == "Gross profit 1,913,374 1,292,427" and d["method"] == "ocr"
+    assert cl.get(f"/api/pdf-read/pdf?company_number={num}&made_up=2023-09-30").content.startswith(b"%PDF")
+    assert any(r["company_number"] == num for r in cl.get("/api/pdf-read/years?show=all").json())
+    # correct one figure, clear another
+    r = cl.post("/api/pdf-read/correct", json={"company_number": num, "period_end": d["period_end"],
+                                                "values": {"gross_profit": 1_913_000, "operating_profit": None}}).json()
+    assert len(r["changed"]) == 2
+    with db.conn() as c:
+        row = c.execute("select gross_profit, operating_profit, turnover, source from financial_period where company_number = %s and period_end = %s",
+                        (num, date(2023, 9, 30))).fetchone()
+        assert float(row["gross_profit"]) == 1_913_000 and row["operating_profit"] is None
+        assert float(row["turnover"]) == 4_110_456 and row["source"] == "manual"
+        assert c.execute("select 1 from figure_check where company_number = %s", (num,)).fetchone()

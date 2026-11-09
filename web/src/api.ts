@@ -293,6 +293,12 @@ export const api = {
     `/api/companies/${encodeURIComponent(n)}/refresh`, { method: "POST" }),
   pdfRedo: () => req<PdfRead & { figures_cleared: number; companies: number; years_queued: number }>("/api/pdf-read/redo", { method: "POST" }),
   pdfSuspicious: () => req<Suspicious[]>("/api/pdf-read/suspicious"),
+  pdfYears: (show: "check" | "all", q?: string) =>
+    req<PdfYear[]>(`/api/pdf-read/years?show=${show}${q ? `&q=${encodeURIComponent(q)}` : ""}`),
+  pdfCheck: (num: string, pe: string) =>
+    req<PdfCheck>(`/api/pdf-read/check?company_number=${encodeURIComponent(num)}&period_end=${encodeURIComponent(pe)}`),
+  pdfCorrect: (company_number: string, period_end: string, values: Record<string, number | null>) =>
+    req<{ changed: string[] }>("/api/pdf-read/correct", { method: "POST", body: JSON.stringify({ company_number, period_end, values }) }),
   pdfChecked: (company_number: string, period_end: string) => req<{ ok: boolean }>("/api/pdf-read/checked", { method: "POST", body: JSON.stringify({ company_number, period_end }) }),
   pdfReadSet: (paused: boolean) => req<PdfRead>("/api/pdf-read", { method: "PUT", body: JSON.stringify({ paused }) }),
   chSync: () => req<ChSync>("/api/ch-sync"),
@@ -411,6 +417,12 @@ export type PdfFailure = { company_number: string; name: string; made_up: string
   note: string | null; read_at: string; tries: number; sample: string | null };
 export type PdfRead = { done: number; by_ocr: number; by_data?: number; nothing_found: number; failed: number; last_at: string | null;
   queue: number; ocr: boolean; paused: boolean; suspicious?: number };
+export type PdfYear = { company_number: string; name: string; period_end: string; made_up: string; method?: string | null;
+  read_at?: string; checked: boolean; why: string[] };
+export type PdfCheck = { company_number: string; name: string; period_end: string; source: string | null;
+  figures: Record<string, number | null>; made_up: string | null; column: "current" | "prior" | null; method: string | null;
+  note: string | null; read_at: string | null; text: string | null; full: boolean; lines: Record<string, string>;
+  why: string[]; checked: boolean };
 export type Suspicious = { company_number: string; name: string; period_end: string; source: string; turnover: number | null;
   gross_profit: number | null; operating_profit: number | null; net_assets: number | null; cash: number | null;
   employees: number | null; why: string[] };
