@@ -121,7 +121,7 @@ def parse_name(name: str) -> tuple[str, date] | None:
 def _number(text: str, attrs: dict) -> float | None:
     raw = html.unescape(_TAG_RE.sub("", text)).strip()
     fmt = attrs.get("format", "").lower()
-    if raw in {"", "-", "–", "—"} or "zerodash" in fmt or "fixedzero" in fmt or "fixed-zero" in fmt:
+    if raw in {"", "-", "–", "—"} or raw.lower() in {"nil", "none"} or "zerodash" in fmt or "fixedzero" in fmt or "fixed-zero" in fmt:
         value = 0.0
     else:
         if "commadecimal" in fmt:  # 1.234,56
@@ -254,6 +254,8 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
             hit = _LOCAL_TO_FIELD.get(local)
             if not hit:
                 continue
+            if hit[0] == "employees":  # a headcount is never in £000 or £m, whatever scale the table states
+                attrs = {k: x for k, x in attrs.items() if k != "scale"}
             v = _number(_TAG_B.sub(b"", val_b).decode("utf-8", "replace"), attrs)
             if v is None:
                 continue
@@ -420,10 +422,16 @@ def year_as_staff(emp, period_end, turnover=None) -> bool:
 def implausible_staff(emp, turnover) -> bool:
     """A large staff count with turnover far too small to pay them (under £5k a
     head): a misread, so left blank rather than inflating the revenue estimate."""
-    return bool(emp and emp >= 500 and turnover is not None and 0 < float(turnover) < 5_000 * emp)
+    if not emp:
+        return False
+    if emp >= 100_000:
+        return True  # more than all but a handful of UK employers: a money amount or reference read as staff
+    if turnover is None:
+        return emp >= 1_000  # companies that size file full accounts with turnover
+    return emp >= 500 and 0 <= float(turnover) < 5_000 * emp
 
 
-def _reread_staff(conn, rows) -> dict:
+def _reread_staff(conn, rows, replace: bool = False) -> dict:
     """For cleared years filed as data, read the filing again from Companies House
     (the real staff figure is often tagged too) and fill the blank. Only where
     the filing link is held and the API key is set; the rest stay blank."""
@@ -468,27 +476,50 @@ def _reread_staff(conn, rows) -> dict:
         except Exception:
             vals = {}
         emp = vals.get("employees")
-        if emp is not None:
+        if emp is None:
+            continue
+        if replace:  # a year-like count at a big company: replace only with a different, real figure
+            if emp != r["employees"] and not (1990 <= emp <= 2035):
+                conn.execute("""update financial_period set employees = %s where company_number = %s and period_end = %s
+                                and employees = %s""", (emp, r["company_number"], r["period_end"], r["employees"]))
+                done += 1
+        else:
             conn.execute("""update financial_period set employees = %s where company_number = %s and period_end = %s
                             and employees is null""", (emp, r["company_number"], r["period_end"]))
             done += 1
     return {"data_years_reread": done, "data_years_no_link": missing}
 
 
+BAD_STAFF_SQL = """
+    coalesce(source, '') not in ('manual', 'pdf:claude') and (
+      -- the year heading read as staff (unless turnover shows a company that big)
+      (employees between 1990 and 2035
+       and employees in (extract(year from period_end)::int, extract(year from period_end)::int - 1)
+       and not (turnover is not null and turnover >= 20000 * employees))
+      -- a money amount, reference or £000-scaled count read as staff
+      or employees >= 100000
+      or (employees >= 1000 and turnover is null)
+      or (employees >= 500 and turnover is not null and turnover < 5000 * employees))"""
+
+# Year-like counts at companies big enough for them: not cleared, but checked
+# against the filing and replaced if it gives a different, real figure.
+CHECK_STAFF_SQL = """
+    coalesce(source, '') not in ('manual', 'pdf:claude')
+      and employees between 1990 and 2035
+      and employees in (extract(year from period_end)::int, extract(year from period_end)::int - 1)
+      and turnover is not null and turnover >= 20000 * employees"""
+
+
 def fix_year_staff(conn) -> dict:
-    """One-off: clear staff counts that are the year heading. Figures saved by
-    you or Claude are never touched. The PDF years affected are read again
-    (gaps only), and estimates and scores refreshed for those companies."""
+    """Clean staff counts that were misread: the year heading, a money amount or
+    reference, or a headcount scaled by £000. They're cleared and read again from
+    the filing (electronic accounts via Companies House, PDFs by the fixed
+    reader, gaps only). Figures saved by you or Claude are never touched."""
     from .. import scoring
     from .companies import refresh_estimates
 
-    rows = conn.execute("""
-        update financial_period fp set employees = null
-        where employees between 1990 and 2035
-          and employees in (extract(year from period_end)::int, extract(year from period_end)::int - 1)
-          and coalesce(source, '') not in ('manual', 'pdf:claude')
-          and not (turnover is not null and turnover >= 20000 * employees)
-        returning company_number, period_end""").fetchall()
+    rows = conn.execute(f"update financial_period set employees = null where {BAD_STAFF_SQL} "
+                        "returning company_number, period_end").fetchall()
     if rows:
         conn.execute("""insert into staff_year_cleared (company_number, period_end)
                         select unnest(%s::text[]), unnest(%s::date[]) on conflict do nothing""",
@@ -497,7 +528,8 @@ def fix_year_staff(conn) -> dict:
     todo = conn.execute("""select k.company_number, k.period_end from staff_year_cleared k
                            join financial_period fp using (company_number, period_end)
                            where fp.employees is null""").fetchall()
-    nums = sorted({r["company_number"] for r in rows} | {r["company_number"] for r in todo})
+    check = conn.execute(f"select company_number, period_end, employees from financial_period where {CHECK_STAFF_SQL}").fetchall()
+    nums = sorted({r["company_number"] for r in rows} | {r["company_number"] for r in todo} | {r["company_number"] for r in check})
     if not nums:
         return {"years": 0, "companies": 0}
     # Years read from a PDF: read again with the fixed reader (it only fills gaps).
@@ -506,6 +538,7 @@ def fix_year_staff(conn) -> dict:
                                  and r.status = 'done' and r.method in ('text', 'ocr')""",
                             ([r["company_number"] for r in rows], [r["period_end"] for r in rows])).rowcount
     reread = _reread_staff(conn, todo)
+    checked = _reread_staff(conn, check, replace=True)
     conn.execute("drop table if exists staff_fix")
     conn.execute("create temp table staff_fix (company_number text)")
     conn.execute("insert into staff_fix select unnest(%s::text[])", (nums,))
@@ -515,7 +548,8 @@ def fix_year_staff(conn) -> dict:
     for n in nums:
         scoring.rescore(conn, company_number=n)
     conn.commit()
-    return {"years": len(rows), "companies": len({r["company_number"] for r in rows}), "pdf_years_requeued": requeued, **reread}
+    return {"years": len(rows), "companies": len({r["company_number"] for r in rows}), "pdf_years_requeued": requeued,
+            **reread, "large_checked": len(check), "large_corrected": checked.get("data_years_reread", 0)}
 
 
 def _merge_sql(cols) -> str:

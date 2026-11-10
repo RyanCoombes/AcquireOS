@@ -1522,3 +1522,62 @@ def test_cleared_staff_years_are_read_again_from_companies_house(loaded, monkeyp
     assert r["data_years_reread"] == 1 and calls and "filing-history" in calls[0]
     assert c.execute("select employees from financial_period where company_number = %s", (num,)).fetchone()["employees"] == 7
     c.rollback()
+
+
+def test_staff_scale_nil_and_page_scales():
+    from datetime import date
+
+    from acquireos import pdfaccounts
+    from acquireos.importers.accounts import parse
+
+    ctx = ('<xbrli:context id="d0"><xbrli:entity><xbrli:identifier>01</xbrli:identifier></xbrli:entity>'
+           '<xbrli:period><xbrli:startDate>2024-01-01</xbrli:startDate><xbrli:endDate>2024-12-31</xbrli:endDate></xbrli:period></xbrli:context>')
+    def doc(staff_tag, turnover_tag=""):
+        return f'<html><ix:header>{ctx}</ix:header>{turnover_tag}{staff_tag}</html>'
+    # £000 scale on the headcount is ignored; on money it applies.
+    d = parse(doc('<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="d0" scale="3">956</ix:nonFraction>',
+                  '<ix:nonFraction name="core:TurnoverRevenue" contextRef="d0" scale="3">250,000</ix:nonFraction>'))[date(2024, 12, 31)]
+    assert d["employees"] == 956 and d["turnover"] == 250_000_000
+    # "Nil" is zero, not missing.
+    d = parse(doc('<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="d0">Nil</ix:nonFraction>'))[date(2024, 12, 31)]
+    assert d["employees"] == 0
+    # A reference number read as staff, with no turnover: dropped.
+    d = parse(doc('<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="d0">858226</ix:nonFraction>'))
+    assert "employees" not in d.get(date(2024, 12, 31), {})
+    # PDFs: statements in £m on one page, notes in £ on another; staff never scaled.
+    t = ("[[page 3]]\nIncome statement £m\nTurnover 4.97 4.11\nOperating profit 0.49 0.08\n"
+         "[[page 9]]\nNotes (in £)\nAverage number of employees 2024 2023\n41 38\n")
+    ex = pdfaccounts.extract(t)
+    assert ex["figures"]["turnover"][0] == 4_970_000 and ex["employees"] == 41
+    assert pdfaccounts.extract("Turnover 500,000\nThere were no employees apart from the directors (2020: Nil)")["employees"] == 0
+
+
+def test_cleanup_covers_scaled_and_reference_staff_and_checks_big_companies(loaded, monkeypatch):
+    from datetime import date
+
+    from acquireos import chapi
+    from acquireos.importers.accounts import _upsert, fix_year_staff
+
+    ctx = ('<xbrli:context id="d0"><xbrli:entity><xbrli:identifier>01</xbrli:identifier></xbrli:entity>'
+           '<xbrli:period><xbrli:startDate>2018-01-01</xbrli:startDate><xbrli:endDate>2018-12-31</xbrli:endDate></xbrli:period></xbrli:context>')
+    filing = (f'<html><ix:header>{ctx}</ix:header>'
+              '<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="d0">2018</ix:nonFraction>'
+              '<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="d0">144</ix:nonFraction></html>').encode()
+    monkeypatch.setattr(chapi, "enabled", lambda: True)
+    monkeypatch.setattr(chapi, "_get", lambda path: {"items": [{"type": "AA", "description_values": {"made_up_date": "2018-12-31"},
+                                                                "links": {"document_metadata": "/document/x"}}]})
+    monkeypatch.setattr(chapi, "_doc_formats", lambda link: ["application/xhtml+xml"])
+    monkeypatch.setattr(chapi, "_document", lambda link, limit=0, accept="": filing)
+    c = loaded
+    nums = [r["company_number"] for r in c.execute("select company_number from company order by company_number limit 3")]
+    for n in nums:
+        c.execute("delete from financial_period where company_number = %s", (n,))
+    _upsert(c, nums[0], date(2024, 12, 31), {"employees": 956000, "turnover": 250_000_000}, "accounts:x", balance_date=date(2024, 12, 31))
+    _upsert(c, nums[1], date(2024, 12, 31), {"employees": 858226, "net_assets": 1000}, "accounts:x", balance_date=date(2024, 12, 31))
+    _upsert(c, nums[2], date(2018, 12, 31), {"employees": 2018, "turnover": 60_000_000}, "accounts:x", balance_date=date(2018, 12, 31))
+    r = fix_year_staff(c)
+    emp = {n: c.execute("select employees from financial_period where company_number = %s", (n,)).fetchone()["employees"] for n in nums}
+    assert r["years"] == 2 and r["large_corrected"] == 1
+    assert emp[nums[2]] == 144                       # big company: checked against the filing and corrected
+    assert emp[nums[0]] == 144 or emp[nums[0]] is None  # cleared, then refilled from the (mocked) filing
+    c.rollback()

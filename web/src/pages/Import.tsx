@@ -411,17 +411,18 @@ function CatchUp() {
         )}
         {acc && acc.staff_fix !== undefined && (
           <div>
-            <div className="small"><b>Staff counts that were really the year</b></div>
+            <div className="small"><b>Misread staff counts</b><Hint text="Years, money amounts, references or £000-scaled numbers read as staff. Cleared and read again from the filing; figures saved by you or Claude are never changed." /></div>
             <div className="faint small">
               {acc.staff_fix ? <>✓ Run{acc.staff_fix.at ? ` (last ${dateTime(acc.staff_fix.at)})` : ""}
                   {acc.staff_fix.years != null ? `: ${int(acc.staff_fix.years)} years in ${int(acc.staff_fix.companies ?? 0)} companies cleared in total` : ""}
                   {acc.staff_fix.pdf_years_requeued ? `, ${int(acc.staff_fix.pdf_years_requeued)} PDF years queued to read again` : ""}
-                  {acc.staff_fix.data_years_reread ? `, ${int(acc.staff_fix.data_years_reread)} filled from the filing` : ""}.
+                  {acc.staff_fix.data_years_reread ? `, ${int(acc.staff_fix.data_years_reread)} filled from the filing` : ""}
+                  {acc.staff_fix.large_corrected ? `, ${int(acc.staff_fix.large_corrected)} large companies corrected` : ""}.
                   {acc.staff_fix.data_years_no_link ? <> {int(acc.staff_fix.data_years_no_link)} years are still blank (no electronic filing to read them from).{" "}
                     <button className="linkish small" onClick={async () => { try { await api.fixStaffYears(); setMsg("Trying those years again: progress shows above."); refresh(); } catch (e: any) { setMsg(e.message); } }}>Try again</button></> : null}</>
                 : <>Not run yet. It runs by itself once no data load is running, or{" "}
                     <button className="linkish small" onClick={async () => {
-                      try { await api.fixStaffYears(); setMsg("Clearing staff counts that were the year: progress shows above."); refresh(); }
+                      try { await api.fixStaffYears(); setMsg("Clearing misread staff counts: progress shows above."); refresh(); }
                       catch (e: any) { setMsg(e.message); } }}>fix now</button>. Your and Claude's saved figures are never changed.</>}
             </div>
           </div>

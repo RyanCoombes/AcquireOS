@@ -45,7 +45,7 @@ LABELS: list[tuple[str, re.Pattern]] = [
     ("creditors_after", re.compile(r"^creditors:?\s*(amounts )?falling due after (more than )?one year\b")),
     ("stock", re.compile(r"^(stocks?|inventories)\b(?!\s*(exchange|market))")),
 ]
-_NUM = re.compile(r"\(?-?£?\s?\d[\d,]*\)?|(?<![\w.])-(?![\w.])")
+_NUM = re.compile(r"\(?-?£?\s?\d[\d,]*(?:\.\d+)?\)?|(?<![\w.])-(?![\w.])")
 _NOTE = re.compile(r"^\d{1,2}$")  # a plain one- or two-digit number: usually a note reference
 _EMPLOYEES = re.compile(r"average (?:monthly )?number of (?:persons employed|employees|staff|people employed)"
                         r"[^0-9]{0,200}?((?:\d{1,5}\b[^0-9]{0,24}){1,6})")
@@ -61,6 +61,16 @@ def _staff_from(numbers: str) -> int | None:
         return v if 0 < v < 100_000 else None
     return None
 _THOUSANDS = re.compile(r"£\s?'?\s?000|£000s?|£k\b")
+_MILLIONS = re.compile(r"£\s?'?\s?m\b|£\s?millions?\b|£\s?'?\s?000,?000\b|\bin millions\b", re.I)
+
+
+def _scale_of(text: str) -> float | None:
+    """The money scale a page (or document) states: millions, thousands, or None."""
+    if _MILLIONS.search(text):
+        return 1_000_000.0
+    if _THOUSANDS.search(text):
+        return 1000.0
+    return None
 
 
 def _value(tok: str) -> float | None:
@@ -68,10 +78,16 @@ def _value(tok: str) -> float | None:
     if t == "-":
         return 0.0
     neg = t.startswith("(") or t.startswith("-")
-    digits = re.sub(r"[^\d]", "", t)
-    if not digits:
-        return None
-    v = float(digits)
+    core = re.sub(r"[^\d.,]", "", t)
+    # "4.97" (£m accounts) is a decimal; "1.234" is a thousands separator OCR read as a dot.
+    m = re.fullmatch(r"([\d,]*\d)\.(\d{1,2})", core)
+    if m:
+        v = float(m.group(1).replace(",", "") + "." + m.group(2))
+    else:
+        digits = re.sub(r"[^\d]", "", core)
+        if not digits:
+            return None
+        v = float(digits)
     return -v if neg else v
 
 
@@ -93,12 +109,28 @@ def _clean(line: str) -> str:
 def extract(text: str) -> dict:
     """{field: [current, prior]} from accounts text, plus employees and the
     checks applied. Values in pounds."""
-    scale = 1000.0 if _THOUSANDS.search(text) else 1.0
+    # Scale per page: statements in £000 or £m and notes in £ are common in one filing.
+    doc_scale = _scale_of(text) or 1.0
     found: dict[str, list[float | None]] = {}
     src: dict[str, str] = {}  # the line (as read) each figure came from
     raw_lines = text.splitlines()
     lines = [_clean(" ".join(raw.replace("’", "'").split())) for raw in raw_lines]
+    page_scale: list[float] = []
+    if any(l.startswith("[[page ") for l in raw_lines):
+        cur, buf, starts = doc_scale, [], []
+        pages: list[tuple[int, int]] = []
+        start = 0
+        for i, l in enumerate(raw_lines + ["[[page end]]"]):
+            if l.startswith("[[page ") and i > start:
+                pages.append((start, i)); start = i
+        for a, b in pages:
+            sc = _scale_of("\n".join(raw_lines[a:b]))
+            page_scale += [sc if sc is not None else 1.0] * (b - a)
+    else:
+        page_scale = [doc_scale] * len(raw_lines)
+    scale = doc_scale
     for i, line in enumerate(lines):
+        scale = page_scale[i] if i < len(page_scale) else doc_scale
         low = line.lower().lstrip("•*- ").strip()
         if not low:
             continue
@@ -137,13 +169,18 @@ def extract(text: str) -> dict:
             found[field] = [cur, prior]
             src[field] = " ".join(raw_lines[i].split())
             break
-    m = _EMPLOYEES.search(" ".join(text.lower().split()))
+    flat = " ".join(text.lower().split())
+    m = _EMPLOYEES.search(flat)
     employees = _staff_from(m.group(1)) if m else None
+    # "No employees… (2020: Nil)", "the average number of employees was nil": none, not 2020.
+    if employees is None and re.search(r"(average (?:monthly )?number of (?:persons employed|employees|staff)[^.]{0,80}?\b(?:nil|none)\b"
+                                       r"|\bno employees\b|\bhad no (?:employees|staff)\b)", flat):
+        employees = 0
     from .importers.accounts import implausible_staff
 
     if employees and implausible_staff(employees, (found.get("turnover") or [None])[0]):
         employees = None
-    if employees:
+    if employees is not None and m:
         src["employees"] = m.group(0)
 
     dropped = []
@@ -189,7 +226,7 @@ def extract(text: str) -> dict:
             del found[f]
     if "net_assets" in found and "net_assets" not in src and "equity" in src:
         src["net_assets"] = src["equity"]
-    return {"figures": found, "employees": employees, "dropped": dropped, "thousands": scale == 1000.0,
+    return {"figures": found, "employees": employees, "dropped": dropped, "thousands": doc_scale == 1000.0,
             "lines": {k: v for k, v in src.items() if k in found or k == "employees"}}
 
 
@@ -315,7 +352,7 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
                     result["lines"] = ex.get("lines") or None
                     mu = date.fromisoformat(made_up)
                     cur = {k: v[0] for k, v in ex["figures"].items() if v[0] is not None}
-                    if ex["employees"]:
+                    if ex["employees"] is not None:
                         cur["employees"] = ex["employees"]
                     # Only fill gaps: figures already held for the year (from its data
                     # accounts, or saved by you or Claude) are never replaced by a reading.

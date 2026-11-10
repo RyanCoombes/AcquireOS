@@ -463,11 +463,11 @@ def run_staff_year_fix(c) -> dict:
     # Add up across runs: a later run finding nothing new mustn't hide what an earlier one did.
     prev = chsync.get_setting(c, "staff_year_fix", None)
     prev = prev if isinstance(prev, dict) else {}
-    keys = ("years", "companies", "pdf_years_requeued", "data_years_reread")
+    keys = ("years", "companies", "pdf_years_requeued", "data_years_reread", "large_corrected")
     total = {k: int(prev.get(k) or 0) + int(r.get(k) or 0) for k in keys}
     total["data_years_no_link"] = int(r.get("data_years_no_link") or 0)  # still blank now
     now = datetime.now().isoformat(timespec="minutes")
-    chsync.set_setting(c, "staff_year_fix", {**total, "v": 2, "at": now, "first_at": prev.get("first_at") or prev.get("at") or now,
+    chsync.set_setting(c, "staff_year_fix", {**total, "v": 3, "at": now, "first_at": prev.get("first_at") or prev.get("at") or now,
                                              "last": {**r, "at": now}})
     c.commit()
     return r
@@ -479,10 +479,10 @@ def _staff_year_catch_up(c):
     from .importers.accounts import fix_year_staff
 
     done = chsync.get_setting(c, "staff_year_fix", None)
-    if isinstance(done, dict) and int(done.get("v", 1)) >= 2:
+    if isinstance(done, dict) and int(done.get("v", 1)) >= 3:
         return
     r = run_staff_year_fix(c)
-    log(f"Staff counts that were the year: cleared {r['years']} years in {r['companies']} companies"
+    log(f"Misread staff counts: cleared {r['years']} years in {r['companies']} companies"
         + (f", {r['pdf_years_requeued']} PDF years queued to read again" if r.get("pdf_years_requeued") else ""))
 
 
