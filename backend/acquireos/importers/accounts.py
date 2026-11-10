@@ -286,9 +286,10 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
                 vals[f] = by_date[d]
         if "employees" in vals:
             # Mis-tagged filings sometimes put a money figure in the staff
-            # field; no UK company has a million employees.
+            # field (no UK company has a million employees), or tag the year
+            # heading above the staff note ("2025 2024") as the staff count.
             emp = vals["employees"]
-            if 0 <= emp < 1_000_000:
+            if 0 <= emp < 1_000_000 and not year_as_staff(emp, d, vals.get("turnover")):
                 vals["employees"] = int(round(emp))
             else:
                 del vals["employees"]
@@ -400,6 +401,51 @@ _SAVED = "(coalesce(fp.source, '') in ('manual', 'pdf:claude') or coalesce(fp.so
 _SAVING = "(coalesce(excluded.source, '') in ('manual', 'pdf:claude'))"   # you or Claude saving figures now: always applied
 # a year's own (older) accounts arriving after a newer filing's comparative: they fill gaps, but don't undo a restatement
 _FILL = f"({_OWN_NEW} and not {_OWN_OLD} and fp.source_balance_date > excluded.source_balance_date and not {_SAVING})"
+
+
+def year_as_staff(emp, period_end, turnover=None) -> bool:
+    """A staff count that is really the year heading: equal to the accounts'
+    year or the year before, unless turnover shows a company that big
+    (£20k+ a head)."""
+    try:
+        yr = period_end.year
+    except AttributeError:
+        return False
+    return emp in (yr, yr - 1) and not (turnover and float(turnover) >= 20_000 * emp)
+
+
+def fix_year_staff(conn) -> dict:
+    """One-off: clear staff counts that are the year heading. Figures saved by
+    you or Claude are never touched. The PDF years affected are read again
+    (gaps only), and estimates and scores refreshed for those companies."""
+    from .. import scoring
+    from .companies import refresh_estimates
+
+    rows = conn.execute("""
+        update financial_period fp set employees = null
+        where employees between 1990 and 2035
+          and employees in (extract(year from period_end)::int, extract(year from period_end)::int - 1)
+          and coalesce(source, '') not in ('manual', 'pdf:claude')
+          and not (turnover is not null and turnover >= 20000 * employees)
+        returning company_number, period_end""").fetchall()
+    nums = sorted({r["company_number"] for r in rows})
+    if not nums:
+        return {"years": 0, "companies": 0}
+    # Years read from a PDF: read again with the fixed reader (it only fills gaps).
+    requeued = conn.execute("""delete from pdf_read r using (select unnest(%s::text[]) n, unnest(%s::date[]) p) x
+                               where r.company_number = x.n and abs(r.made_up - x.p) <= 45
+                                 and r.status = 'done' and r.method in ('text', 'ocr')""",
+                            ([r["company_number"] for r in rows], [r["period_end"] for r in rows])).rowcount
+    conn.execute("drop table if exists staff_fix")
+    conn.execute("create temp table staff_fix (company_number text)")
+    conn.execute("insert into staff_fix select unnest(%s::text[])", (nums,))
+    refresh_estimates(conn, from_table="staff_fix")
+    scoring.refresh_latest(conn, from_table="staff_fix")
+    conn.commit()
+    for n in nums:
+        scoring.rescore(conn, company_number=n)
+    conn.commit()
+    return {"years": len(rows), "companies": len(nums), "pdf_years_requeued": requeued}
 
 
 def _merge_sql(cols) -> str:

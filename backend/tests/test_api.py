@@ -1444,3 +1444,32 @@ def test_deals_from_companies_house_and_research(loaded):
     assert not any(e["source"] == "research" and e["kind"] == "sold" for e in ev)
     assert next(e for e in ev if e["kind"] == "acquired")["counterparty_number"] == "79000003"
     c.rollback()
+
+
+def test_year_heading_is_not_read_as_staff_and_cleanup_keeps_saves(loaded):
+    from datetime import date
+
+    from acquireos import pdfaccounts
+    from acquireos.importers.accounts import _upsert, fix_year_staff, year_as_staff
+
+    # PDF staff note with the years as column headings.
+    t = "Turnover 400,000 380,000\nThe average number of employees during the year was:\n2025 2024\nNo. No.\n4 3\n"
+    assert pdfaccounts.extract(t)["employees"] == 4
+    assert pdfaccounts.extract("Average number of employees 12 11")["employees"] == 12
+    # Electronic accounts: the year tagged as the staff figure.
+    assert year_as_staff(2025, date(2025, 3, 31)) and year_as_staff(2024, date(2025, 3, 31))
+    assert not year_as_staff(2025, date(2025, 3, 31), turnover=150_000_000)   # really that big
+    assert not year_as_staff(25, date(2025, 3, 31))
+
+    c = loaded
+    nums = [r["company_number"] for r in c.execute("select company_number from company order by company_number limit 3")]
+    for n in nums:
+        c.execute("delete from financial_period where company_number = %s", (n,))
+    _upsert(c, nums[0], date(2025, 3, 31), {"employees": 2025, "net_assets": 10_000}, "pdf:ocr", balance_date=date(2025, 3, 31))
+    _upsert(c, nums[1], date(2024, 12, 31), {"employees": 2024}, "manual", balance_date=date(2024, 12, 31))       # yours: kept
+    _upsert(c, nums[2], date(2024, 12, 31), {"employees": 2024, "turnover": 90_000_000}, "accounts:x", balance_date=date(2024, 12, 31))
+    r = fix_year_staff(c)
+    emp = {n: c.execute("select employees from financial_period where company_number = %s", (n,)).fetchone()["employees"] for n in nums}
+    assert emp[nums[0]] is None and emp[nums[1]] == 2024 and emp[nums[2]] == 2024
+    assert r["companies"] == 1
+    c.rollback()

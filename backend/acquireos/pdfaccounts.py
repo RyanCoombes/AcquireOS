@@ -48,7 +48,18 @@ LABELS: list[tuple[str, re.Pattern]] = [
 _NUM = re.compile(r"\(?-?£?\s?\d[\d,]*\)?|(?<![\w.])-(?![\w.])")
 _NOTE = re.compile(r"^\d{1,2}$")  # a plain one- or two-digit number: usually a note reference
 _EMPLOYEES = re.compile(r"average (?:monthly )?number of (?:persons employed|employees|staff|people employed)"
-                        r"[^0-9]{0,200}?(\d{1,5})\b")
+                        r"[^0-9]{0,200}?((?:\d{1,5}\b[^0-9]{0,24}){1,6})")
+
+
+def _staff_from(numbers: str) -> int | None:
+    """The staff count after the label: column headings like "2025 2024"
+    come first in many layouts, so skip year-like numbers (1990-2035)."""
+    for tok in re.findall(r"\d{1,5}", numbers):
+        v = int(tok)
+        if 1990 <= v <= 2035:
+            continue
+        return v if 0 < v < 100_000 else None
+    return None
 _THOUSANDS = re.compile(r"£\s?'?\s?000|£000s?|£k\b")
 
 
@@ -127,7 +138,7 @@ def extract(text: str) -> dict:
             src[field] = " ".join(raw_lines[i].split())
             break
     m = _EMPLOYEES.search(" ".join(text.lower().split()))
-    employees = int(m.group(1)) if m and 0 < int(m.group(1)) < 100_000 else None
+    employees = _staff_from(m.group(1)) if m else None
     if employees:
         src["employees"] = m.group(0)
 

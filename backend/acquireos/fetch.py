@@ -452,6 +452,20 @@ def reclassify_owners(c):
     log("Owners reclassified and rescored")
 
 
+def _staff_year_catch_up(c):
+    """Once after the update: clear staff counts that were really the year heading."""
+    from . import chsync
+    from .importers.accounts import fix_year_staff
+
+    if chsync.get_setting(c, "staff_year_fix", False):
+        return
+    r = fix_year_staff(c)
+    chsync.set_setting(c, "staff_year_fix", True)
+    c.commit()
+    log(f"Staff counts that were the year: cleared {r['years']} years in {r['companies']} companies"
+        + (f", {r['pdf_years_requeued']} PDF years queued to read again" if r.get("pdf_years_requeued") else ""))
+
+
 def _ownership_catch_up():
     import time
 
@@ -460,6 +474,10 @@ def _ownership_catch_up():
     try:
         time.sleep(30)
         with db.conn(dedicated=True) as c:
+            if c.execute("select count(*) as n from company").fetchone()["n"]:
+                while chsync.busy(c):
+                    time.sleep(300)
+                _staff_year_catch_up(c)
             done = int(chsync.get_setting(c, "ownership_version", 1) or 1)
             if done >= ownership.OWNERSHIP_VERSION or c.execute("select count(*) as n from company").fetchone()["n"] == 0:
                 return
