@@ -452,6 +452,19 @@ def reclassify_owners(c):
     log("Owners reclassified and rescored")
 
 
+def run_staff_year_fix(c) -> dict:
+    """Clear staff counts that were the year heading, and record when and how many."""
+    from datetime import datetime
+
+    from . import chsync
+    from .importers.accounts import fix_year_staff
+
+    r = fix_year_staff(c)
+    chsync.set_setting(c, "staff_year_fix", {**r, "at": datetime.now().isoformat(timespec="minutes")})
+    c.commit()
+    return r
+
+
 def _staff_year_catch_up(c):
     """Once after the update: clear staff counts that were really the year heading."""
     from . import chsync
@@ -459,9 +472,7 @@ def _staff_year_catch_up(c):
 
     if chsync.get_setting(c, "staff_year_fix", False):
         return
-    r = fix_year_staff(c)
-    chsync.set_setting(c, "staff_year_fix", True)
-    c.commit()
+    r = run_staff_year_fix(c)
     log(f"Staff counts that were the year: cleared {r['years']} years in {r['companies']} companies"
         + (f", {r['pdf_years_requeued']} PDF years queued to read again" if r.get("pdf_years_requeued") else ""))
 

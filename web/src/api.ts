@@ -286,7 +286,9 @@ export const api = {
       { method: "POST", body: JSON.stringify({ url: url ?? null, save }) }),
   chCheck: (n: string) => req<NonNullable<CompanyDetail["ch"]> & { changed: boolean; changes: number }>(
     `/api/companies/${encodeURIComponent(n)}/ch-check`, { method: "POST" }),
-  catchUp: () => req<{ accounts_months_old: number; accounts_months_current: number; accounts_months_total: number; loader_version: number; owners_current?: boolean }>("/api/catch-up"),
+  catchUp: () => req<{ accounts_months_old: number; accounts_months_current: number; accounts_months_total: number; loader_version: number; owners_current?: boolean;
+    staff_fix?: { at: string | null; years?: number; companies?: number; pdf_years_requeued?: number } | null }>("/api/catch-up"),
+  fixStaffYears: () => req<{ started: boolean }>("/api/staff-years/fix", { method: "POST" }),
   reclassifyOwners: () => req<{ started: boolean }>("/api/ownership/reclassify", { method: "POST" }),
   chExtras: () => req<ChExtras>("/api/ch-extras"),
   chExtrasSet: (paused: boolean) => req<ChExtras>("/api/ch-extras", { method: "PUT", body: JSON.stringify({ paused }) }),

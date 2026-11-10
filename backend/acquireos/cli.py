@@ -52,6 +52,7 @@ def main(argv=None):
     p.add_argument("--sheet")
 
     sub.add_parser("rebuild", help="Recompute ownership, links and scores")
+    sub.add_parser("fix-staff-years", help="Clear staff counts that were really the year heading (used by the web app)")
     sub.add_parser("reclassify-owners", help="Classify owners with the current rules and rescore (used by the web app)")
     sub.add_parser("demo", help="Load a fictional demo dataset (for trying the app out)")
     sub.add_parser("rescore", help="Recompute scores against the active buy box")
@@ -68,6 +69,20 @@ def main(argv=None):
         import secrets
 
         print(secrets.token_urlsafe(32))
+        return
+    if a.cmd == "fix-staff-years":
+        from . import db as _db, jobs as _jobs
+        from .fetch import run_staff_year_fix
+
+        job = _jobs.Job("fix-staff-years", ["Clear staff counts that were the year"])
+        job.stage("Clear staff counts that were the year")
+        try:
+            with _db.conn(dedicated=True) as c:
+                r = run_staff_year_fix(c)
+            job.finish(r)
+        except Exception as e:
+            job.finish({}, status="failed", error=str(e))
+            raise
         return
     if a.cmd == "reclassify-owners":
         from . import db as _db, jobs as _jobs

@@ -409,6 +409,20 @@ function CatchUp() {
             </div>
           </div>
         )}
+        {acc && acc.staff_fix !== undefined && (
+          <div>
+            <div className="small"><b>Staff counts that were really the year</b></div>
+            <div className="faint small">
+              {acc.staff_fix ? <>✓ Cleaned{acc.staff_fix.at ? ` ${dateTime(acc.staff_fix.at)}` : ""}
+                  {acc.staff_fix.years != null ? `: ${int(acc.staff_fix.years)} years in ${int(acc.staff_fix.companies ?? 0)} companies cleared` : ""}
+                  {acc.staff_fix.pdf_years_requeued ? `, ${int(acc.staff_fix.pdf_years_requeued)} PDF years queued to read again` : ""}.</>
+                : <>Not run yet. It runs by itself once no data load is running, or{" "}
+                    <button className="linkish small" onClick={async () => {
+                      try { await api.fixStaffYears(); setMsg("Clearing staff counts that were the year: progress shows above."); refresh(); }
+                      catch (e: any) { setMsg(e.message); } }}>fix now</button>. Your and Claude's saved figures are never changed.</>}
+            </div>
+          </div>
+        )}
         {acc && acc.owners_current !== undefined && (
           <div>
             <div className="small"><b>Owners classified with the latest rules</b></div>

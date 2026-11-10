@@ -1748,8 +1748,17 @@ def catch_up():
         from . import chsync, ownership
 
         owners_current = int(chsync.get_setting(c, "ownership_version", 1) or 1) >= ownership.OWNERSHIP_VERSION
+        staff_fix = chsync.get_setting(c, "staff_year_fix", None)
     return {"accounts_months_old": r["old"], "accounts_months_current": r["current"], "accounts_months_total": r["total"],
-            "loader_version": LOADER_VERSION, "owners_current": owners_current}
+            "loader_version": LOADER_VERSION, "owners_current": owners_current,
+            "staff_fix": staff_fix if isinstance(staff_fix, dict) else ({"at": None} if staff_fix else None)}
+
+
+@app.post("/api/staff-years/fix")
+def fix_staff_years():
+    """Clear staff counts that were really the year heading (yours and Claude's are kept), as a background job."""
+    _run_detached(["fix-staff-years"], after=clear_cache)
+    return {"started": True}
 
 
 @app.post("/api/ownership/reclassify")

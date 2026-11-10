@@ -1368,6 +1368,11 @@ def test_cli_commands_still_run(loaded):
     loaded.commit()
     cli.main(["rescore"])
     cli.main(["reclassify-owners"])
+    cli.main(["fix-staff-years"])
+    from acquireos import chsync, db as _db
+
+    with _db.conn() as c:
+        assert chsync.get_setting(c, "staff_year_fix", None)["at"]
 
 
 def test_trustees_are_not_owners_and_a_trust_holdco_is_not_a_buyer(loaded):
