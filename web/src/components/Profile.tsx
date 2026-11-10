@@ -726,7 +726,7 @@ export function OwnersDirectors({ data, flags }: { data: CompanyDetail; flags?: 
         </div>}
         {listP.length > 0 && <ShareholderList rows={listP.map((w) => ({ key: w.key, name: w.name, personId: w.personId, company: w.company, regNo: w.regNo,
                                                        pct: w.stmtPct ?? w.pct ?? null, colour: w.colour, classes: w.classes ? [...w.classes] : [] }))}
-                                              showClass={allClasses.length > 1} title={only === "shareholders" ? `Shareholders${asAt ? `, confirmation statement of ${date(asAt)}` : ""}` : cardsP.length ? "Other shareholders" : "Shareholders"} />}
+                                              showClass={allClasses.length > 1} title={only === "shareholders" ? `Shareholders${asAt ? `, confirmation statement of ${date(asAt)}` : ""}` : cardsP.some((w) => w.stmtPct != null) ? "Other shareholders" : "Shareholders"} />}
         </>;
       })()}
 
