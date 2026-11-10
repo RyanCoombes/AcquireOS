@@ -139,6 +139,10 @@ def extract(text: str) -> dict:
             break
     m = _EMPLOYEES.search(" ".join(text.lower().split()))
     employees = _staff_from(m.group(1)) if m else None
+    from .importers.accounts import implausible_staff
+
+    if employees and implausible_staff(employees, (found.get("turnover") or [None])[0]):
+        employees = None
     if employees:
         src["employees"] = m.group(0)
 
@@ -555,7 +559,7 @@ def _rescore(nums: list[str]) -> None:
 SUSPICIOUS_SQL = f"""
 with mine as (select distinct company_number from financial_period fp where {_READER}),
 f as (
-    select fp.*, lag(fp.turnover) over w as prev_t, lead(fp.turnover) over w as next_t
+    select fp.*, lag(fp.turnover) over w as prev_t, lead(fp.turnover) over w as next_t, lag(fp.employees) over w as prev_e
     from financial_period fp join mine using (company_number)
     where not fp.period_inferred
     window w as (partition by fp.company_number order by fp.period_end)
@@ -574,6 +578,8 @@ flagged as (
                        or abs(f.net_assets) between 0.01 and 99 or abs(f.cash) between 0.01 and 99)
                   then 'a figure under £100 beside turnover of ' || case when f.turnover >= 1000000
                        then '£' || round(f.turnover / 1000000, 2) || 'm' else '£' || round(f.turnover / 1000) || 'k' end end,
+             case when f.employees >= 20 and f.prev_e > 0 and f.employees > 10 * f.prev_e
+                  then 'staff ' || f.employees || ', ten times the year before (' || f.prev_e || ')' end,
              case when f.turnover > 0 and f.employees > 0 and f.turnover / f.employees > 5000000
                   then 'over £5m turnover per employee' end,
              case when f.turnover > 0 and f.employees >= 5 and f.turnover / f.employees < 5000

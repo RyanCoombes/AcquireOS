@@ -1478,3 +1478,20 @@ def test_year_heading_is_not_read_as_staff_and_cleanup_keeps_saves(loaded):
     assert emp[nums[0]] is None and emp[nums[1]] == 2024 and emp[nums[2]] == 2024
     assert r["companies"] == 1
     c.rollback()
+
+
+def test_electronic_accounts_prefer_the_real_staff_figure_over_the_year():
+    from acquireos.importers.accounts import implausible_staff, parse
+
+    ctx = ('<xbrli:context id="d0"><xbrli:entity><xbrli:identifier>01</xbrli:identifier></xbrli:entity>'
+           '<xbrli:period><xbrli:startDate>2024-04-01</xbrli:startDate><xbrli:endDate>2025-03-31</xbrli:endDate></xbrli:period></xbrli:context>')
+    # The year heading tagged as staff first, then the real figure.
+    doc = (f'<html><ix:header>{ctx}</ix:header>'
+           '<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="d0">2025</ix:nonFraction>'
+           '<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="d0">4</ix:nonFraction></html>')
+    from datetime import date
+    assert parse(doc)[date(2025, 3, 31)]["employees"] == 4
+    # Only the year: dropped, not kept as 2,025 staff.
+    only = doc.replace('<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="d0">4</ix:nonFraction>', "")
+    assert "employees" not in parse(only).get(date(2025, 3, 31), {})
+    assert implausible_staff(1200, 400_000) and not implausible_staff(1200, 60_000_000) and not implausible_staff(40, 100)

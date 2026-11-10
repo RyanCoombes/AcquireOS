@@ -258,6 +258,8 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
             if v is None:
                 continue
             field, rank = hit
+            if field == "employees" and v in (d.year, d.year - 1):
+                rank += 100  # the year heading tagged as staff: any real figure for the year wins
             slot = found.setdefault(d, {})
             if field not in slot or rank < slot[field][0]:
                 slot[field] = (rank, v)
@@ -289,7 +291,8 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
             # field (no UK company has a million employees), or tag the year
             # heading above the staff note ("2025 2024") as the staff count.
             emp = vals["employees"]
-            if 0 <= emp < 1_000_000 and not year_as_staff(emp, d, vals.get("turnover")):
+            if 0 <= emp < 1_000_000 and not year_as_staff(emp, d, vals.get("turnover")) \
+                    and not implausible_staff(emp, vals.get("turnover")):
                 vals["employees"] = int(round(emp))
             else:
                 del vals["employees"]
@@ -414,6 +417,45 @@ def year_as_staff(emp, period_end, turnover=None) -> bool:
     return emp in (yr, yr - 1) and not (turnover and float(turnover) >= 20_000 * emp)
 
 
+def implausible_staff(emp, turnover) -> bool:
+    """A large staff count with turnover far too small to pay them (under £5k a
+    head): a misread, so left blank rather than inflating the revenue estimate."""
+    return bool(emp and emp >= 500 and turnover is not None and 0 < float(turnover) < 5_000 * emp)
+
+
+def _reread_staff(conn, rows) -> dict:
+    """For cleared years filed as data, read the filing again from Companies House
+    (the real staff figure is often tagged too) and fill the blank. Only where
+    the filing link is held and the API key is set; the rest stay blank."""
+    from .. import chapi
+
+    done = missing = 0
+    if not chapi.enabled():
+        return {"data_years_reread": 0, "data_years_no_link": len(rows)}
+    for r in rows:
+        f = conn.execute("""select detail from filing where company_number = %s and type = 'AA'
+                            and detail ? 'document' and abs((detail->>'made_up_date')::date - %s) <= 45
+                            order by filed_on desc limit 1""", (r["company_number"], r["period_end"])).fetchone()
+        link = (f or {}).get("detail", {}).get("document") if f else None
+        if not link:
+            missing += 1
+            continue
+        try:
+            if "application/xhtml+xml" not in chapi._doc_formats(link):
+                missing += 1
+                continue
+            raw = chapi._document(link, limit=20_000_000, accept="application/xhtml+xml")
+            vals = (parse(raw) or {}).get(r["period_end"], {}) if raw else {}
+        except Exception:
+            vals = {}
+        emp = vals.get("employees")
+        if emp is not None:
+            conn.execute("""update financial_period set employees = %s where company_number = %s and period_end = %s
+                            and employees is null""", (emp, r["company_number"], r["period_end"]))
+            done += 1
+    return {"data_years_reread": done, "data_years_no_link": missing}
+
+
 def fix_year_staff(conn) -> dict:
     """One-off: clear staff counts that are the year heading. Figures saved by
     you or Claude are never touched. The PDF years affected are read again
@@ -428,7 +470,15 @@ def fix_year_staff(conn) -> dict:
           and coalesce(source, '') not in ('manual', 'pdf:claude')
           and not (turnover is not null and turnover >= 20000 * employees)
         returning company_number, period_end""").fetchall()
-    nums = sorted({r["company_number"] for r in rows})
+    if rows:
+        conn.execute("""insert into staff_year_cleared (company_number, period_end)
+                        select unnest(%s::text[]), unnest(%s::date[]) on conflict do nothing""",
+                     ([r["company_number"] for r in rows], [r["period_end"] for r in rows]))
+    # Every cleared year still blank (this run's, and earlier ones) gets another read.
+    todo = conn.execute("""select k.company_number, k.period_end from staff_year_cleared k
+                           join financial_period fp using (company_number, period_end)
+                           where fp.employees is null""").fetchall()
+    nums = sorted({r["company_number"] for r in rows} | {r["company_number"] for r in todo})
     if not nums:
         return {"years": 0, "companies": 0}
     # Years read from a PDF: read again with the fixed reader (it only fills gaps).
@@ -436,6 +486,7 @@ def fix_year_staff(conn) -> dict:
                                where r.company_number = x.n and abs(r.made_up - x.p) <= 45
                                  and r.status = 'done' and r.method in ('text', 'ocr')""",
                             ([r["company_number"] for r in rows], [r["period_end"] for r in rows])).rowcount
+    reread = _reread_staff(conn, todo)
     conn.execute("drop table if exists staff_fix")
     conn.execute("create temp table staff_fix (company_number text)")
     conn.execute("insert into staff_fix select unnest(%s::text[])", (nums,))
@@ -445,7 +496,7 @@ def fix_year_staff(conn) -> dict:
     for n in nums:
         scoring.rescore(conn, company_number=n)
     conn.commit()
-    return {"years": len(rows), "companies": len(nums), "pdf_years_requeued": requeued}
+    return {"years": len(rows), "companies": len({r["company_number"] for r in rows}), "pdf_years_requeued": requeued, **reread}
 
 
 def _merge_sql(cols) -> str:

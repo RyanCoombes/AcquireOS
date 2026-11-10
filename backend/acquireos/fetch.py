@@ -460,7 +460,7 @@ def run_staff_year_fix(c) -> dict:
     from .importers.accounts import fix_year_staff
 
     r = fix_year_staff(c)
-    chsync.set_setting(c, "staff_year_fix", {**r, "at": datetime.now().isoformat(timespec="minutes")})
+    chsync.set_setting(c, "staff_year_fix", {**r, "v": 2, "at": datetime.now().isoformat(timespec="minutes")})
     c.commit()
     return r
 
@@ -470,7 +470,8 @@ def _staff_year_catch_up(c):
     from . import chsync
     from .importers.accounts import fix_year_staff
 
-    if chsync.get_setting(c, "staff_year_fix", False):
+    done = chsync.get_setting(c, "staff_year_fix", None)
+    if isinstance(done, dict) and int(done.get("v", 1)) >= 2:
         return
     r = run_staff_year_fix(c)
     log(f"Staff counts that were the year: cleared {r['years']} years in {r['companies']} companies"
