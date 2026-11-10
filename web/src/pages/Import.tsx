@@ -413,8 +413,8 @@ function CatchUp() {
           <div>
             <div className="small"><b>Staff counts that were really the year</b></div>
             <div className="faint small">
-              {acc.staff_fix ? <>✓ Cleaned{acc.staff_fix.at ? ` ${dateTime(acc.staff_fix.at)}` : ""}
-                  {acc.staff_fix.years != null ? `: ${int(acc.staff_fix.years)} years in ${int(acc.staff_fix.companies ?? 0)} companies cleared` : ""}
+              {acc.staff_fix ? <>✓ Run{acc.staff_fix.at ? ` (last ${dateTime(acc.staff_fix.at)})` : ""}
+                  {acc.staff_fix.years != null ? `: ${int(acc.staff_fix.years)} years in ${int(acc.staff_fix.companies ?? 0)} companies cleared in total` : ""}
                   {acc.staff_fix.pdf_years_requeued ? `, ${int(acc.staff_fix.pdf_years_requeued)} PDF years queued to read again` : ""}
                   {acc.staff_fix.data_years_reread ? `, ${int(acc.staff_fix.data_years_reread)} filled from the filing` : ""}.
                   {acc.staff_fix.data_years_no_link ? <> {int(acc.staff_fix.data_years_no_link)} years are still blank (no electronic filing to read them from).{" "}

@@ -460,7 +460,15 @@ def run_staff_year_fix(c) -> dict:
     from .importers.accounts import fix_year_staff
 
     r = fix_year_staff(c)
-    chsync.set_setting(c, "staff_year_fix", {**r, "v": 2, "at": datetime.now().isoformat(timespec="minutes")})
+    # Add up across runs: a later run finding nothing new mustn't hide what an earlier one did.
+    prev = chsync.get_setting(c, "staff_year_fix", None)
+    prev = prev if isinstance(prev, dict) else {}
+    keys = ("years", "companies", "pdf_years_requeued", "data_years_reread")
+    total = {k: int(prev.get(k) or 0) + int(r.get(k) or 0) for k in keys}
+    total["data_years_no_link"] = int(r.get("data_years_no_link") or 0)  # still blank now
+    now = datetime.now().isoformat(timespec="minutes")
+    chsync.set_setting(c, "staff_year_fix", {**total, "v": 2, "at": now, "first_at": prev.get("first_at") or prev.get("at") or now,
+                                             "last": {**r, "at": now}})
     c.commit()
     return r
 
