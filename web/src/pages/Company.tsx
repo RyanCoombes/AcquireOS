@@ -374,7 +374,6 @@ export default function Company() {
           </section>
             <Charges data={data} num={num} onFetched={reload} />
             <Filings data={data} />
-          <Research data={data} num={num} onAdded={reload} />
           <DealSection data={data} num={num} setState={setState} onScored={reload} />
         </div>
           <div id="research">
@@ -644,51 +643,6 @@ function StageSelect({ value, onChange }: { value: string; onChange: (v: string)
       )) : stages.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
       {stages.filter((x) => !phases.some((ph) => ph.value === x.phase)).map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
     </select>
-  );
-}
-
-function Research({ data, num, onAdded }: { data: CompanyDetail; num: string; onAdded: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [r, setR] = useState({ kind: "summary", content: "", source_url: "", source_label: "" });
-  return (
-    <section>
-      <div className="sechead">
-        <h2>Research and sources</h2>
-        <span className="right"><button className="btn quiet" onClick={() => setOpen(!open)}>{open ? "Cancel" : "Add finding"}</button></span>
-      </div>
-      {open && (
-        <form style={{ display: "grid", gap: 6, marginBottom: 12 }} onSubmit={async (e) => {
-          e.preventDefault();
-          await api.addResearch(num, { ...r, source_url: r.source_url || null, source_label: r.source_label || null });
-          setR({ kind: "summary", content: "", source_url: "", source_label: "" }); setOpen(false); onAdded();
-        }}>
-          <div style={{ display: "flex", gap: 6 }}>
-            <select value={r.kind} onChange={(e) => setR({ ...r, kind: e.target.value })}>
-              <option value="summary">What they do</option><option value="classification">Business type</option>
-              <option value="website">Website</option><option value="other">Other</option>
-            </select>
-            <input type="url" style={{ flex: 1 }} placeholder="Source link (required for anything you did not see yourself)" value={r.source_url}
-                   onChange={(e) => setR({ ...r, source_url: e.target.value })} />
-          </div>
-          <textarea placeholder="Finding" value={r.content} onChange={(e) => setR({ ...r, content: e.target.value })} />
-          <div><button className="btn primary" disabled={!r.content.trim()}>Save finding</button></div>
-          <div className="faint small">Findings also count towards your buy box's exclusion keywords.</div>
-        </form>
-      )}
-      {data.research.length ? (
-        <ul className="notes" style={{ marginTop: 0 }}>
-          {data.research.map((x) => (
-            <li key={x.id}>
-              <div className="meta">
-                {cap(x.kind)} · {date(x.retrieved_at)}
-                {x.source_url ? <> · <a href={x.source_url} target="_blank" rel="noreferrer">{x.source_label || hostOf(x.source_url)} ↗</a></> : " · no source"}
-              </div>
-              {x.content}
-            </li>
-          ))}
-        </ul>
-      ) : !open && <div className="faint">Nothing recorded yet. Ask Claude, or add a finding.</div>}
-    </section>
   );
 }
 

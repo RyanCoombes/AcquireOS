@@ -142,7 +142,7 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
       {(() => {
         const full = [...data.research].filter((r) => r.kind === "summary").sort((a, b) => b.content.length - a.content.length)[0];
         const links = [...(e?.links ?? [])].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
-        const tabs: [string, string, number | null][] = [["sum", "Summary", null], ["news", "News & links", links.length], ["src", "Sources", sources.length], ["full", "Full write-up", null]];
+        const tabs: [string, string, number | null][] = [["sum", "Summary", null], ["news", "News & links", links.length], ["src", "Sources", data.research.length], ["full", "Full write-up", null]];
         return <>
           <div className="tabs2 res-tabs" role="tablist">
             {tabs.map(([k, l, n]) => <button key={k} role="tab" aria-selected={rtab === k} className={rtab === k ? "on" : ""} onClick={() => setRtab(k)}>
@@ -186,19 +186,13 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
                   <span><a href={l.url} target="_blank" rel="noreferrer">{l.title} ↗</a>{l.kind !== "news" && <span className="kind">{cap(l.kind)}</span>}
                     <span className="faint small"> · {hostOf(l.url)}</span></span></li>))}
             </ul>) : <div className="faint small">No news or links saved yet. Ask Claude to add news and data links for this company.</div>)}
-          {rtab === "src" && (sources.length ? (
-            <div className="sources">
-              {sources.map((x) => (
-                <a key={x.url} className="srcchip" href={x.url} target="_blank" rel="noreferrer" title={`${x.url} · ${date(x.at)}`}>
-                  {x.label || hostOf(x.url)} ↗</a>
-              ))}
-            </div>) : <div className="faint small">No sources yet.</div>)}
+          {rtab === "src" && <ResearchHistory data={data} num={num} onAdded={onSaved} />}
           {rtab === "full" && (full ? (
             <div className="res-full"><div className="faint small" style={{ marginBottom: 6 }}>{date(full.retrieved_at)}<Src url={full.source_url} /></div><Digest text={full.content} /></div>
           ) : <div className="faint small">No write-up saved.</div>)}
         </>;
       })()}
-      {!e && !edit && <div className="faint small">Ask Claude to enrich this company (see <a href="/connect">Connect Claude</a>), or add what you know with Edit.</div>}
+      {!e && !edit && rtab === "sum" && <div className="faint small">Ask Claude to enrich this company (see <a href="/connect">Connect Claude</a>), or add what you know with Edit.</div>}
       {edit && (
         <form style={{ display: "grid", gap: 10, marginTop: 8 }} onSubmit={async (ev) => {
           ev.preventDefault(); setErr(null);
@@ -314,6 +308,52 @@ function Digest({ text }: { text: string }) {
       <p className="dg-lead">{lead}</p>
       {rest.length > 0 && <ul>{shown.map((t, i) => <li key={i}>{point(t)}</li>)}</ul>}
       {rest.length > 5 && <button className="linkish small" onClick={() => setMore(!more)}>{more ? "Less" : `${rest.length - 5} more`}</button>}
+    </div>
+  );
+}
+
+
+/** Every finding, dated and with its source, newest first; add your own. */
+export function ResearchHistory({ data, num, onAdded }: { data: CompanyDetail; num: string; onAdded: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [r, setR] = useState({ kind: "summary", content: "", source_url: "", source_label: "" });
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+        <button className="btn quiet" onClick={() => setOpen(!open)}>{open ? "Cancel" : "Add finding"}</button>
+      </div>
+      {open && (
+        <form style={{ display: "grid", gap: 6, marginBottom: 12 }} onSubmit={async (e) => {
+          e.preventDefault();
+          await api.addResearch(num, { ...r, source_url: r.source_url || null, source_label: r.source_label || null });
+          setR({ kind: "summary", content: "", source_url: "", source_label: "" }); setOpen(false); onAdded();
+        }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <select value={r.kind} onChange={(e) => setR({ ...r, kind: e.target.value })}>
+              <option value="summary">What they do</option><option value="classification">Business type</option>
+              <option value="website">Website</option><option value="other">Other</option>
+            </select>
+            <input type="url" style={{ flex: 1 }} placeholder="Source link (required for anything you did not see yourself)" value={r.source_url}
+                   onChange={(e) => setR({ ...r, source_url: e.target.value })} />
+          </div>
+          <textarea placeholder="Finding" value={r.content} onChange={(e) => setR({ ...r, content: e.target.value })} />
+          <div><button className="btn primary" disabled={!r.content.trim()}>Save finding</button></div>
+          <div className="faint small">Findings also count towards your buy box's exclusion keywords.</div>
+        </form>
+      )}
+      {data.research.length ? (
+        <ul className="notes" style={{ marginTop: 0 }}>
+          {data.research.map((x) => (
+            <li key={x.id}>
+              <div className="meta">
+                {cap(x.kind)} · {date(x.retrieved_at)}
+                {x.source_url ? <> · <a href={x.source_url} target="_blank" rel="noreferrer">{x.source_label || hostOf(x.source_url)} ↗</a></> : " · no source"}
+              </div>
+              {x.content}
+            </li>
+          ))}
+        </ul>
+      ) : !open && <div className="faint">Nothing recorded yet. Ask Claude, or add a finding.</div>}
     </div>
   );
 }
