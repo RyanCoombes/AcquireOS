@@ -1495,3 +1495,30 @@ def test_electronic_accounts_prefer_the_real_staff_figure_over_the_year():
     only = doc.replace('<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="d0">4</ix:nonFraction>', "")
     assert "employees" not in parse(only).get(date(2025, 3, 31), {})
     assert implausible_staff(1200, 400_000) and not implausible_staff(1200, 60_000_000) and not implausible_staff(40, 100)
+
+
+def test_cleared_staff_years_are_read_again_from_companies_house(loaded, monkeypatch):
+    from datetime import date
+
+    from acquireos import chapi
+    from acquireos.importers.accounts import _upsert, fix_year_staff
+
+    ctx = ('<xbrli:context id="d0"><xbrli:entity><xbrli:identifier>01</xbrli:identifier></xbrli:entity>'
+           '<xbrli:period><xbrli:startDate>2024-04-01</xbrli:startDate><xbrli:endDate>2025-03-31</xbrli:endDate></xbrli:period></xbrli:context>')
+    doc = (f'<html><ix:header>{ctx}</ix:header>'
+           '<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="d0">2025</ix:nonFraction>'
+           '<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="d0">7</ix:nonFraction></html>').encode()
+    monkeypatch.setattr(chapi, "enabled", lambda: True)
+    calls = []
+    monkeypatch.setattr(chapi, "_get", lambda path: calls.append(path) or {"items": [
+        {"type": "AA", "description_values": {"made_up_date": "2025-03-31"}, "links": {"document_metadata": "/document/abc"}}]})
+    monkeypatch.setattr(chapi, "_doc_formats", lambda link: ["application/xhtml+xml", "application/pdf"])
+    monkeypatch.setattr(chapi, "_document", lambda link, limit=0, accept="": doc)
+    c = loaded
+    num = c.execute("select company_number from company order by company_number limit 1").fetchone()["company_number"]
+    c.execute("delete from financial_period where company_number = %s", (num,))
+    _upsert(c, num, date(2025, 3, 31), {"employees": 2025, "net_assets": 5000}, "accounts:x", balance_date=date(2025, 3, 31))
+    r = fix_year_staff(c)
+    assert r["data_years_reread"] == 1 and calls and "filing-history" in calls[0]
+    assert c.execute("select employees from financial_period where company_number = %s", (num,)).fetchone()["employees"] == 7
+    c.rollback()

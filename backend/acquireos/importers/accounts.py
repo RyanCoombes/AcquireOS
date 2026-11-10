@@ -432,11 +432,30 @@ def _reread_staff(conn, rows) -> dict:
     done = missing = 0
     if not chapi.enabled():
         return {"data_years_reread": 0, "data_years_no_link": len(rows)}
-    for r in rows:
+    history: dict[str, list] = {}  # accounts filings from Companies House, fetched once per company
+
+    def link_for(num: str, pe) -> str | None:
         f = conn.execute("""select detail from filing where company_number = %s and type = 'AA'
                             and detail ? 'document' and abs((detail->>'made_up_date')::date - %s) <= 45
-                            order by filed_on desc limit 1""", (r["company_number"], r["period_end"])).fetchone()
-        link = (f or {}).get("detail", {}).get("document") if f else None
+                            order by filed_on desc limit 1""", (num, pe)).fetchone()
+        if f:
+            return f["detail"].get("document")
+        if num not in history:  # not fetched before: ask Companies House for its accounts filings
+            try:
+                history[num] = (chapi._get(f"/company/{num}/filing-history?category=accounts&items_per_page=100") or {}).get("items") or []
+            except Exception:
+                history[num] = []
+        for it in history[num]:
+            mu = (it.get("description_values") or {}).get("made_up_date")
+            try:
+                if mu and abs((date.fromisoformat(mu[:10]) - pe).days) <= 45 and (it.get("links") or {}).get("document_metadata"):
+                    return it["links"]["document_metadata"]
+            except ValueError:
+                continue
+        return None
+
+    for r in rows:
+        link = link_for(r["company_number"], r["period_end"])
         if not link:
             missing += 1
             continue
