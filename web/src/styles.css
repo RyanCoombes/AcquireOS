@@ -1400,7 +1400,7 @@ section.oneline { padding-top: 10px; padding-bottom: 10px; } section.oneline .se
 /* PDF check (Data page) */
 .pdfcheck-list tr.on td { background: var(--teal-tint); }
 .pdfcheck { border: 1px solid #f0d9a0; border-radius: 12px; background: var(--panel); margin: 6px 0 12px; overflow: hidden; }
-.pc-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 14px; background: #fffaf0; border-bottom: 1px solid #f3e3bd; }
+.pdfcheck .pc-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 14px; background: #fffaf0; border-bottom: 1px solid #f3e3bd; }
 .pc-grid { display: grid; grid-template-columns: 300px minmax(0, 1fr) minmax(0, 1.15fr); min-height: 520px; }
 @media (max-width: 1100px) { .pc-grid { grid-template-columns: minmax(0, 1fr); } }
 .pc-col { padding: 12px 14px; border-right: 1px solid var(--line); min-width: 0; }
@@ -1452,7 +1452,7 @@ section.oneline { padding-top: 10px; padding-bottom: 10px; } section.oneline .se
 .own-tabs { margin: 0 0 12px; }
 .own-tabs button b { margin-left: 4px; font-weight: 700; }
 .own-tabs button:disabled { opacity: .45; cursor: default; }
-.pc-lines { list-style: none; margin: 8px 0 0; padding: 0 14px 4px; display: grid; gap: 6px; font-size: 13px; }
+.pc-lines { list-style: none; margin: 10px 0 0 48px; padding: 0; display: grid; gap: 6px; font-size: 13px; }
 .pc-lines li { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 8px; }
 .pc-lines .k { color: var(--ink-3); }
 .pc-b.sh { background: #eef3ff; color: #2f62d8; }
@@ -1469,3 +1469,21 @@ section.oneline { padding-top: 10px; padding-bottom: 10px; } section.oneline .se
 .ov-deals li.sold .ic, .ov-deals li.eot .ic, .ov-deals li.mbo .ic { color: var(--red); }
 .ov-deals li.acquired .ic, .ov-deals li.merged .ic, .ov-deals li.investment .ic { color: var(--teal); }
 .ov-deals li.more { display: block; }
+
+/* Overview opening: what they do, then the essentials in one line */
+.ov-what { font-size: 15px; line-height: 1.6; margin: 0 0 8px; }
+.ov-ess { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; color: var(--ink-2); padding: 6px 0 12px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.ov-ess b { color: var(--ink); font-weight: 600; }
+/* Research: tabs */
+.res-tabs { border-bottom: 1px solid var(--line); margin: 0 0 12px; }
+.res-tabs .n { margin-left: 5px; font-weight: 700; color: var(--ink-3); }
+.res-news { list-style: none; margin: 0; padding: 0; }
+.res-news li { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.res-news .d { color: var(--ink-3); font-size: 12.5px; }
+.res-news .kind { font-size: 11px; font-weight: 700; border-radius: 5px; padding: 0 6px; margin-left: 6px; background: var(--canvas); color: var(--ink-2); }
+.res-full { max-height: 420px; overflow: auto; }
+/* Owners: plain card headers; shareholder rows read across easily */
+.shlist { max-width: 560px; }
+.shrow { grid-template-columns: 10px minmax(0, 1fr) 64px 120px; border-bottom: 1px solid var(--line-2); }
+.shrow:hover { background: var(--canvas); }
+.shrow b { order: 3; } .shrow .bar { order: 4; }

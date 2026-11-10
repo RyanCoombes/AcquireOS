@@ -89,7 +89,7 @@ const OWN_TYPES: Record<string, string> = { owner_held: "Owner-held", group_owne
   investor_backed: "Investor-backed", eot: "Employee-owned (EOT)", trust: "Held in trust", foreign_owned: "Foreign parent" };
 
 const BT = ["software", "saas", "data", "msp", "it_consultancy", "field_service", "agency", "reseller", "other"];
-const BT_LABEL: Record<string, string> = { software: "Software", saas: "SaaS", data: "Data", msp: "Managed service provider",
+export const BT_LABEL: Record<string, string> = { software: "Software", saas: "SaaS", data: "Data", msp: "Managed service provider",
   it_consultancy: "IT consultancy", field_service: "Field service", agency: "Agency", reseller: "Reseller", other: "Other" };
 
 const WEB_MSG: Record<string, string> = {};
@@ -111,7 +111,7 @@ export function shortSummary(text: string): string {
 export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail; num: string; onSaved: () => void; finder?: React.ReactNode }) {
   const e = data.enrichment;
   const [edit, setEdit] = useState(false);
-  const [allSources, setAllSources] = useState(false);
+  const [rtab, setRtab] = useState("sum");
   const [webBusy, setWebBusy] = useState(false);
   // Survives the reload after a re-scan or removal (the box is rebuilt).
   const [webMsg, setWebMsgState] = useState<string | null>(() => { const m = WEB_MSG[num] ?? null; delete WEB_MSG[num]; return m; });
@@ -135,10 +135,20 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
   return (
     <section>
       <div className="sechead">
-        <h2>Enrichment</h2>
+        <h2>Research</h2>
         <span className="faint small">{e ? `Updated ${dateTime(e.updated_at)} by ${e.updated_by ?? "unknown"}${e.confidence ? ` · ${e.confidence} confidence` : ""}` : "Researched facts with sources, by you or by Claude"}</span>
         <span className="right"><button className="btn quiet" onClick={() => setEdit(!edit)}>{edit ? "Cancel" : "Edit"}</button></span>
       </div>
+      {(() => {
+        const full = [...data.research].filter((r) => r.kind === "summary").sort((a, b) => b.content.length - a.content.length)[0];
+        const links = [...(e?.links ?? [])].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
+        const tabs: [string, string, number | null][] = [["sum", "Summary", null], ["news", "News & links", links.length], ["src", "Sources", sources.length], ["full", "Full write-up", null]];
+        return <>
+          <div className="tabs2 res-tabs" role="tablist">
+            {tabs.map(([k, l, n]) => <button key={k} role="tab" aria-selected={rtab === k} className={rtab === k ? "on" : ""} onClick={() => setRtab(k)}>
+              {l}{n ? <span className="n">{n}</span> : null}</button>)}
+          </div>
+          {rtab === "sum" && <>
       <div className="enr">
         <div><span className="label">Website</span>{e?.website ? <a href={e.website} target="_blank" rel="noreferrer">{e.website.replace(/^https?:\/\/(www\.)?/, "")} ↗</a> : <span className="faint">Not found yet</span>}
           {e?.website && sourceFor("website") && hostOf(sourceFor("website")!) !== hostOf(e.website) && <Src url={sourceFor("website")} />}
@@ -164,29 +174,30 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
             {e?.linkedin && e?.phone && " · "}{e?.phone && <a href={`tel:${e.phone.replace(/\s/g, "")}`}>{e.phone}</a>}</div>
         )}
       </div>
-      {(() => {
-        // The full write-up (the longest research summary) folded away; the overview shows what it does, facts and links.
-        const full = [...data.research].filter((r) => r.kind === "summary").sort((a, b) => b.content.length - a.content.length)[0];
-        return full && full.content.length > (e?.summary?.length ?? 0) + 40 ? (
-          <details className="enr-full"><summary className="small">Full research write-up · {date(full.retrieved_at)}</summary>
-            <div className="enr-summary"><Digest text={full.content} /><Src url={full.source_url} /></div></details>
-        ) : null;
-      })()}
-      {((e?.facts ?? []).length > 0 || (e?.links ?? []).length > 0 || e?.summary) && <div className="faint small" style={{ margin: "6px 0" }}>What it does, key facts and news are on the Overview.</div>}
       {(e?.locations ?? []).length > 0 && (
         <div className="faint small" style={{ margin: "6px 0" }}>{e!.locations!.length} {e!.locations!.length === 1 ? "office" : "offices and sites"}: {e!.locations!.map((l) => l.name ?? l.postcode ?? cap(l.kind)).join(", ")} (see Locations)</div>
       )}
-      {sources.length > 0 && (
-        <div className="sources">
-          <span className="label">Sources</span>
-          {(allSources ? sources : sources.slice(0, 6)).map((x) => (
-            <a key={x.url} className="srcchip" href={x.url} target="_blank" rel="noreferrer" title={`${x.url} · ${date(x.at)}`}>
-              {x.label || hostOf(x.url)} ↗</a>
-          ))}
-          {sources.length > 6 && <button className="linkish small" onClick={() => setAllSources(!allSources)}>{allSources ? "Fewer" : `+${sources.length - 6} more`}</button>}
-        </div>
-      )}
-      {!e?.website && finder}
+            {!e?.website && finder}
+          </>}
+          {rtab === "news" && (links.length ? (
+            <ul className="res-news">
+              {links.map((l, i) => (
+                <li key={i}><span className="d">{l.date ? date(l.date) : ""}</span>
+                  <span><a href={l.url} target="_blank" rel="noreferrer">{l.title} ↗</a>{l.kind !== "news" && <span className="kind">{cap(l.kind)}</span>}
+                    <span className="faint small"> · {hostOf(l.url)}</span></span></li>))}
+            </ul>) : <div className="faint small">No news or links saved yet. Ask Claude to add news and data links for this company.</div>)}
+          {rtab === "src" && (sources.length ? (
+            <div className="sources">
+              {sources.map((x) => (
+                <a key={x.url} className="srcchip" href={x.url} target="_blank" rel="noreferrer" title={`${x.url} · ${date(x.at)}`}>
+                  {x.label || hostOf(x.url)} ↗</a>
+              ))}
+            </div>) : <div className="faint small">No sources yet.</div>)}
+          {rtab === "full" && (full ? (
+            <div className="res-full"><div className="faint small" style={{ marginBottom: 6 }}>{date(full.retrieved_at)}<Src url={full.source_url} /></div><Digest text={full.content} /></div>
+          ) : <div className="faint small">No write-up saved.</div>)}
+        </>;
+      })()}
       {!e && !edit && <div className="faint small">Ask Claude to enrich this company (see <a href="/connect">Connect Claude</a>), or add what you know with Edit.</div>}
       {edit && (
         <form style={{ display: "grid", gap: 10, marginTop: 8 }} onSubmit={async (ev) => {

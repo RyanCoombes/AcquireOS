@@ -7,7 +7,7 @@ import DealProgress from "../components/DealProgress";
 import MyScores from "../components/MyScores";
 import Financials from "../components/Financials";
 import { nextInList, RuleOutChips, type RuleOutPick } from "../components/RuleOut";
-import { Enrichment, Location, shortSummary } from "../components/CompanyExtras";
+import { BT_LABEL, Enrichment, Location, shortSummary } from "../components/CompanyExtras";
 import { Charges, Filings, Fold, Head, OwnersDirectors, WebsiteFinder } from "../components/Profile";
 import { ageFrom, CHANGE_KIND, chUrl, date, describeChange, int, isBadStatus, LINK_KIND, money, OWNERSHIP, range, relDays, years } from "../format";
 
@@ -76,7 +76,7 @@ export default function Company() {
   const [inView, setInView] = useState("overview");
   useEffect(() => {
     if (!data) return;
-    const ids = ["overview", "activity", "financials", "ownership", "group", "value", "compare", "charges", "filings", "group", "score", "research", "news", "deal", "changes"];
+    const ids = ["overview", "activity", "financials", "ownership", "group", "value", "compare", "charges", "filings", "group", "score", "research", "deal", "changes"];
     const els = ids.map((id) => document.getElementById(id)).filter(Boolean) as HTMLElement[];
     const io = new IntersectionObserver((entries) => {
       const vis = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
@@ -214,7 +214,7 @@ export default function Company() {
           <nav className="secnav" aria-label="Sections">
             {[["overview", "Overview"], ["activity", "Activity"], ["financials", "Financials"], ["ownership", "Owners & directors"],
               ["group", "Group"], ["value", "Value"], ["score", "Score"], ["charges", "Charges"], ["filings", "Filings"],
-              ["research", "Research"], ...((data.enrichment?.links ?? []).length ? [["news", "News"]] : []), ["deal", "Deal"], ["changes", "History"]].map(([id, l]) => (
+              ["research", "Research"], ["deal", "Deal"], ["changes", "History"]].map(([id, l]) => (
               <a key={id} href={`#${id}`} className={inView === id ? "on" : ""} onClick={(e) => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{l}</a>
             ))}
           </nav>
@@ -222,13 +222,24 @@ export default function Company() {
           <div className="pcol">
           <section id="overview">
             <Head icon="overview" title="Overview" />
-            <p className="summary">{overviewSentence(data)}</p>
+            {data.enrichment?.summary || activity ? (
+              <p className="ov-what">{data.enrichment?.summary ? shortSummary(data.enrichment.summary) : activity!.principal_activity}
+                <span className="faint small"> · {data.enrichment?.summary ? `research${data.enrichment.updated_at ? `, ${date(data.enrichment.updated_at)}` : ""}` : `its own words, ${date(activity!.period_end)} accounts`}</span></p>
+            ) : <p className="summary">{overviewSentence(data)}</p>}
+            {(() => {
+              const latest = [...data.financials].reverse().find((f) => !f.period_inferred && f.employees != null);
+              const bits = [
+                c.incorporation_date ? <>Founded <b>{new Date(c.incorporation_date).getFullYear()}</b></> : null,
+                c.region || data.enrichment?.trading_region ? <b>{data.enrichment?.trading_region ?? c.region}</b> : null,
+                latest?.employees != null ? <><b>{int(latest.employees)}</b> staff</> : null,
+                data.enrichment?.website ? <a href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")} ↗</a> : null,
+                data.enrichment?.business_type ? <>{BT_LABEL[data.enrichment.business_type] ?? data.enrichment.business_type}{data.enrichment.recurring_revenue ? <> · recurring revenue: <b>{data.enrichment.recurring_revenue}</b></> : null}</> : null,
+              ].filter(Boolean);
+              return bits.length ? <div className="ov-ess">{bits.map((b, i) => <span key={i}>{b}</span>)}</div> : null;
+            })()}
+            {(data.enrichment?.summary && activity) && <div className="faint small" style={{ margin: "-4px 0 10px" }}>In its accounts: {activity.principal_activity}</div>}
             <dl className="facts">
               <dt>Type</dt><dd>{companyType(c.company_type)}{prof.is_community_interest_company ? " · community interest company" : ""}</dd>
-              {data.enrichment?.summary ? <><dt>What it does</dt><dd>{shortSummary(data.enrichment.summary)}<span className="faint small"> · research{data.enrichment.updated_at ? `, ${date(data.enrichment.updated_at)}` : ""}</span>
-                  {activity && <div className="faint small">In its accounts: {activity.principal_activity}</div>}</dd></>
-                : activity && <><dt>What it does</dt><dd>{activity.principal_activity}<span className="faint small"> · its own words, {date(activity.period_end)} accounts</span></dd></>}
-              {data.enrichment?.website && <><dt>Website</dt><dd><a href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "")} ↗</a></dd></>}
               {(data.enrichment?.facts ?? []).length > 0 && <><dt>Key facts</dt><dd><ul className="ov-facts">
                 {data.enrichment!.facts!.slice(0, 8).map((f, i) => <li key={i}><b>{f.label}:</b> {f.value}
                   {f.source_url ? <> <a className="faint small" href={f.source_url} target="_blank" rel="noreferrer">{hostOf(f.source_url)} ↗</a></> : null}</li>)}
@@ -370,16 +381,6 @@ export default function Company() {
           <Enrichment key={JSON.stringify(data.enrichment)} data={data} num={num} onSaved={reload}
                       finder={<WebsiteFinder num={num} onSaved={reload} />} />
           </div>
-          {(data.enrichment?.links ?? []).length > 0 && (
-            <section id="news">
-              <Head icon="file" tone="grey" title="News & links" />
-              <ul className="ov-links">
-                {[...data.enrichment!.links!].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? ""))).map((l, i) => (
-                  <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.title} ↗</a>
-                    <span className="faint small"> · {[l.kind !== "news" ? l.kind.charAt(0).toUpperCase() + l.kind.slice(1) : null, hostOf(l.url), l.date ? date(l.date) : null].filter(Boolean).join(" · ")}</span></li>))}
-              </ul>
-            </section>
-          )}
           <section id="changes">
             <Head icon="clock" tone="grey" title="Change history" />
             {data.changes.length ? (
