@@ -272,7 +272,7 @@ export const api = {
   addResearch: (n: string, body: Record<string, unknown>) =>
     req(`/api/companies/${encodeURIComponent(n)}/research`, { method: "POST", body: JSON.stringify(body) }),
   pipeline: () => req<{ statuses: Stage[]; phases: { value: string; label: string }[];
-    rows: (Row & { last_note: string | null; stage_entered_at: string | null; tasks_done: number; tasks_total: number })[] }>("/api/pipeline"),
+    rows: (Row & { last_note: string | null; stage_entered_at: string | null; tasks_done: number; tasks_total: number; website?: string | null })[] }>("/api/pipeline"),
   setTask: (n: string, body: Record<string, unknown>) =>
     req<Deal>(`/api/companies/${encodeURIComponent(n)}/tasks`, { method: "POST", body: JSON.stringify(body) }),
   outreach: () => req<Outreach[]>("/api/outreach"),

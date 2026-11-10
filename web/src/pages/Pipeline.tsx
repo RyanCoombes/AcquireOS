@@ -81,6 +81,9 @@ export default function Pipeline() {
                     <div key={r.company_number} className={`card ${dragging === r.company_number ? "dragging" : ""}`} draggable
                          onDragStart={() => setDragging(r.company_number)} onDragEnd={() => { setDragging(null); setOver(null); }}
                          onClick={() => nav(`/c/${r.company_number}`)}>
+                      {r.website && <a className="card-web" href={r.website} target="_blank" rel="noreferrer" draggable={false}
+                                       title={`Website: ${r.website.replace(/^https?:\/\/(www\.)?/, "")}`} aria-label={`${r.name} website`}
+                                       onClick={(e) => e.stopPropagation()}>↗</a>}
                       <div className="name"><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div>
                       <div className="meta">
                         <Score value={r.score} />
@@ -110,8 +113,8 @@ export default function Pipeline() {
       )}
 
       {closed.length > 0 && (
-        <section style={{ marginTop: 18 }}>
-          <div className="sechead"><h2>Not suitable or not now</h2><span className="faint small">{closed.length}</span></div>
+        <details className="closed-fold" style={{ marginTop: 18 }}>
+          <summary><b>Not suitable or not now</b> <span className="faint small">{closed.length}</span></summary>
           <table>
             <tbody>
               {closed.map((r) => (
@@ -124,7 +127,7 @@ export default function Pipeline() {
               ))}
             </tbody>
           </table>
-        </section>
+        </details>
       )}
 
       <section style={{ marginTop: 18 }}>

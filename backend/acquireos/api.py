@@ -1474,6 +1474,7 @@ def pipeline():
         bb = scoring.active_buy_box(c)
         rows = c.execute(
             """select uc.*, c.name, c.region, s.score, s.value_low, s.value_high,
+                      (select en.website from enrichment en where en.company_number = uc.company_number) as website,
                       (select max(created_at) from stage_event e where e.company_number = uc.company_number
                          and e.user_id = uc.user_id and e.to_status = uc.status) as stage_entered_at,
                       (select count(*) filter (where done) from deal_task t where t.company_number = uc.company_number
