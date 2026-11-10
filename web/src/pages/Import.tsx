@@ -417,9 +417,11 @@ function CatchUp() {
                   {acc.staff_fix.years != null ? `: ${int(acc.staff_fix.years)} years in ${int(acc.staff_fix.companies ?? 0)} companies cleared in total` : ""}
                   {acc.staff_fix.pdf_years_requeued ? `, ${int(acc.staff_fix.pdf_years_requeued)} PDF years queued to read again` : ""}
                   {acc.staff_fix.data_years_reread ? `, ${int(acc.staff_fix.data_years_reread)} filled from the filing` : ""}
-                  {acc.staff_fix.large_corrected ? `, ${int(acc.staff_fix.large_corrected)} large companies corrected` : ""}.
-                  {acc.staff_fix.data_years_no_link ? <> {int(acc.staff_fix.data_years_no_link)} years are still blank (no electronic filing to read them from).{" "}
-                    <button className="linkish small" onClick={async () => { try { await api.fixStaffYears(); setMsg("Trying those years again: progress shows above."); refresh(); } catch (e: any) { setMsg(e.message); } }}>Try again</button></> : null}</>
+                  {acc.staff_fix.large_corrected ? `, ${int(acc.staff_fix.large_corrected)} large companies corrected` : ""}.{" "}
+                  <button className="linkish small" onClick={async () => {
+                    try { await api.fixStaffYears(); setMsg("Checking staff counts again: progress shows above."); refresh(); }
+                    catch (e: any) { setMsg(e.message); } }}>Run again</button>
+                  {acc.staff_fix.data_years_no_link ? <> {int(acc.staff_fix.data_years_no_link)} years are still blank (no electronic filing to read them from). </> : null}</>
                 : <>Not run yet. It runs by itself once no data load is running, or{" "}
                     <button className="linkish small" onClick={async () => {
                       try { await api.fixStaffYears(); setMsg("Clearing misread staff counts: progress shows above."); refresh(); }
