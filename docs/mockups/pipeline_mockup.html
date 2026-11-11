@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pipeline mockup</title>
+<style>
+:root{--ink:#14181f;--ink2:#4a5261;--ink3:#8a91a0;--line:#e6e8ec;--canvas:#f5f6f8;--panel:#fff;--teal:#0e7c66;
+ --assess:#2f62d8;--assessS:#eef3ff;--engage:#d9822b;--engageS:#fdf1e3;--deal:#7a4fd6;--dealS:#f3eefe;--owned:#1e9a57;--ownedS:#e6f6ec}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 Inter,system-ui,-apple-system,sans-serif;color:var(--ink);background:var(--canvas)}
+.wrap{padding:18px 20px 60px}
+.note{background:#fff8e6;border:1px solid #f0d9a0;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#6b5414;max-width:900px}
+h1{font-size:26px;margin:0 0 12px}
+.board{display:flex;gap:18px;overflow-x:auto;padding-bottom:12px;align-items:flex-start}
+.phase{display:flex;flex-direction:column;gap:8px}
+.phase-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:6px 10px;border-radius:8px}
+.phase-h small{font-weight:500;text-transform:none;letter-spacing:0;opacity:.8}
+.cols{display:flex;gap:10px}
+.col{flex:0 0 236px;background:#eceef2;border-radius:12px;padding:10px;min-height:150px;border-top:4px solid var(--c)}
+.col h3{display:flex;justify-content:space-between;align-items:center;font-size:13px;margin:2px 4px 2px}
+.col h3 .n{background:#fff;color:var(--c);border-radius:99px;padding:0 8px;font-size:12px;font-weight:700}
+.col .desc{font-size:11.5px;color:var(--ink3);margin:0 4px 8px}
+.col.empty-col{opacity:.75}
+.col .emptyhint{font-size:12px;color:var(--ink3);text-align:center;border:1.5px dashed #d5d9e0;border-radius:10px;padding:14px 8px}
+/* milestone columns */
+.col.milestone{background:var(--s);box-shadow:inset 0 0 0 1.5px var(--c)}
+.col.milestone h3::before{content:"★ Milestone";position:absolute;margin-top:-30px;font-size:10.5px;font-weight:700;color:#fff;background:var(--c);border-radius:5px;padding:1px 6px}
+.col.milestone h3{position:relative}
+.card{background:#fff;border-radius:10px;padding:10px 12px;margin-bottom:8px;box-shadow:0 1px 2px rgba(20,24,31,.08);border-left:4px solid var(--c);position:relative}
+.top{display:flex;gap:9px;align-items:center}
+.logo{width:30px;height:30px;border-radius:7px;flex:none;display:grid;place-items:center;font-size:11.5px;font-weight:800;color:#fff}
+.name{font-weight:650;font-size:13px;line-height:1.25}
+.meta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--ink2);margin-top:8px}
+.sc{font-weight:700;border-radius:6px;padding:0 6px;background:#e8f5f1;color:#0a5e4d}
+.chip{font-size:11px;border-radius:99px;padding:1px 7px;background:#f0f1f4;color:var(--ink2)}
+.chip.stale{background:#fdecea;color:#c0392b;font-weight:600}
+.next{font-size:12px;margin-top:7px;color:var(--ink2)}
+.next.overdue{color:#c0392b;font-weight:600}
+.prog{height:5px;background:#eceef2;border-radius:9px;margin-top:8px;overflow:hidden}.prog i{display:block;height:100%;background:var(--c)}
+.web{position:absolute;top:8px;right:9px;font-size:12px;color:var(--ink3);text-decoration:none}
+.legend{margin-top:16px;font-size:12.5px;color:var(--ink2);max-width:900px}
+</style></head><body><div class="wrap">
+<div class="note"><b>Mockup.</b> Each phase has its own colour (Assess blue, Engage orange, Deal purple, Owned green), shown as a header over its columns, a colour bar on each column and the card edge. Big steps (First contact, Heads of terms, Completion) are milestones: tinted column, ★ badge. Cards gain a logo square (initials until we have real logos), a "days in stage" chip that turns red when stale, and a checklist bar in the phase colour. Empty columns fade. Move to… stays as now (left out here to keep it short).</div>
+<h1>Pipeline</h1>
+<div class="board">
+
+ <div class="phase" style="--c:var(--assess);--s:var(--assessS)">
+  <div class="phase-h" style="background:var(--assessS);color:var(--assess)">Assess <small>· 18</small></div>
+  <div class="cols">
+   <div class="col"><h3>Watching <span class="n">5</span></h3><div class="desc">Interesting; check again later</div>
+    <div class="card"><a class="web" href="#">↗</a><div class="top"><div class="logo" style="background:#3b6fd9">LI</div><div class="name">LINDEN IT SERVICES LIMITED</div></div>
+     <div class="meta"><span class="sc">84</span><span>£230k–1.35m</span></div><div class="meta"><span class="chip">12 days</span></div></div>
+    <div class="card"><div class="top"><div class="logo" style="background:#5a7bb5">TH</div><div class="name">THORNBURY IT SUPPORT LIMITED</div></div>
+     <div class="meta"><span class="sc">71</span><span>£211k–1.24m</span></div><div class="meta"><span class="chip stale">64 days</span></div></div>
+   </div>
+   <div class="col"><h3>Assessing <span class="n">5</span></h3><div class="desc">Working out whether it fits</div>
+    <div class="card"><div class="top"><div class="logo" style="background:#2b8a9a">KE</div><div class="name">KESTREL COMPUTING LIMITED</div></div>
+     <div class="meta"><span class="sc">78</span><span>£410k–1.9m</span></div><div class="prog"><i style="width:60%"></i></div>
+     <div class="meta"><span>3/5 checklist</span><span class="chip">6 days</span></div></div>
+   </div>
+   <div class="col"><h3>Shortlisted <span class="n">8</span></h3><div class="desc">Worth approaching</div>
+    <div class="card"><a class="web" href="#">↗</a><div class="top"><div class="logo" style="background:#456">AS</div><div class="name">ASHCOMBE SOFTWARE LIMITED</div></div>
+     <div class="meta"><span class="sc">100</span><span>£461k–2.70m</span></div><div class="next overdue">→ Write to owner · 8 Nov</div></div>
+   </div>
+  </div>
+ </div>
+
+ <div class="phase" style="--c:var(--engage);--s:var(--engageS)">
+  <div class="phase-h" style="background:var(--engageS);color:var(--engage)">Engage <small>· 2</small></div>
+  <div class="cols">
+   <div class="col milestone"><h3>First contact <span class="n">2</span></h3><div class="desc">Letter, call or introduction</div>
+    <div class="card"><div class="top"><div class="logo" style="background:#c2702a">BR</div><div class="name">BRIGHTFIELD DIGITAL LIMITED</div></div>
+     <div class="meta"><span class="sc">100</span><span>£1.50m–2.51m</span></div><div class="next">→ Follow-up call · 14 Nov</div><div class="meta"><span class="chip">3 days</span></div></div>
+    <div class="card"><div class="top"><div class="logo" style="background:#a0602a">FE</div><div class="name">FERNHILL DIGITAL LIMITED</div></div>
+     <div class="meta"><span class="sc">100</span><span>£2.78m–4.63m</span></div><div class="meta"><span class="chip">1 day</span></div></div>
+   </div>
+   <div class="col empty-col"><h3>Getting to know <span class="n">0</span></h3><div class="desc">Meetings, no numbers yet</div><div class="emptyhint">Drop a company here</div></div>
+   <div class="col empty-col"><h3>NDA and accounts <span class="n">0</span></h3><div class="desc">Accounts, clients, who does what</div><div class="emptyhint">Drop a company here</div></div>
+  </div>
+ </div>
+
+ <div class="phase" style="--c:var(--deal);--s:var(--dealS)">
+  <div class="phase-h" style="background:var(--dealS);color:var(--deal)">Deal <small>· 0</small></div>
+  <div class="cols">
+   <div class="col empty-col"><h3>Indicative offer <span class="n">0</span></h3><div class="desc">Price range and structure</div><div class="emptyhint">Drop a company here</div></div>
+   <div class="col milestone empty-col"><h3>Heads of terms <span class="n">0</span></h3><div class="desc">Exclusivity, often 4 to 8 weeks</div><div class="emptyhint">Drop a company here</div></div>
+   <div class="col empty-col"><h3>Due diligence <span class="n">0</span></h3><div class="desc">Lender credit process alongside</div><div class="emptyhint">Drop a company here</div></div>
+   <div class="col empty-col"><h3>SPA and disclosure <span class="n">0</span></h3><div class="desc">Lawyers draft the agreement</div><div class="emptyhint">Drop a company here</div></div>
+   <div class="col milestone empty-col"><h3>Completion <span class="n">0</span></h3><div class="desc">Funds paid, shares transfer</div><div class="emptyhint">Drop a company here</div></div>
+  </div>
+ </div>
+
+ <div class="phase" style="--c:var(--owned);--s:var(--ownedS)">
+  <div class="phase-h" style="background:var(--ownedS);color:var(--owned)">Owned <small>· 0</small></div>
+  <div class="cols">
+   <div class="col empty-col"><h3>Handover <span class="n">0</span></h3><div class="desc">Owner supports for the agreed period</div><div class="emptyhint">Drop a company here</div></div>
+  </div>
+ </div>
+</div>
+<p class="legend">Questions for you: are First contact, Heads of terms and Completion the right milestones? And should "stale" mean over 30 days in a stage, or something different per stage?</p>
+</div></body></html>
