@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Row } from "../api";
-import { ErrorLine, Flags, Score, Signals, StatusMark, Toast, useAsync } from "../components/bits";
+import { ErrorLine, Flags, Logo, Score, Signals, StatusMark, Toast, useAsync } from "../components/bits";
 import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
 import { NOT_NOW, NOT_SUITABLE, pickNote, rememberList, RuleOutMenu } from "../components/RuleOut";
@@ -544,7 +544,9 @@ function TargetRow({ r, cols, cursor, onOpen, showBox, mode, sics, dim, href, ti
     </td>
   );
   const nameCell = (
-    <td className="c-name">
+    <td className="c-name"><div className="cn">
+      <Logo num={r.company_number} name={r.name} website={r.website} size={26} />
+      <div className="cn-body">
       <div className="name">
         <Link className="rowlink" to={href} onClick={(e) => e.stopPropagation()}>{r.name}</Link>
         {bad && <span className="tag red">{cap(r.company_status)}</span>}
@@ -572,6 +574,7 @@ function TargetRow({ r, cols, cursor, onOpen, showBox, mode, sics, dim, href, ti
         {r.value_low != null ? <span>value <Fig v={range(r.value_low, r.value_high)} est={r.value_basis !== "filed"} /></span> : null}
         {age ? <span>owner {age}</span> : null}
       </div>
+      </div></div>
     </td>
   );
   const staffCell = <td className="num"><div className="staffcell"><Spark values={r.staff_trend} w={48} h={16} />{int(r.employees)}</div></td>;

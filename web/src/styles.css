@@ -1558,3 +1558,8 @@ section.oneline { padding-top: 10px; padding-bottom: 10px; } section.oneline .se
 .has-logo { display: flex; align-items: center; gap: 9px; }
 .has-logo > :not(.logo) { min-width: 0; }
 h1.has-logo { gap: 12px; }
+
+/* Lists: logo beside the company name */
+td.c-name .cn { display: flex; gap: 10px; align-items: flex-start; }
+td.c-name .cn > .logo { margin-top: 1px; }
+td.c-name .cn-body { min-width: 0; flex: 1; }
