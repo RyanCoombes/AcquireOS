@@ -1497,3 +1497,7 @@ section.oneline { padding-top: 10px; padding-bottom: 10px; } section.oneline .se
 .closed-fold { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; }
 .closed-fold summary { cursor: pointer; }
 .closed-fold table { margin-top: 10px; }
+
+/* Buy box: industry rules with an exception */
+.bb-rule { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-top: 8px; display: grid; gap: 4px; background: var(--panel); }
+.bb-rule-h { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; color: var(--ink-2); }

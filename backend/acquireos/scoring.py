@@ -264,6 +264,16 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
         hits = [x for x in codes_x if x.startswith(xsic)]
         if hits and (not ex.get("sic_all") or len(hits) == len(codes_x)):
             exclusion = f"Industry left out: {', '.join(hits)}"
+    # Rules with an exception: leave out these codes unless the company also has one of those
+    # (e.g. 61200 wireless, unless it also has a 62 software or 63 data code).
+    for rule in ex.get("sic_rules") or []:
+        if exclusion or not codes_x:
+            break
+        rc = tuple(str(x) for x in rule.get("codes") or [] if x)
+        unless = tuple(str(x) for x in rule.get("unless") or [] if x)
+        hits = [x for x in codes_x if rc and x.startswith(rc)]
+        if hits and not (unless and any(x.startswith(unless) for x in codes_x)):
+            exclusion = f"Industry left out: {', '.join(hits)}" + (f" (no {' or '.join(unless)} code)" if unless else "")
     out_regions = ex.get("regions") or []
     if not exclusion and region and region in out_regions:
         exclusion = f"Region excluded: {region}" + (" (where it trades)" if c.get("trading_region") else "")

@@ -1581,3 +1581,15 @@ def test_cleanup_covers_scaled_and_reference_staff_and_checks_big_companies(load
     assert emp[nums[2]] == 144                       # big company: checked against the filing and corrected
     assert emp[nums[0]] == 144 or emp[nums[0]] is None  # cleared, then refilled from the (mocked) filing
     c.rollback()
+
+
+def test_sic_exclusion_rules_with_exceptions():
+    from acquireos import scoring
+
+    rule = {"exclude": {"sic_rules": [{"codes": ["61200"], "unless": ["62", "63"]}]}}
+    op = {"company_number": "X1", "name": "WIRELESS OP LTD", "status": "active", "sic_codes": ["61200", "61900"]}
+    sw = {"company_number": "X2", "name": "CHAT SOFTWARE LTD", "status": "active", "sic_codes": ["61200", "62012"]}
+    tel = {"company_number": "X3", "name": "TELEPHONY LTD", "status": "active", "sic_codes": ["61900"]}
+    assert scoring.score_company(op, rule)["exclusion"] == "Industry left out: 61200 (no 62 or 63 code)"
+    assert not scoring.score_company(sw, rule)["excluded"]
+    assert not scoring.score_company(tel, rule)["excluded"]

@@ -138,7 +138,19 @@ export default function BuyBox() {
               <SicPicker value={c.exclude?.sic_prefixes ?? []} onChange={(v) => upd(["exclude", "sic_prefixes"], v)} />
               {(c.exclude?.sic_prefixes ?? []).length > 0 && <label className="check" style={{ height: "auto", marginTop: 4 }}>
                 <input type="checkbox" checked={!!c.exclude?.sic_all} onChange={(e) => upd(["exclude", "sic_all"], e.target.checked)} />
-                Only when all its codes are on this list</label>}</div>
+                Only when all its codes are on this list</label>}
+              {(c.exclude?.sic_rules ?? []).map((r: { codes: string[]; unless: string[] }, i: number) => (
+                <div key={i} className="bb-rule">
+                  <div className="bb-rule-h"><span>Leave out</span>
+                    <button className="linkish small red" onClick={() => upd(["exclude", "sic_rules"], (c.exclude.sic_rules as unknown[]).filter((_, j) => j !== i))}>Remove</button></div>
+                  <SicPicker value={r.codes ?? []} onChange={(v) => upd(["exclude", "sic_rules"], (c.exclude.sic_rules as { codes: string[]; unless: string[] }[]).map((x, j) => j === i ? { ...x, codes: v } : x))} />
+                  <div className="bb-rule-h"><span>unless it also has</span></div>
+                  <SicPicker value={r.unless ?? []} onChange={(v) => upd(["exclude", "sic_rules"], (c.exclude.sic_rules as { codes: string[]; unless: string[] }[]).map((x, j) => j === i ? { ...x, unless: v } : x))} />
+                </div>
+              ))}
+              <button className="linkish small" style={{ marginTop: 4 }} onClick={() => upd(["exclude", "sic_rules"], [...(c.exclude?.sic_rules ?? []), { codes: [], unless: [] }])}>
+                + Leave out an industry unless it also has another</button>
+              <Hint text="E.g. leave out 61200 (wireless telecoms) unless the company also has a 62 (software) or 63 (data) code: drops mobile operators, keeps communications software firms." /></div>
             <div className="bb-f"><label>Owned by</label><div>{xchecks(Object.entries(OWNERSHIP), ["exclude", "ownership"])}</div></div>
             <div className="bb-f"><label>Accounts filed as</label><div>{xchecks((meta.data?.account_sizes ?? []).map((x) => [x.value, x.label] as [string, string]), ["exclude", "accounts_types"])}</div></div>
             <div className="bb-f"><label>Already dealt with</label><div>{toggle(["exclude", "recently_sold"], "Sold in the last 3 years", true)}
