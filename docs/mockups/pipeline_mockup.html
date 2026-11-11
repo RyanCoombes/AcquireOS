@@ -2,126 +2,179 @@
 <html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Pipeline options</title>
 <style>
-:root{--ink:#14181f;--ink2:#4a5261;--ink3:#8a91a0;--line:#e6e8ec;--canvas:#f5f6f8;--teal:#0e7c66;--tint:#e8f5f1;
- --assess:#2f62d8;--assessS:#eef3ff;--engage:#d9822b;--engageS:#fdf1e3;--deal:#7a4fd6;--dealS:#f3eefe;--owned:#1e9a57;--ownedS:#e6f6ec}
+:root{--ink:#14181f;--ink2:#4a5261;--ink3:#8a91a0;--line:#e6e8ec;--canvas:#f5f6f8;--teal:#0e7c66;--tint:#e8f5f1;--red:#c0392b;--redS:#fdecea}
 *{box-sizing:border-box}body{margin:0;font:14px/1.45 Inter,system-ui,-apple-system,sans-serif;color:var(--ink);background:var(--canvas)}
-.wrap{padding:18px 20px 60px}
+.wrap{padding:18px 20px 60px;max-width:1400px}
 .pick{display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap}
 .pick button{border:1px solid var(--line);background:#fff;border-radius:99px;padding:6px 14px;font:inherit;font-weight:600;cursor:pointer;color:var(--ink2)}
 .pick button.on{background:var(--teal);color:#fff;border-color:var(--teal)}
-.about{color:var(--ink2);font-size:13px;margin:6px 0 16px;max-width:860px}
+.about{color:var(--ink2);font-size:13px;margin:6px 0 16px;max-width:880px}
 h1{font-size:26px;margin:0 0 12px}
 .opt{display:none}.opt.on{display:block}
 .name{font-weight:650;font-size:13px;line-height:1.25}
 .sc{font-weight:700;border-radius:6px;padding:0 6px;background:var(--tint);color:#0a5e4d;font-size:12px}
 .val{font-size:12px;color:var(--ink2)}
-.days{font-size:11.5px;color:var(--ink3)}
-.stale{color:#c0392b}
+.faint{font-size:11.5px;color:var(--ink3)}
+.stale{color:var(--red)}
 .logo{width:28px;height:28px;border-radius:7px;flex:none;display:grid;place-items:center;font-size:11px;font-weight:800;color:#fff}
-.due{font-size:12px;color:#c0392b;font-weight:600}
+.due{font-size:12px;color:var(--red);font-weight:600}
 .nxt{font-size:12px;color:var(--ink2)}
-.more{display:block;width:100%;border:1px dashed #cfd4dc;background:transparent;border-radius:9px;padding:6px;font:inherit;font-size:12.5px;color:var(--ink2);cursor:pointer;margin-top:2px}
+.panel{background:#fff;border:1px solid var(--line);border-radius:14px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:#fff;border-radius:99px;padding:4px 11px;font-size:12.5px;font-weight:600;color:var(--ink2);cursor:pointer}
+.chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.chip b{font-weight:700;opacity:.7;margin-left:3px}
 
-/* D: funnel split */
-.split{display:grid;grid-template-columns:minmax(340px,400px) 1fr;gap:16px;align-items:start}
-.panel{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}
-.ph{padding:12px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)}
-.ph b{font-size:14px}
-.tabs{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--line)}
-.tabs button{border:0;background:none;border-radius:8px;padding:5px 10px;font:inherit;font-size:13px;font-weight:600;color:var(--ink2);cursor:pointer}
-.tabs button.on{background:var(--assessS);color:var(--assess)}
-.tabs button i{font-style:normal;font-weight:500;opacity:.75}
-.filter{padding:8px 10px;border-bottom:1px solid var(--line)}
-.filter input{width:100%;border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit;font-size:13px}
-.list{max-height:520px;overflow:auto}
-.lrow{display:flex;gap:10px;align-items:center;padding:8px 12px;border-bottom:1px solid #f0f1f4;cursor:grab}
-.lrow:hover{background:#fafbfc}
-.lrow .info{flex:1;min-width:0}.lrow .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.engage-board{display:flex;gap:12px;overflow-x:auto;align-items:flex-start}
-.ecol{flex:0 0 232px;border-radius:14px;padding:10px;background:#eceef2;min-height:160px}
-.ecol h3{margin:0 4px 8px;font-size:13px;display:flex;justify-content:space-between;align-items:center}
-.ecol h3 .n{color:var(--ink3);font-weight:500}
-.ecol.ms{background:var(--s);box-shadow:inset 0 0 0 2px var(--c)}
-.ecol.ms h3{color:var(--c)}
-.flag{font-size:10.5px;font-weight:700;color:#fff;background:var(--c);border-radius:5px;padding:1px 6px;margin-left:6px}
-.ecard{background:#fff;border-radius:10px;padding:10px 11px;margin-bottom:8px;box-shadow:0 1px 2px rgba(20,24,31,.08)}
-.ecard .r{display:flex;gap:9px;align-items:center}.ecard .m{display:flex;justify-content:space-between;margin-top:7px}
-.eempty{border:1.5px dashed #d5d9e0;border-radius:10px;padding:14px 8px;text-align:center;font-size:12px;color:var(--ink3)}
-.phase-tag{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px 2px}
-.phases{display:flex;gap:18px;overflow-x:auto}
+/* F: progress rows */
+.frow{display:grid;grid-template-columns:minmax(220px,1.3fr) 2.4fr minmax(170px,1fr) 60px;gap:14px;align-items:center;padding:10px 14px;border-bottom:1px solid #f0f1f4}
+.frow:hover{background:#fafbfc}
+.frow .who{display:flex;gap:10px;align-items:center;min-width:0}.frow .who .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fhead{font-size:11.5px;color:var(--ink3);font-weight:600;background:#fafbfc;border-radius:14px 14px 0 0}
+.track{display:flex;align-items:center;gap:0}
+.track i{flex:1;height:4px;background:#e6e8ec}
+.track i.done{background:var(--teal)}
+.track s{width:10px;height:10px;border-radius:50%;background:#e6e8ec;flex:none;text-decoration:none}
+.track s.done{background:var(--teal)}
+.track s.ms{width:14px;height:14px;border-radius:3px;transform:rotate(45deg)}
+.track s.now{width:18px;height:18px;background:#fff;border:4px solid var(--teal)}
+.track s.ms.now{border-radius:4px}
+.stagecap{font-size:12px;font-weight:600;margin-top:3px}
+.fgroup{padding:8px 14px;font-size:12px;font-weight:700;color:var(--ink2);background:#f7f8fa;border-bottom:1px solid var(--line)}
 
-/* E: capped columns */
-.cboard{display:flex;gap:10px;overflow-x:auto;align-items:flex-start}
-.cgroup{display:flex;flex-direction:column;gap:6px}
-.gh{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:0 4px;display:flex;align-items:center;gap:8px}
-.gh::after{content:"";flex:1;height:2px;background:currentColor;opacity:.35;border-radius:2px}
-.gcols{display:flex;gap:10px}
-.ccol{flex:0 0 220px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px;border-top:3px solid var(--c)}
-.ccol h3{margin:0 2px 8px;font-size:13px;display:flex;justify-content:space-between}
-.ccol h3 .n{font-weight:700;color:var(--c)}
-.ccol.ms{box-shadow:0 0 0 2px var(--c),0 8px 20px rgba(20,24,31,.08)}
-.ccol.ms h3{color:var(--c)}
-.ccol.thin{flex-basis:130px;background:transparent;border-style:dashed}
-.ccol.thin h3{font-size:12px;color:var(--ink3)}
-.ccard{display:flex;gap:9px;align-items:center;border-radius:9px;padding:7px 8px;margin-bottom:5px;background:#f7f8fa}
-.ccard .info{flex:1;min-width:0}.ccard .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px}
-.sortnote{font-size:11px;color:var(--ink3);margin:0 2px 6px}
+/* G: action first */
+.funnel{display:flex;gap:4px;align-items:stretch;margin-bottom:16px}
+.fseg{border-radius:10px;padding:10px 12px;color:#fff;cursor:pointer;display:flex;flex-direction:column;justify-content:center;min-width:90px}
+.fseg b{font-size:22px;line-height:1}.fseg span{font-size:12px;opacity:.9}
+.g2{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;align-items:start}
+.gh{padding:12px 14px;border-bottom:1px solid var(--line);font-weight:700;display:flex;justify-content:space-between}
+.act{display:flex;gap:11px;align-items:center;padding:11px 14px;border-bottom:1px solid #f0f1f4}
+.act .info{flex:1;min-width:0}
+.act .what{font-size:13px;font-weight:600}
+.act.over .what{color:var(--red)}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:5px 10px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.btn.p{background:var(--teal);color:#fff;border-color:var(--teal)}
+.stalebox .act .what{color:var(--ink)}
+.tag{font-size:11px;font-weight:700;border-radius:5px;padding:1px 6px}
+
+/* H: density board */
+.hboard{display:flex;gap:10px;align-items:flex-start;overflow-x:auto}
+.hcol{flex:0 0 250px;background:#eceef2;border-radius:12px;padding:10px}
+.hcol h3{margin:0 4px 8px;font-size:13px;display:flex;justify-content:space-between}
+.hcol h3 span{color:var(--ink3);font-weight:500}
+.hcol.dense{flex-basis:230px}
+.mini{display:flex;gap:8px;align-items:center;background:#fff;border-radius:8px;padding:5px 7px;margin-bottom:4px}
+.mini .logo{width:20px;height:20px;font-size:8.5px;border-radius:5px}
+.mini .name{flex:1;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mini .sc{font-size:11px}
+.hscroll{max-height:430px;overflow:auto;margin-right:-4px;padding-right:4px}
+.big{background:#fff;border-radius:11px;padding:11px 12px;margin-bottom:8px;box-shadow:0 1px 2px rgba(20,24,31,.08)}
+.big .r{display:flex;gap:9px;align-items:center}.big .m{display:flex;justify-content:space-between;margin-top:8px}
+.hcol.ms{background:#e3f2ee;box-shadow:inset 0 0 0 2px var(--teal)}
+.hcol.ms h3{color:var(--teal)}
+.strip{flex:0 0 38px;background:#eceef2;border-radius:12px;min-height:220px;display:flex;align-items:center;justify-content:flex-start;padding:12px 0;flex-direction:column;gap:8px;cursor:pointer}
+.strip .v{writing-mode:vertical-rl;transform:rotate(180deg);font-size:12px;font-weight:600;color:var(--ink3);white-space:nowrap}
+.strip .n{font-size:11px;color:var(--ink3);font-weight:700}
+.strip.ms{background:#e3f2ee}.strip.ms .v{color:var(--teal)}
+
+/* I: deal room + backlog */
+.hero{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:18px}
+.deal{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px 16px;position:relative;overflow:hidden}
+.deal::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--c)}
+.deal .r{display:flex;gap:11px;align-items:center}
+.deal .logo{width:38px;height:38px;font-size:13px;border-radius:9px}
+.deal .stage{font-size:12px;font-weight:700;color:var(--c);text-transform:uppercase;letter-spacing:.04em}
+.deal .name{font-size:14px}
+.deal .row{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+.dots{display:flex;gap:4px;margin-top:10px}
+.dots i{flex:1;height:6px;border-radius:3px;background:#eceef2}
+.dots i.d{background:var(--c)}
+.dots i.ms{outline:2px solid #fff;box-shadow:0 0 0 1px var(--c)}
+.sech{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 8px}
+.sech h2{font-size:16px;margin:0}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td,th{padding:8px 12px;border-bottom:1px solid #f0f1f4;text-align:left}
+th{font-size:11.5px;color:var(--ink3);font-weight:600}
+td .who{display:flex;gap:9px;align-items:center}
+.sel{border:1px solid var(--line);border-radius:7px;padding:3px 6px;font:inherit;font-size:12px;background:#fff}
 </style></head><body><div class="wrap">
-<h1>Pipeline: two more directions (with 40 in Watching)</h1>
+<h1>Pipeline: four new directions</h1>
 <div class="pick">
- <button class="on" data-o="d">D · Funnel split</button>
- <button data-o="e">E · Capped columns</button>
+ <button class="on" data-o="f">F · Progress rows</button>
+ <button data-o="g">G · Action first</button>
+ <button data-o="h">H · Dense board</button>
+ <button data-o="i">I · Deal room + backlog</button>
 </div>
 <div class="about" id="about"></div>
-<div class="opt on" id="d"></div>
-<div class="opt" id="e"></div>
+<div class="opt on" id="f"></div><div class="opt" id="g"></div><div class="opt" id="h"></div><div class="opt" id="i"></div>
 </div>
 <script>
-const P={assess:['#2f62d8','#eef3ff'],engage:['#d9822b','#fdf1e3'],deal:['#7a4fd6','#f3eefe'],owned:['#1e9a57','#e6f6ec']};
+const PH={assess:'#2f62d8',engage:'#d9822b',deal:'#7a4fd6',owned:'#1e9a57'};
 const S=[['watching','Watching','assess'],['researching','Assessing','assess'],['approach','Shortlisted','assess'],
  ['contacted','First contact','engage',1],['in_talks','Getting to know','engage'],['nda','NDA and accounts','engage'],
- ['offer','Indicative offer','deal'],['heads','Heads of terms','deal',1],['diligence','Due diligence','deal'],['spa','SPA and disclosure','deal'],['completion','Completion','deal',1],
- ['handover','Handover','owned']];
-const words=['LINDEN','THORNBURY','KESTREL','ASHCOMBE','BRIGHTFIELD','FERNHILL','HARBOURLINE','NORTHGATE','CALDER','MERIDIAN','OAKRIDGE','PENRITH','QUAYSIDE','REDWING','SEVERN','TALBOT','UPLAND','VALE','WESTBROOK','ARDEN'];
-const kinds=['IT SERVICES','DIGITAL','COMPUTING','SOFTWARE','NETWORKS','IT SUPPORT','SYSTEMS','TECHNOLOGY'];
-const cols=['#3b6fd9','#5a7bb5','#2b8a9a','#445566','#c2702a','#a0602a','#6a5acd','#2e8b57','#8b4c7a','#4b6584'];
-let seed=7;const rnd=n=>{seed=(seed*9301+49297)%233280;return Math.floor(seed/233280*n)};
-const mk=(st,i)=>{const nm=`${words[rnd(20)]} ${kinds[rnd(8)]} LIMITED`;const lo=100+rnd(900);return {st,nm,sc:55+rnd(46),val:`£${lo}k–${(lo*5/1000).toFixed(2)}m`,d:rnd(90),c:cols[rnd(10)]};};
-const C=[];[['watching',40],['researching',6],['approach',9],['contacted',3],['in_talks',1],['heads',1]].forEach(([s,n])=>{for(let i=0;i<n;i++)C.push(mk(s,i))});
-C.find(c=>c.st==='approach').due='Write to owner · 8 Nov';C.find(c=>c.st==='contacted').nxt='Follow-up call · 14 Nov';
+ ['offer','Indicative offer','deal'],['heads','Heads of terms','deal',1],['diligence','Due diligence','deal'],['spa','SPA and disclosure','deal'],['completion','Completion','deal',1],['handover','Handover','owned']];
+const idx=Object.fromEntries(S.map((s,i)=>[s[0],i]));
+const W=['LINDEN','THORNBURY','KESTREL','ASHCOMBE','BRIGHTFIELD','FERNHILL','HARBOURLINE','NORTHGATE','CALDER','MERIDIAN','OAKRIDGE','PENRITH','QUAYSIDE','REDWING','SEVERN','TALBOT','UPLAND','VALE','WESTBROOK','ARDEN'];
+const K=['IT SERVICES','DIGITAL','COMPUTING','SOFTWARE','NETWORKS','IT SUPPORT','SYSTEMS','TECHNOLOGY'];
+const COL=['#3b6fd9','#5a7bb5','#2b8a9a','#445566','#c2702a','#a0602a','#6a5acd','#2e8b57','#8b4c7a','#4b6584'];
+let seed=11;const r=n=>{seed=(seed*9301+49297)%233280;return Math.floor(seed/233280*n)};
+const C=[];[['watching',40],['researching',6],['approach',9],['contacted',3],['in_talks',2],['nda',1],['heads',1]].forEach(([s,n])=>{for(let i=0;i<n;i++){const lo=100+r(900);C.push({st:s,nm:`${W[r(20)]} ${K[r(8)]} LIMITED`,sc:55+r(46),val:`£${lo}k–${(lo*5/1000).toFixed(2)}m`,d:r(90),c:COL[r(10)]})}});
+const set=(st,i,k,v)=>{C.filter(c=>c.st===st)[i][k]=v};
+set('approach',0,'due','Write to owner · 8 Nov');set('approach',1,'due','Call accountant · 10 Nov');set('contacted',0,'nxt','Follow-up call · 14 Nov');
+set('in_talks',0,'nxt','Site visit · 19 Nov');set('nda',0,'due','Chase management accounts · 7 Nov');set('heads',0,'nxt','Lender call · 13 Nov');set('contacted',1,'due','Reply to owner email · 9 Nov');
 const of=k=>C.filter(c=>c.st===k).sort((a,b)=>(b.due?1:0)-(a.due?1:0)||b.sc-a.sc);
 const ini=n=>n.split(' ').slice(0,2).map(w=>w[0]).join('');
 const logo=c=>`<div class="logo" style="background:${c.c}">${ini(c.nm)}</div>`;
-const days=c=>`<span class="days ${c.d>45?'stale':''}">${c.d}d</span>`;
-const extra=c=>c.due?`<div class="due" style="margin-top:5px">→ ${c.due}</div>`:c.nxt?`<div class="nxt" style="margin-top:5px">→ ${c.nxt}</div>`:'';
-const about={d:'Early stages are high-volume and low-effort, later stages are few and important, so they get different layouts. Left: Watching, Assessing and Shortlisted as a tabbed, searchable, scrollable list (40 or 400, it stays the same size). Right: the real deal board from First contact onwards, big cards, phase colours, milestones outlined. Drag a row from the list onto the board to make first contact.',
- e:'Keeps one board, but every column shows at most 5 cards (overdue actions first, then highest score) with "+35 more" to expand that column only. Empty stages shrink to thin dashed slots, so the busy and milestone stages get the space. Phase colour lines group the columns.'};
+const days=c=>`<span class="faint ${c.d>45?'stale':''}">${c.d}d in stage</span>`;
+const next=c=>c.due?`<div class="due">→ ${c.due}</div>`:c.nxt?`<div class="nxt">→ ${c.nxt}</div>`:'';
+const stg=k=>S[idx[k]];
+const about={
+ f:'A list, not a board. Every company is one row with a progress track across all 12 stages: filled dots for done, a ring for where it is now, diamonds for the milestones. You see at a glance how far each deal has got. Grouped by phase, active deals first; Watching folds up at the bottom. Filter chips by stage. Change stage from the row.',
+ g:'Built around what to do today. A funnel strip on top (click a phase to filter). Left: actions due and overdue across all deals, with one-click Done / Snooze. Right: deals going stale (no movement in 30+ days). The full board is one click away (View board) for dragging.',
+ h:'Keeps the kanban everyone knows, but card size follows importance. Assess stages use one-line mini rows that scroll inside the column (40 fit easily). From First contact onwards: full cards. Empty stages collapse to slim vertical strips (click to open), so the whole pipeline fits on one screen.',
+ i:'Two parts. Top: a "deal room" of big cards for every company from First contact onwards, each with its stage, next step and a 12-step progress bar in its phase colour. Below: the backlog (Watching, Assessing, Shortlisted) as a sortable table with stage tabs and a "Make contact" button that moves it up into the deal room.'};
 
-// D
-const assessSt=S.filter(s=>s[2]==='assess');
-let d=`<div class="split"><div class="panel"><div class="ph"><b>Lining up</b><span class="days">${assessSt.reduce((a,s)=>a+of(s[0]).length,0)} companies</span></div>
-<div class="tabs">${assessSt.map((s,i)=>`<button class="${i==0?'on':''}" data-s="${s[0]}">${s[1]} <i>${of(s[0]).length}</i></button>`).join('')}</div>
-<div class="filter"><input placeholder="Filter by name"></div><div class="list" id="dlist"></div></div><div class="phases">`;
-['engage','deal','owned'].forEach(ph=>{const st=S.filter(s=>s[2]===ph);const [c,s]=P[ph];
- d+=`<div><div class="phase-tag" style="color:${c}">${ph[0].toUpperCase()+ph.slice(1)}</div><div class="engage-board">`+st.map(x=>{const it=of(x[0]);
-  return `<div class="ecol ${x[3]?'ms':''}" style="--c:${c};--s:${s}"><h3><span>${x[1]}${x[3]?'<span class="flag">★</span>':''}</span><span class="n">${it.length}</span></h3>`+
-  (it.length?it.map(k=>`<div class="ecard"><div class="r">${logo(k)}<div class="name">${k.nm}</div></div><div class="m"><span class="sc">${k.sc}</span><span class="val">${k.val}</span></div><div class="m"><span></span>${days(k)}</div>${extra(k)}</div>`).join(''):'<div class="eempty">Drop here</div>')+'</div>';}).join('')+'</div></div>';});
-d+='</div></div>';
-document.getElementById('d').innerHTML=d;
-const fill=s=>{document.getElementById('dlist').innerHTML=of(s).map(k=>`<div class="lrow">${logo(k)}<div class="info"><div class="name">${k.nm}</div><div class="val">${k.val} · ${days(k)}</div>${extra(k)}</div><span class="sc">${k.sc}</span></div>`).join('')};
-fill('watching');
-document.querySelectorAll('#d .tabs button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#d .tabs button').forEach(x=>x.classList.remove('on'));b.classList.add('on');fill(b.dataset.s)});
+// F
+const track=k=>{const n=idx[k];return '<div class="track">'+S.map((s,i)=>(i?`<i class="${i<=n?'done':''}"></i>`:'')+`<s class="${s[3]?'ms':''} ${i<n?'done':''} ${i==n?'now':''}" title="${s[1]}"></s>`).join('')+'</div>';};
+let f=`<div class="chips" style="margin-bottom:12px"><span class="chip on">All <b>${C.length}</b></span><span class="chip">Active deals <b>${C.filter(c=>idx[c.st]>=3).length}</b></span><span class="chip">Shortlisted <b>9</b></span><span class="chip">Assessing <b>6</b></span><span class="chip">Watching <b>40</b></span><span class="chip">Overdue <b>4</b></span></div>
+<div class="panel"><div class="frow fhead"><span>Company</span><span>Progress · ◆ milestones</span><span>Next step</span><span>Score</span></div>`;
+const grp=[['Active deals',c=>idx[c.st]>=3],['Shortlisted',c=>c.st==='approach'],['Assessing',c=>c.st==='researching']];
+grp.forEach(([t,fn])=>{const it=C.filter(fn).sort((a,b)=>idx[b.st]-idx[a.st]||(b.due?1:0)-(a.due?1:0));
+ f+=`<div class="fgroup">${t} · ${it.length}</div>`+it.map(c=>`<div class="frow"><div class="who">${logo(c)}<div style="min-width:0"><div class="name">${c.nm}</div><div class="val">${c.val}</div></div></div><div>${track(c.st)}<div class="stagecap" style="color:${PH[stg(c.st)[2]]}">${stg(c.st)[1]} <span class="faint ${c.d>45?'stale':''}">· ${c.d}d</span></div></div><div>${next(c)||'<span class="faint">No next step set</span>'}</div><span class="sc">${c.sc}</span></div>`).join('');});
+f+=`<div class="fgroup" style="cursor:pointer">▸ Watching · 40 <span class="faint" style="font-weight:500">(show)</span></div></div>`;
+document.getElementById('f').innerHTML=f;
 
-// E
-let e='<div class="cboard">';
-Object.entries(P).forEach(([ph,[c,s]])=>{const st=S.filter(x=>x[2]===ph);
- e+=`<div class="cgroup"><div class="gh" style="color:${c}">${ph}</div><div class="gcols">`+st.map(x=>{const it=of(x[0]);const thin=!it.length&&!x[3];
-  return `<div class="ccol ${x[3]?'ms':''} ${thin?'thin':''}" style="--c:${c}"><h3><span>${x[1]}${x[3]&&!thin?' ★':''}</span><span class="n">${it.length}</span></h3>`+
-  (it.length>5?'<div class="sortnote">Due first, then score</div>':'')+
-  it.slice(0,5).map(k=>`<div class="ccard">${logo(k)}<div class="info"><div class="name">${k.nm}</div><div class="val">${k.val} · ${days(k)}</div>${extra(k)}</div><span class="sc">${k.sc}</span></div>`).join('')+
-  (it.length>5?`<button class="more">+${it.length-5} more</button>`:'')+(!it.length&&x[3]?'<div class="eempty">Drop here</div>':'')+'</div>';}).join('')+'</div></div>';});
-document.getElementById('e').innerHTML=e+'</div>';
+// G
+const ph=['assess','engage','deal','owned'];const cnt=p=>C.filter(c=>stg(c.st)[2]===p).length;
+let g='<div class="funnel">'+ph.map(p=>`<div class="fseg" style="background:${PH[p]};flex:${Math.max(1,Math.sqrt(cnt(p)))}"><b>${cnt(p)}</b><span>${p[0].toUpperCase()+p.slice(1)}</span></div>`).join('')+'</div>';
+const acts=C.filter(c=>c.due||c.nxt).sort((a,b)=>(b.due?1:0)-(a.due?1:0));
+g+=`<div class="g2"><div class="panel"><div class="gh"><span>To do</span><span class="faint">${acts.filter(a=>a.due).length} overdue · ${acts.filter(a=>!a.due).length} coming up</span></div>`+
+ acts.map(c=>`<div class="act ${c.due?'over':''}">${logo(c)}<div class="info"><div class="what">${(c.due||c.nxt)}</div><div class="faint">${c.nm} · <span style="color:${PH[stg(c.st)[2]]};font-weight:600">${stg(c.st)[1]}</span></div></div><button class="btn p">Done</button><button class="btn">Snooze</button></div>`).join('')+
+ `</div><div><div class="panel stalebox" style="margin-bottom:16px"><div class="gh"><span>Going stale</span><span class="faint">30+ days, no movement</span></div>`+
+ C.filter(c=>idx[c.st]>=1&&c.d>30).slice(0,6).map(c=>`<div class="act">${logo(c)}<div class="info"><div class="what">${c.nm}</div><div class="faint">${stg(c.st)[1]} · <span class="stale">${c.d} days</span></div></div><button class="btn">Move on</button></div>`).join('')+
+ `</div><button class="btn" style="width:100%;padding:10px">View board ▸</button></div></div>`;
+document.getElementById('g').innerHTML=g;
 
-const ab=document.getElementById('about');ab.textContent=about.d;
-document.querySelectorAll('.pick button').forEach(x=>x.onclick=()=>{document.querySelectorAll('.pick button,.opt').forEach(el=>el.classList.remove('on'));x.classList.add('on');document.getElementById(x.dataset.o).classList.add('on');ab.textContent=about[x.dataset.o];});
+// H
+let h='<div class="hboard">';S.forEach(s=>{const it=of(s[0]);
+ if(!it.length&&!s[3]){h+=`<div class="strip"><span class="n">0</span><span class="v">${s[1]}</span></div>`;return;}
+ if(!it.length){h+=`<div class="strip ms"><span class="n">◆</span><span class="v">${s[1]}</span></div>`;return;}
+ const dense=s[2]==='assess';
+ h+=`<div class="hcol ${dense?'dense':''} ${s[3]?'ms':''}"><h3>${s[3]?'◆ ':''}${s[1]} <span>${it.length}</span></h3>`+(dense?'<div class="hscroll">'+it.map(c=>`<div class="mini">${logo(c)}<span class="name">${c.nm}</span>${c.due?'<span class="due" title="'+c.due+'">●</span>':''}<span class="sc">${c.sc}</span></div>`).join('')+'</div>':
+  it.map(c=>`<div class="big"><div class="r">${logo(c)}<div class="name">${c.nm}</div></div><div class="m"><span class="sc">${c.sc}</span><span class="val">${c.val}</span></div><div class="m">${days(c)}</div>${next(c)}</div>`).join(''))+'</div>';});
+document.getElementById('h').innerHTML=h+'</div>';
+
+// I
+const active=C.filter(c=>idx[c.st]>=3).sort((a,b)=>idx[b.st]-idx[a.st]);
+let i=`<div class="sech"><h2>Deal room</h2><span class="faint">${active.length} from first contact onwards</span></div><div class="hero">`+active.map(c=>{const s=stg(c.st),col=PH[s[2]];
+ return `<div class="deal" style="--c:${col}"><div class="r">${logo(c)}<div><div class="stage">${s[3]?'◆ ':''}${s[1]}</div><div class="name">${c.nm}</div></div></div>
+ <div class="dots">${S.map((x,j)=>`<i class="${j<=idx[c.st]?'d':''} ${x[3]?'ms':''}"></i>`).join('')}</div>
+ <div class="row">${next(c)||'<span class="faint">No next step set</span>'}<span class="sc">${c.sc}</span></div><div class="row"><span class="val">${c.val}</span>${days(c)}</div></div>`;}).join('')+'</div>';
+i+=`<div class="sech"><h2>Backlog</h2><div class="chips"><span class="chip">Shortlisted <b>9</b></span><span class="chip">Assessing <b>6</b></span><span class="chip on">Watching <b>40</b></span></div></div>
+<div class="panel"><table><tr><th>Company</th><th>Value</th><th>Score</th><th>In stage</th><th></th></tr>`+
+ of('watching').slice(0,10).map(c=>`<tr><td><div class="who">${logo(c)}<span class="name">${c.nm}</span></div></td><td class="val">${c.val}</td><td><span class="sc">${c.sc}</span></td><td>${days(c)}</td><td style="text-align:right"><select class="sel"><option>Move to…</option></select> <button class="btn p">Make contact</button></td></tr>`).join('')+
+ `</table><div class="faint" style="padding:10px 12px">Showing 10 of 40 · <a href="#">show all</a></div></div>`;
+document.getElementById('i').innerHTML=i;
+
+const ab=document.getElementById('about');ab.textContent=about.f;
+document.querySelectorAll('.pick button').forEach(x=>x.onclick=()=>{document.querySelectorAll('.pick button,.opt').forEach(e=>e.classList.remove('on'));x.classList.add('on');document.getElementById(x.dataset.o).classList.add('on');ab.textContent=about[x.dataset.o];});
 </script></body></html>
