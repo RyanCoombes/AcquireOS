@@ -10,6 +10,20 @@ import MoneyInput from "../components/MoneyInput";
 
 type C = any;
 
+/** A comma-separated list you can type freely (commas, spaces, phrases); it is
+    saved as a list on every change, but the box keeps exactly what you typed. */
+function ListInput({ value, onChange, placeholder, area }: { value: string[]; onChange: (v: string[]) => void; placeholder?: string; area?: boolean }) {
+  const [text, setText] = useState(value.join(", "));
+  const [focused, setFocused] = useState(false);
+  const joined = value.join(", ");
+  useEffect(() => { if (!focused) setText(joined); }, [joined, focused]);
+  const change = (t: string) => { setText(t); onChange(t.split(",").map((x) => x.trim()).filter(Boolean)); };
+  const props = { value: text, placeholder, onFocus: () => setFocused(true), onBlur: () => { setFocused(false); setText(joined); } };
+  return area
+    ? <textarea {...props} style={{ minHeight: 52 }} onChange={(e) => change(e.target.value)} />
+    : <input type="text" {...props} onChange={(e) => change(e.target.value)} />;
+}
+
 export default function BuyBox() {
   const [params, setParams] = useSearchParams();
   const idParam = /^\d+$/.test(params.get("id") ?? "") ? Number(params.get("id")) : null;
@@ -72,8 +86,6 @@ export default function BuyBox() {
   );
 
   const me = boxesQ.data?.find((x) => x.id === data.id);
-  const list = (path: string[]) => ((get(c, path) ?? []) as string[]).join(", ");
-  const setList = (path: string[], v: string) => upd(path, v.split(",").map((x) => x.trim()).filter(Boolean));
 
   return (
     <>
@@ -100,15 +112,15 @@ export default function BuyBox() {
             <div className="bb-f"><label>Industries</label>
               <SicPicker value={c.universe?.sic_prefixes ?? []} onChange={(v) => upd(["universe", "sic_prefixes"], v)} /></div>
             <div className="bb-f"><label>Or a name that mentions</label>
-              <input type="text" value={list(["universe", "name_keywords"])} placeholder="software, data, digital"
-                     onChange={(e) => setList(["universe", "name_keywords"], e.target.value)} />
+              <ListInput value={c.universe?.name_keywords ?? []} placeholder="software, data, digital"
+                         onChange={(v) => upd(["universe", "name_keywords"], v)} />
               <details className="bb-more"><summary>Only for these broad industries{(c.universe?.keyword_sic_prefixes ?? []).length ? ` (${c.universe.keyword_sic_prefixes.length})` : ""}<Hint text="A name match only counts for companies in these codes, so 'data' doesn't bring in every data-something shop. Leave empty to allow any industry." /></summary>
                 <SicPicker value={c.universe?.keyword_sic_prefixes ?? []} onChange={(v) => upd(["universe", "keyword_sic_prefixes"], v)} />
               </details></div>
             <div className="bb-row">
               <div className="bb-f"><label>Area (postcode areas)</label>
-                <input type="text" value={list(["universe", "postcode_areas"])} placeholder="All of the UK, or e.g. CF, SA, NP"
-                       onChange={(e) => setList(["universe", "postcode_areas"], e.target.value)} /></div>
+                <ListInput value={c.universe?.postcode_areas ?? []} placeholder="All of the UK, or e.g. CF, SA, NP"
+                           onChange={(v) => upd(["universe", "postcode_areas"], v)} /></div>
               <div className="bb-f"><label>Trading for at least</label>
                 <div className="range">{n(["universe", "min_years"], { style: { width: 70 } })}<span className="faint">years</span></div></div>
             </div>
@@ -120,8 +132,8 @@ export default function BuyBox() {
           <div className="bb-col out">
             <div className="bb-pill">Leave out</div>
             <div className="bb-f"><label>Names, industries or research mentioning</label>
-              <textarea style={{ minHeight: 52 }} value={c.exclude.keywords.join(", ")}
-                        onChange={(e) => upd(["exclude", "keywords"], e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} /></div>
+              <ListInput area value={c.exclude.keywords ?? []} placeholder="e.g. plumbing, field service, recruitment"
+                         onChange={(v) => upd(["exclude", "keywords"], v)} /></div>
             <div className="bb-f"><label>Industries<Hint text="Left out if any of its SIC codes is on this list. Tick the box to leave a company out only when every code it files is on the list, so a joiner that also lists property letting stays in." /></label>
               <SicPicker value={c.exclude?.sic_prefixes ?? []} onChange={(v) => upd(["exclude", "sic_prefixes"], v)} />
               {(c.exclude?.sic_prefixes ?? []).length > 0 && <label className="check" style={{ height: "auto", marginTop: 4 }}>
