@@ -411,10 +411,11 @@ function CatchUp() {
         )}
         {acc && acc.staff_fix !== undefined && (
           <div>
-            <div className="small"><b>Misread staff counts</b><Hint text="Years, money amounts, references or £000-scaled numbers read as staff. Cleared and read again from the filing; figures saved by you or Claude are never changed." /></div>
+            <div className="small"><b>Misread staff counts</b><Hint text="Years, money amounts, references or £000-scaled numbers read as staff, and counts over five times off both the year before and after. Cleared and read again from that year's own filing; figures saved by you or Claude are never changed." /></div>
             <div className="faint small">
               {acc.staff_fix ? <>✓ Run{acc.staff_fix.at ? ` (last ${dateTime(acc.staff_fix.at)})` : ""}
                   {acc.staff_fix.years != null ? `: ${int(acc.staff_fix.years)} years in ${int(acc.staff_fix.companies ?? 0)} companies cleared in total` : ""}
+                  {acc.staff_fix.outliers ? ` (${int(acc.staff_fix.outliers)} of them outliers against the years either side)` : ""}
                   {acc.staff_fix.pdf_years_requeued ? `, ${int(acc.staff_fix.pdf_years_requeued)} PDF years queued to read again` : ""}
                   {acc.staff_fix.data_years_reread ? `, ${int(acc.staff_fix.data_years_reread)} filled from the filing` : ""}
                   {acc.staff_fix.large_corrected ? `, ${int(acc.staff_fix.large_corrected)} large companies corrected` : ""}.{" "}

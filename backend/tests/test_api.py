@@ -1665,3 +1665,60 @@ def test_logo_endpoint_fetches_in_background_and_serves(loaded, monkeypatch):
         assert not logos.fetch_and_store(num)
         r = cl.get(f"/api/companies/{num}/logo")
         assert r.status_code == 404 and r.headers["x-logo"] == "none"
+
+
+def test_own_years_staff_wins_and_outliers_are_cleared_and_reread(loaded, monkeypatch):
+    from datetime import date
+
+    from acquireos import chapi
+    from acquireos.importers.accounts import _upsert, fix_year_staff, staff_outliers
+
+    c = loaded
+    a, b, m = [r["company_number"] for r in c.execute("select company_number from company order by company_number limit 3")]
+    for n in (a, b, m):
+        c.execute("delete from financial_period where company_number = %s", (n,))
+    # A year's own accounts say 1; next year's comparative column has a typo of 100: the own figure stays.
+    _upsert(c, a, date(2024, 3, 31), {"employees": 1, "turnover": 90_000}, "accounts:x", balance_date=date(2024, 3, 31))
+    _upsert(c, a, date(2024, 3, 31), {"employees": 100, "turnover": 95_000}, "accounts:y", balance_date=date(2025, 3, 31))
+    row = c.execute("select employees, turnover from financial_period where company_number = %s", (a,)).fetchone()
+    assert row["employees"] == 1 and row["turnover"] == 95_000      # money figures still take a restated comparative
+    # The comparative arrived first, then the year's own accounts: the own figure replaces it.
+    _upsert(c, a, date(2023, 3, 31), {"employees": 100}, "accounts:y", balance_date=date(2024, 3, 31))
+    _upsert(c, a, date(2023, 3, 31), {"employees": 2}, "accounts:w", balance_date=date(2023, 3, 31))
+    assert c.execute("select employees from financial_period where company_number = %s and period_end = '2023-03-31'", (a,)).fetchone()["employees"] == 2
+    # Outliers: 100 between 2 and 3; 1 between 900 and 950; your saved 100 between 2 and 3 is left alone.
+    for n, vals, src in ((b, [2, 100, 3], "accounts:x"), (m, [900, 1, 950], "accounts:x")):
+        for y, v in zip((2021, 2022, 2023), vals):
+            _upsert(c, n, date(y, 12, 31), {"employees": v}, src, balance_date=date(y, 12, 31))
+    _upsert(c, a, date(2025, 3, 31), {"employees": 3}, "accounts:z", balance_date=date(2025, 3, 31))
+    _upsert(c, a, date(2024, 3, 31), {"employees": 100}, "manual", balance_date=date(2024, 3, 31))   # yours
+    got = {(r["company_number"], r["period_end"].year, r["v"]) for r in staff_outliers(c, [a, b, m])}
+    assert got == {(b, 2022, 100), (m, 2022, 1)}
+    # Cleared and read again from the year's own filing; the same outlier again is not put back.
+    monkeypatch.setattr(chapi, "enabled", lambda: True)
+    monkeypatch.setattr(chapi, "_get", lambda path: {"items": [
+        {"type": "AA", "description_values": {"made_up_date": "2022-12-31"}, "links": {"document_metadata": "/document/abc"}}]})
+    monkeypatch.setattr(chapi, "_doc_formats", lambda link: ["application/xhtml+xml"])
+    ctx = ('<xbrli:context id="d0"><xbrli:entity><xbrli:identifier>01</xbrli:identifier></xbrli:entity>'
+           '<xbrli:period><xbrli:startDate>2022-01-01</xbrli:startDate><xbrli:endDate>2022-12-31</xbrli:endDate></xbrli:period></xbrli:context>')
+    docs = {b: "4", m: "1"}
+    seen = []
+    monkeypatch.setattr(chapi, "_document", lambda link, limit=0, accept="": (
+        f'<html><ix:header>{ctx}</ix:header><ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="d0">'
+        f'{docs[seen[-1]]}</ix:nonFraction></html>').encode())
+    import acquireos.importers.accounts as acc
+    real = acc._reread_staff
+    def spy(conn, rows, replace=False):
+        out = {"data_years_reread": 0, "data_years_no_link": 0}
+        for r in rows:
+            seen.append(r["company_number"])
+            got = real(conn, [r], replace)
+            out = {k: out[k] + got[k] for k in out}
+        return out
+    monkeypatch.setattr(acc, "_reread_staff", spy)
+    r = fix_year_staff(c)
+    assert r["outliers"] == 2
+    emp = lambda n: c.execute("select employees from financial_period where company_number = %s and period_end = '2022-12-31'", (n,)).fetchone()["employees"]
+    assert emp(b) == 4 and emp(m) is None
+    assert c.execute("select employees from financial_period where company_number = %s and period_end = '2024-03-31'", (a,)).fetchone()["employees"] == 100
+    c.rollback()

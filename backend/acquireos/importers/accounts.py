@@ -476,8 +476,8 @@ def _reread_staff(conn, rows, replace: bool = False) -> dict:
         except Exception:
             vals = {}
         emp = vals.get("employees")
-        if emp is None:
-            continue
+        if emp is None or (r.get("old_value") is not None and emp == r["old_value"]):
+            continue  # nothing tagged, or the same outlier again: stays blank
         if replace:  # a year-like count at a big company: replace only with a different, real figure
             if emp != r["employees"] and not (1990 <= emp <= 2035):
                 conn.execute("""update financial_period set employees = %s where company_number = %s and period_end = %s
@@ -510,6 +510,30 @@ CHECK_STAFF_SQL = """
       and turnover is not null and turnover >= 20000 * employees"""
 
 
+# A staff count more than five times off both the year before and the year
+# after (and at least 10 people off), e.g. 100 between 1 and 2, or 1 between
+# 900 and 950: a typo in a later filing's comparative column, or a misread.
+# Cleared (kept in staff_year_cleared with the old value) and read again from
+# the year's own filing. Figures saved by you or Claude are never touched.
+OUTLIER_STAFF_SQL = """
+    with s as (
+      select company_number, period_end, employees as v, source,
+             lag(employees) over w as prev, lead(employees) over w as next
+        from financial_period
+       where employees is not null and not period_inferred {only}
+      window w as (partition by company_number order by period_end))
+    select company_number, period_end, v from s
+     where prev is not null and next is not null
+       and coalesce(source, '') not in ('manual', 'pdf:claude') and coalesce(source, '') not like 'manual%%'
+       and ((v >= 5 * greatest(prev, next) and v - greatest(prev, next) >= 10)
+         or (5 * v <= least(prev, next) and least(prev, next) - v >= 10))"""
+
+
+def staff_outliers(conn, numbers: list[str] | None = None) -> list[dict]:
+    only = "and company_number = any(%(nums)s)" if numbers else ""
+    return conn.execute(OUTLIER_STAFF_SQL.format(only=only), {"nums": numbers} if numbers else {}).fetchall()
+
+
 def fix_year_staff(conn) -> dict:
     """Clean staff counts that were misread: the year heading, a money amount or
     reference, or a headcount scaled by £000. They're cleared and read again from
@@ -524,8 +548,19 @@ def fix_year_staff(conn) -> dict:
         conn.execute("""insert into staff_year_cleared (company_number, period_end)
                         select unnest(%s::text[]), unnest(%s::date[]) on conflict do nothing""",
                      ([r["company_number"] for r in rows], [r["period_end"] for r in rows]))
+    out = staff_outliers(conn)
+    if out:
+        conn.execute("""update financial_period fp set employees = null
+                        from (select unnest(%s::text[]) n, unnest(%s::date[]) p) x
+                        where fp.company_number = x.n and fp.period_end = x.p""",
+                     ([r["company_number"] for r in out], [r["period_end"] for r in out]))
+        conn.execute("""insert into staff_year_cleared (company_number, period_end, reason, old_value)
+                        select unnest(%s::text[]), unnest(%s::date[]), 'outlier', unnest(%s::int[])
+                        on conflict (company_number, period_end) do update set reason = 'outlier', old_value = excluded.old_value""",
+                     ([r["company_number"] for r in out], [r["period_end"] for r in out], [r["v"] for r in out]))
+        rows = list(rows) + [{"company_number": r["company_number"], "period_end": r["period_end"]} for r in out]
     # Every cleared year still blank (this run's, and earlier ones) gets another read.
-    todo = conn.execute("""select k.company_number, k.period_end from staff_year_cleared k
+    todo = conn.execute("""select k.company_number, k.period_end, k.old_value from staff_year_cleared k
                            join financial_period fp using (company_number, period_end)
                            where fp.employees is null""").fetchall()
     check = conn.execute(f"select company_number, period_end, employees from financial_period where {CHECK_STAFF_SQL}").fetchall()
@@ -548,7 +583,7 @@ def fix_year_staff(conn) -> dict:
     for n in nums:
         scoring.rescore(conn, company_number=n)
     conn.commit()
-    return {"years": len(rows), "companies": len({r["company_number"] for r in rows}), "pdf_years_requeued": requeued,
+    return {"years": len(rows), "companies": len({r["company_number"] for r in rows}), "outliers": len(out), "pdf_years_requeued": requeued,
             **reread, "large_checked": len(check), "large_corrected": checked.get("data_years_reread", 0)}
 
 
@@ -557,6 +592,13 @@ def _merge_sql(cols) -> str:
     def one(c):
         blank = f"excluded.{c} is null" if c in TEXT_FIELDS else f"(excluded.{c} is null or excluded.{c} = 0)"
         fblank = f"fp.{c} is null" if c in TEXT_FIELDS else f"(fp.{c} is null or fp.{c} = 0)"
+        if c == "employees":
+            # Staff counts are never restated in practice, but next year's comparative
+            # column often has a typo: the year's own accounts always win.
+            return (f"{c} = case when {_SAVING} then coalesce(excluded.{c}, fp.{c}) "
+                    f"when {_KEEP} then coalesce(fp.{c}, excluded.{c}) "
+                    f"when {_FILL} and not {_SAVED} then coalesce(excluded.{c}, fp.{c}) "
+                    f"else coalesce(excluded.{c}, fp.{c}) end")
         return (f"{c} = case when {_SAVING} then coalesce(excluded.{c}, fp.{c}) "
                 f"when {_KEEP} and ({_SAVED} or {blank}) then coalesce(fp.{c}, excluded.{c}) "
                 f"when {_FILL} then case when {fblank} then coalesce(excluded.{c}, fp.{c}) else fp.{c} end "

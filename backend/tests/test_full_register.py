@@ -71,7 +71,7 @@ def test_older_filing_never_overwrites_newer(loaded, tmp_path):
     accounts.run(c, [older], workers=1)  # loaded out of order
     staff = {x["period_end"]: x["employees"] for x in c.execute(
         "select period_end, employees from financial_period where company_number='01000001' and not period_inferred")}
-    assert staff[date(2027, 3, 31)] == 44  # restated figure from the newer filing kept
+    assert staff[date(2027, 3, 31)] == 40  # staff: the year's own accounts win over a later comparative (often a typo)
     assert staff[date(2028, 3, 31)] == 50 and staff[date(2026, 3, 31)] == 34
 
 
