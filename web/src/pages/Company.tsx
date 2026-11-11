@@ -14,6 +14,7 @@ import { ageFrom, CHANGE_KIND, chUrl, date, describeChange, int, isBadStatus, LI
 
 export default function Company() {
   const { num = "" } = useParams();
+  useEffect(() => { document.body.classList.add("has-mbar"); return () => document.body.classList.remove("has-mbar"); }, []);
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
   const bbParam = /^\d+$/.test(params.get("bb") ?? "") ? Number(params.get("bb")) : null;
@@ -123,6 +124,7 @@ export default function Company() {
     } catch (e: any) { setChCheck(`Refresh failed: ${e.message}`); }
   };
 
+  const mNext = nextInList(num);
   return (
     <>
       <UndoBar num={num} />
@@ -397,6 +399,12 @@ export default function Company() {
               </table>
             ) : <div className="faint">No changes recorded yet.</div>}
           </section>
+      </div>
+      {/* Phones: the usual actions within thumb reach */}
+      <div className="mbar" role="toolbar" aria-label="Company actions">
+        <button className="btn primary" onClick={() => document.querySelector(".callbar")?.scrollIntoView({ behavior: "smooth", block: "center" })}>Decide</button>
+        {data.enrichment?.website && <a className="btn" href={data.enrichment.website} target="_blank" rel="noreferrer">Website ↗</a>}
+        {mNext && <Link className="btn" to={`/c/${mNext}${window.location.search}`}>Next →</Link>}
       </div>
       <Toast msg={toast} onDone={() => setToast(null)} />
     </>

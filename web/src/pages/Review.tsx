@@ -1,6 +1,6 @@
 /* Review one company at a time, fast. Score your criteria with the number
    keys, then shortlist, watch, assess, rule out with one key. */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail, type Status } from "../api";
 import { ErrorLine, Score, Signals, StatusMark, Toast, useAsync } from "../components/bits";
@@ -35,6 +35,10 @@ export default function Review() {
   const [focus, setFocus] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  const [mFilters, setMFilters] = useState(false);
+  // Phones: room for the decision bar at the bottom.
+  useEffect(() => { document.body.classList.add("has-mbar"); return () => document.body.classList.remove("has-mbar"); }, []);
+  const touch = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => { setI(0); setDone({}); }, [status, minScore, sic, bb]);
 
   const rows = queue.data?.rows ?? [];
@@ -95,13 +99,17 @@ export default function Review() {
       <div className="pagehead">
         <div>
           <h1>Review</h1>
-          <div className="lede">
+          <div className="lede m-hide">
             <b className="ink">{bbId ? meta.data?.buy_boxes.find((b) => b.id === bbId)?.name : "All buy boxes"}</b>, best first.
             Keys <span className="kbd">0</span>–<span className="kbd">5</span> to score, one key to decide.
           </div>
         </div>
       </div>
-      <div className="band">
+      <button className="btn m-only rv-mfilters" onClick={() => setMFilters(!mFilters)} aria-expanded={mFilters}>
+        {({ new: "Not reviewed", watching: "Watching", researching: "Assessing", approach: "Shortlisted" } as Record<string, string>)[status] ?? status}
+        {" · "}{bbId ? meta.data?.buy_boxes.find((b) => b.id === bbId)?.name : "Any buy box"}{minScore ? ` · score ${minScore}+` : ""} {mFilters ? "▴" : "▾"}
+      </button>
+      <div className={`band ${mFilters ? "" : "m-collapsed"}`}>
         <div className="field">
           <label htmlFor="rv-bb">Buy box</label>
           <select id="rv-bb" value={bb} className={bb ? "set" : ""} onChange={(e) => set("bb", e.target.value)}>
@@ -139,7 +147,14 @@ export default function Review() {
       )}
 
       {cur && (
-        <div className="review-grid">
+        <div className="review-grid"
+             onTouchStart={(e) => { touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
+             onTouchEnd={(e) => {
+               const t = touch.current; touch.current = null;
+               if (!t) return;
+               const dx = e.changedTouches[0].clientX - t.x, dy = e.changedTouches[0].clientY - t.y;
+               if (Math.abs(dx) > 90 && Math.abs(dy) < 50) setI((x) => Math.max(0, Math.min(rows.length, x + (dx < 0 ? 1 : -1))));
+             }}>
           <div>
             <section>
               <div className="crumb">{i + 1} of {rows.length}{done[cur.company_number] ? <> · <StatusMark s={done[cur.company_number]} /></> : null}</div>
@@ -204,6 +219,15 @@ export default function Review() {
               <div className="rv-nav"><span><span className="kbd">K</span> previous</span><span>skip <span className="kbd">J</span></span></div>
             </section>
           </aside>
+        </div>
+      )}
+      {cur && (
+        <div className="mbar" role="toolbar" aria-label="Decide">
+          <button className="btn primary" onClick={() => act("approach")}>Shortlist</button>
+          <button className="btn" onClick={() => act("watching")}>Watch</button>
+          <button className="btn" onClick={() => act("passed")}>Not now</button>
+          <button className="btn" style={{ color: "var(--red)" }} onClick={() => act("rejected")}>Not suitable</button>
+          <button className="btn" onClick={() => setI((x) => Math.min(x + 1, rows.length))}>Skip →</button>
         </div>
       )}
       <Toast msg={toast} onDone={() => setToast(null)} />

@@ -14,6 +14,7 @@ export default function Pipeline() {
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [mStage, setMStage] = useState<string | null>(null);
   const today = new Date().toISOString().slice(0, 10);
 
   if (error) return <ErrorLine error={error} />;
@@ -22,6 +23,8 @@ export default function Pipeline() {
   const due = rows.filter((r) => r.next_action_on && r.next_action_on <= today && !["passed", "rejected"].includes(r.status));
   const cols = data.statuses.filter((s) => s.phase !== "closed" && (phase === "all" || s.phase === phase));
   const closed = rows.filter((r) => ["passed", "rejected"].includes(r.status));
+  const mStageOf = mStage && cols.some((c) => c.value === mStage) ? mStage
+    : (cols.find((c) => rows.some((r) => r.status === c.value)) ?? cols[0])?.value;
 
   const move = async (num: string | null, to: Status) => {
     const row = rows.find((r) => r.company_number === num);
@@ -65,11 +68,20 @@ export default function Pipeline() {
       {rows.length === 0 ? (
         <div className="empty"><b>Nothing in your pipeline yet.</b> Open a company from <Link to="/companies">Companies</Link> or <Link to="/targets">Targets</Link> and move it to Watching or Assessing.</div>
       ) : (
+        <>
+        {/* Phones: one stage at a time, picked here */}
+        <div className="m-only mstages" role="tablist">
+          {cols.map((s) => {
+            const n = rows.filter((r) => r.status === s.value).length;
+            return <button key={s.value} role="tab" aria-selected={mStageOf === s.value} className={mStageOf === s.value ? "on" : ""}
+                           onClick={() => setMStage(s.value)}>{s.label} <b>{n}</b></button>;
+          })}
+        </div>
         <div className="board">
           {cols.map((s) => {
             const items = rows.filter((r) => r.status === s.value);
             return (
-              <div key={s.value} className={`col ${over === s.value ? "over" : ""}`}
+              <div key={s.value} className={`col ${over === s.value ? "over" : ""} ${mStageOf === s.value ? "" : "m-off"}`}
                    onDragOver={(e) => { e.preventDefault(); setOver(s.value); }} onDragLeave={() => setOver(null)}
                    onDrop={(e) => { e.preventDefault(); drop(s.value); }}>
                 <h3><span>{s.label}</span><span className="count">{items.length}</span></h3>
@@ -110,6 +122,7 @@ export default function Pipeline() {
             );
           })}
         </div>
+        </>
       )}
 
       {closed.length > 0 && (

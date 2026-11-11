@@ -85,6 +85,37 @@ function Side({ meta }: { meta: Meta | null }) {
   );
 }
 
+/** Phones only: a fixed bottom bar for the main pages, and a sheet with the rest. */
+function MobileNav({ meta }: { meta: Meta | null }) {
+  const [more, setMore] = useState(false);
+  const loc = useLocation();
+  useEffect(() => setMore(false), [loc.pathname]);
+  const c = meta?.counts;
+  const tab = (to: string, icon: string, label: string, count?: number | null) => (
+    <NavLink to={to} className="mtab"><Icon name={icon} /><span>{label}</span>{count ? <i className="mcount">{count > 99 ? "99+" : count}</i> : null}</NavLink>
+  );
+  const sheetItem = (to: string, icon: string, label: string) => <NavLink to={to} end={to === "/"} className="msheet-item"><Icon name={icon} />{label}</NavLink>;
+  return (
+    <>
+      <nav className="mnav" aria-label="Main (phone)">
+        {tab("/targets", "targets", "Targets")}
+        {tab("/review", "review", "Review")}
+        {tab("/pipeline", "pipeline", "Pipeline")}
+        {tab(c?.pipeline_new ? "/changes?tracked=1&unread=1" : "/changes", "changes", "Changes", c?.pipeline_new)}
+        <button className={`mtab ${more ? "active" : ""}`} onClick={() => setMore(!more)} aria-expanded={more}>
+          <svg viewBox="0 0 24 24" aria-hidden><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg><span>More</span></button>
+      </nav>
+      {more && <div className="msheet-back" onClick={() => setMore(false)}>
+        <div className="msheet" onClick={(e) => e.stopPropagation()}>
+          {sheetItem("/", "home", "Home")}{sheetItem("/companies", "companies", "Companies")}{sheetItem("/watch", "watch", "Watching")}
+          {sheetItem("/map", "map", "Map")}{sheetItem("/owners", "owners", "Owners")}{sheetItem("/connections", "connections", "Connections")}
+          {sheetItem("/reports", "reports", "Reports")}{sheetItem("/buy-box", "buybox", "Buy boxes")}{sheetItem("/import", "import", "Data")}
+          {sheetItem("/connect", "claude", "Connect Claude")}
+        </div></div>}
+    </>
+  );
+}
+
 function TopBar() {
   const nav = useNavigate();
   const ref = useRef<HTMLInputElement>(null);
@@ -163,6 +194,7 @@ function App() {
           </Routes>
         </main>
       </div>
+      <MobileNav meta={meta} />
     </div>
   );
 }

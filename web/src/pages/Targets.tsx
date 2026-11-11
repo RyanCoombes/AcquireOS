@@ -328,7 +328,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
         </div>
         <div className="right">
           <Link className="btn quiet" to={mapHref}>Show on map</Link>
-          <a className="btn" href={exportHref} title="Download this list, with your filters, as a spreadsheet (up to 50,000 rows)">Export this list</a>
+          <a className="btn m-hide" href={exportHref} title="Download this list, with your filters, as a spreadsheet (up to 50,000 rows)">Export this list</a>
         </div>
       </div>
 
@@ -469,7 +469,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
               {" "}<span className="fig-est" style={{ cursor: "default" }}>Amber underlined</span> = estimate.
             </span>
           </div>
-          <ColumnPicker mode={mode} shown={shownCols} onChange={setCols} />
+          <div className="m-hide"><ColumnPicker mode={mode} shown={shownCols} onChange={setCols} /></div>
           {sel.size > 0 && (
             <div className="selbar" role="region" aria-label="Ticked companies">
               <b>{int(sel.size)} ticked</b>
@@ -539,12 +539,12 @@ function TargetRow({ r, cols, cursor, onOpen, showBox, mode, sics, dim, href, ti
   const bad = isBadStatus(r.company_status);
   const recent = r.last_change && Date.now() - new Date(r.last_change).getTime() < 30 * 864e5;
   const scoreCell = (
-    <td title={showBox && r.box_name ? (r.boxes && r.boxes.length > 1 ? `In ${r.boxes.length} buy boxes: ${r.boxes.join(", ")}` : `Buy box: ${r.box_name}`) : undefined}>
+    <td className="c-score" title={showBox && r.box_name ? (r.boxes && r.boxes.length > 1 ? `In ${r.boxes.length} buy boxes: ${r.boxes.join(", ")}` : `Buy box: ${r.box_name}`) : undefined}>
       {r.score !== null && !dim ? <Score value={r.score} coverage={r.coverage} /> : <span className="faint">—</span>}
     </td>
   );
   const nameCell = (
-    <td>
+    <td className="c-name">
       <div className="name">
         <Link className="rowlink" to={href} onClick={(e) => e.stopPropagation()}>{r.name}</Link>
         {bad && <span className="tag red">{cap(r.company_status)}</span>}
@@ -564,6 +564,13 @@ function TargetRow({ r, cols, cursor, onOpen, showBox, mode, sics, dim, href, ti
         {r.accounts_overdue ? <span className="flag red">accounts overdue</span> : r.confirmation_overdue ? <span className="flag red">confirmation overdue</span> : null}
         {r.charges_outstanding ? <span className="flag">{r.charges_outstanding} charge{r.charges_outstanding === 1 ? "" : "s"}</span> : null}
         {" "}<Flags flags={r.flags} address={r.address_flag} />
+      </div>
+      {/* Phones: the key figures on one line under the name (the columns are hidden there) */}
+      <div className="m-only m-facts">
+        {r.employees != null ? <span><b>{int(r.employees)}</b> staff</span> : null}
+        {r.revenue_low != null ? <span><Fig v={range(r.revenue_low, r.revenue_high)} est={r.revenue_basis !== "filed"} /></span> : null}
+        {r.value_low != null ? <span>value <Fig v={range(r.value_low, r.value_high)} est={r.value_basis !== "filed"} /></span> : null}
+        {age ? <span>owner {age}</span> : null}
       </div>
     </td>
   );
