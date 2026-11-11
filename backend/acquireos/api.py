@@ -1647,6 +1647,53 @@ def company_logo(num: str):
         "X-Content-Type-Options": "nosniff"})
 
 
+class LogoIn(BaseModel):
+    action: str            # url | remove | refetch
+    url: str | None = None
+
+
+@app.get("/api/companies/{num}/logo/info")
+def company_logo_info(num: str):
+    num = num.strip().upper()
+    with db.conn() as c:
+        r = c.execute("""select l.status, l.source_url, l.manual, l.fetched_at, e.website
+                         from company co left join company_logo l using (company_number)
+                         left join enrichment e using (company_number) where co.company_number = %s""", (num,)).fetchone()
+    if not r:
+        raise HTTPException(404, "Company not found")
+    return r
+
+
+@app.post("/api/companies/{num}/logo")
+def set_company_logo(num: str, body: LogoIn):
+    """Your say on the logo: use the image at a URL, remove a wrong one (initials
+    instead), or look on the website again. Your choice is never replaced
+    automatically; "refetch" hands it back to the automatic finder."""
+    from . import logos
+    num = num.strip().upper()
+    if body.action == "url":
+        if not body.url:
+            raise HTTPException(400, "Give the address of the image")
+        try:
+            img = logos.from_url(body.url)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        with db.conn() as c:
+            logos.save(c, num, image=img, source_url=body.url.strip(), manual=True)
+        return {"status": "found", "message": "Logo saved."}
+    if body.action == "remove":
+        with db.conn() as c:
+            logos.save(c, num, image=None, source_url=None, manual=True)
+        return {"status": "none", "message": "Logo removed: initials will show."}
+    if body.action == "refetch":
+        with db.conn() as c:
+            c.execute("delete from company_logo where company_number = %s", (num,))
+        found = logos.fetch_and_store(num)
+        return {"status": "found" if found else "none",
+                "message": "Found a logo on the website." if found else "No usable logo on the website: initials will show."}
+    raise HTTPException(400, "action must be url, remove or refetch")
+
+
 @app.get("/api/website-check")
 def website_check_summary():
     """Totals so far: companies checked, confirmed sites, possible ones, none found."""

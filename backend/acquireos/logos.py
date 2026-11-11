@@ -86,8 +86,9 @@ def _svg_ok(data: bytes) -> bool:
     return "<svg" in head or ("<?xml" in head and "svg" in head)
 
 
-def normalise(data: bytes, content_type: str, url: str) -> dict | None:
-    """A small PNG (or the SVG as-is) if the image is usable, else None."""
+def normalise(data: bytes, content_type: str, url: str, chosen: bool = False) -> dict | None:
+    """A small PNG (or the SVG as-is) if the image is usable, else None. An
+    image you chose yourself may be any shape and as small as 16px."""
     if "svg" in content_type or url.lower().split("?")[0].endswith(".svg"):
         if not _svg_ok(data) or len(data) > 150_000:
             return None
@@ -101,9 +102,9 @@ def normalise(data: bytes, content_type: str, url: str) -> dict | None:
     except Exception:
         return None
     w, h = im.size
-    if min(w, h) < MIN_PX:
+    if min(w, h) < (16 if chosen else MIN_PX):
         return None
-    if max(w, h) / max(1, min(w, h)) > 2.5:  # a long wordmark: unreadable in a small square
+    if not chosen and max(w, h) / max(1, min(w, h)) > 2.5:  # a long wordmark: unreadable in a small square
         return None
     im = im.convert("RGBA")
     im.thumbnail((MAX_PX, MAX_PX))
@@ -132,15 +133,43 @@ def stored(conn, num: str) -> tuple[dict | None, bool]:
     """(the stored logo or None, whether it should be fetched). Fetch when the
     company has a website and it has not been tried, its website changed, or
     a try that found nothing is over RETRY_DAYS old."""
-    row = conn.execute("""select e.website as site, l.status, l.image, l.content_type, l.website,
+    row = conn.execute("""select e.website as site, l.status, l.image, l.content_type, l.website, l.manual,
                                  l.fetched_at < now() - make_interval(days => %s) as old
-                            from enrichment e left join company_logo l using (company_number)
-                           where e.company_number = %s""", (RETRY_DAYS, num)).fetchone()
+                            from company c left join enrichment e using (company_number)
+                            left join company_logo l using (company_number)
+                           where c.company_number = %s""", (RETRY_DAYS, num)).fetchone()
+    if row and row["manual"]:  # chosen or removed by you: left alone
+        return (row if row["status"] == "found" else None), False
     if not row or not row["site"]:
         return None, False
     if row["status"] and row["website"] == row["site"]:
         return (row if row["status"] == "found" else None), (row["status"] == "none" and row["old"])
     return None, True
+
+
+def save(conn, num: str, *, image: dict | None, source_url: str | None, manual: bool) -> None:
+    site = conn.execute("select website from enrichment where company_number = %s", (num,)).fetchone()
+    conn.execute("""insert into company_logo (company_number, website, status, image, content_type, source_url, width, manual, fetched_at)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, now())
+                    on conflict (company_number) do update set website = excluded.website, status = excluded.status,
+                        image = excluded.image, content_type = excluded.content_type, source_url = excluded.source_url,
+                        width = excluded.width, manual = excluded.manual, fetched_at = now()""",
+                 (num, (site and site["website"]) or "", "found" if image else "none", image and image["image"],
+                  image and image["content_type"], source_url, image and image["width"], manual))
+
+
+def from_url(url: str) -> dict:
+    """An image you point to: fetched and resized, or a ValueError saying why not."""
+    url = url.strip()
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    got = _get(url)
+    if not got:
+        raise ValueError("That address couldn't be downloaded (or the image is over 400 KB).")
+    img = normalise(got[0], got[1], url, chosen=True)
+    if not img:
+        raise ValueError("That address isn't an image that can be used (PNG, JPEG, WebP, GIF, ICO or SVG, at least 16px).")
+    return img
 
 
 def fetch_and_store(num: str) -> bool:
@@ -157,7 +186,8 @@ def fetch_and_store(num: str) -> bool:
                      values (%s, %s, %s, %s, %s, %s, %s, now())
                      on conflict (company_number) do update set website = excluded.website, status = excluded.status,
                          image = excluded.image, content_type = excluded.content_type, source_url = excluded.source_url,
-                         width = excluded.width, fetched_at = now()""",
+                         width = excluded.width, fetched_at = now()
+                     where not company_logo.manual""",
                   (num, site, "found" if found else "none", found and found["image"], found and found["content_type"],
                    found and found["source_url"], found and found["width"]))
     return bool(found)

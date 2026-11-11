@@ -279,6 +279,9 @@ export const api = {
   addOutreach: (body: Record<string, unknown>) => req<Outreach>("/api/outreach", { method: "POST", body: JSON.stringify(body) }),
   reports: () => req<Record<string, any>>("/api/reports"),
   fetchDetails: (n: string) => req<CompanyDetail["ch"]>(`/api/companies/${encodeURIComponent(n)}/fetch-details`, { method: "POST" }),
+  logoInfo: (n: string) => req<{ status: string | null; source_url: string | null; manual: boolean | null; fetched_at: string | null; website: string | null }>(`/api/companies/${encodeURIComponent(n)}/logo/info`),
+  setLogo: (n: string, body: { action: "url" | "remove" | "refetch"; url?: string }) =>
+    req<{ status: string; message: string }>(`/api/companies/${encodeURIComponent(n)}/logo`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   removeWebsite: (n: string) => req<{ removed: string | null }>(`/api/companies/${encodeURIComponent(n)}/website`, { method: "DELETE" }),
   findWebsite: (n: string, url?: string, save = false) =>
     req<{ results: { url: string; reachable: boolean; confidence: "high" | "medium" | "low" | null; evidence: string; page?: string; title?: string | null }[];

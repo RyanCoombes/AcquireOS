@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
-import { ErrorLine, Flags, Hint, Score, Signals, StatusMark, Toast, useAsync, WatchButton, Logo } from "../components/bits";
+import { ErrorLine, Flags, Hint, Score, Signals, StatusMark, Toast, useAsync, WatchButton, LogoEditor } from "../components/bits";
 import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
 import MyScores from "../components/MyScores";
@@ -134,7 +134,7 @@ export default function Company() {
             <a href="/companies" onClick={(e) => { if (window.history.length > 1) { e.preventDefault(); nav(-1); } }}>← Back</a> / {c.company_number}
             {chCheck && <span className="chcheck"> · {chCheck}</span>}
           </div>
-          <h1 className="coname has-logo"><Logo num={c.company_number} name={c.name} website={data.enrichment?.website} size={40} /><span>{c.name}</span></h1>
+          <h1 className="coname has-logo"><LogoEditor num={c.company_number} name={c.name} website={data.enrichment?.website} size={40} /><span>{c.name}</span></h1>
           {/* Two chips (company status, your stage); the rest as plain text. Region, accounts and ownership are in the profile. */}
           <div className="chips metaline">
             <span className={`chip ${isBadStatus(c.status) ? "red" : "green"}`}>{c.status ? cap(c.status) : "Status unknown"}{c.dissolution_date ? ` ${date(c.dissolution_date)}` : ""}</span>

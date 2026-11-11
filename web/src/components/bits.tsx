@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Status } from "../api";
+import { api, type Status } from "../api";
 import { FLAGS, toNum } from "../format";
 
 export const STATUS_LABEL: Record<Status, string> = {
@@ -156,15 +156,76 @@ const SUFFIX = /\b(LIMITED|LTD|PLC|LLP|THE|UK|GROUP|HOLDINGS?)\b\.?/gi;
 /** The company's logo from its own website (kept on the server), or coloured
  *  initials when it has none. A missing logo is fetched in the background, so
  *  it is asked for once more a few seconds later. */
-export function Logo({ num, name, website, size = 28 }: { num: string; name: string; website?: string | null; size?: number }) {
-  const [state, setState] = useState<"try" | "wait" | "retry" | "none">(website ? "try" : "none");
-  useEffect(() => { setState(website ? "try" : "none"); }, [num, website]);
+export function Logo({ num, name, website, size = 28, always, version }: { num: string; name: string; website?: string | null; size?: number;
+                       always?: boolean; version?: number }) {
+  const want = !!(website || always);
+  const [state, setState] = useState<"try" | "wait" | "retry" | "none">(want ? "try" : "none");
+  useEffect(() => { setState(want ? "try" : "none"); }, [num, website, want, version]);
   const words = name.replace(SUFFIX, "").trim().split(/\s+/).filter(Boolean);
   const initials = (words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? "?").slice(0, 2)).toUpperCase();
   let h = 0; for (const ch of num) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   const style = { width: size, height: size, fontSize: Math.round(size * 0.38) };
   if (state === "none" || state === "wait") return <span className="logo" aria-hidden style={{ ...style, background: LOGO_COLOURS[h % LOGO_COLOURS.length] }}>{initials}</span>;
-  const src = `/api/companies/${encodeURIComponent(num)}/logo?w=${encodeURIComponent(website ?? "")}${state === "retry" ? "&r=1" : ""}`;
+  const src = `/api/companies/${encodeURIComponent(num)}/logo?w=${encodeURIComponent(website ?? "")}${version ? `&v=${version}` : ""}${state === "retry" ? "&r=1" : ""}`;
   return <img className="logo img" src={src} alt="" style={style} loading="lazy"
-              onError={() => { if (state === "try") { setState("wait"); setTimeout(() => setState((s) => s === "wait" ? "retry" : s), 8000); } else setState("none"); }} />;
+              onError={() => { if (state === "try" && website) { setState("wait"); setTimeout(() => setState((s) => s === "wait" ? "retry" : s), 8000); } else setState("none"); }} />;
+}
+
+/** The company page's logo: click it to fix a wrong one (use initials, use an
+ *  image from a URL, or look on the website again). */
+export function LogoEditor({ num, name, website, size = 40 }: { num: string; name: string; website?: string | null; size?: number }) {
+  const [open, setOpen] = useState(false);
+  const [version, setVersion] = useState(0);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [info, setInfo] = useState<{ status: string | null; source_url: string | null; manual: boolean | null } | null>(null);
+  useEffect(() => { if (open) api.logoInfo(num).then(setInfo).catch(() => setInfo(null)); }, [open, num, version]);
+  useEffect(() => {
+    if (!open) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", esc); return () => window.removeEventListener("keydown", esc);
+  }, [open]);
+  const act = async (body: { action: "url" | "remove" | "refetch"; url?: string }) => {
+    setBusy(true); setMsg(null);
+    try { const r = await api.setLogo(num, body); setMsg(r.message); setVersion(Date.now()); if (body.action === "url") setUrl(""); }
+    catch (e: any) { setMsg(e.message); }
+    setBusy(false);
+  };
+  const from = info?.source_url ? info.source_url.replace(/^https?:\/\//, "") : null;
+  return (
+    <>
+      <button className="logo-btn" title="Logo: click to change or remove" aria-label="Change logo" onClick={() => setOpen(true)}>
+        <Logo num={num} name={name} website={website} size={size} always version={version} />
+      </button>
+      {open && (
+        <div className="lgx-back" onClick={() => setOpen(false)}>
+          <div className="lgx" role="dialog" aria-label="Logo" onClick={(e) => e.stopPropagation()}>
+            <div className="lgx-head">
+              <Logo num={num} name={name} website={website} size={64} always version={version} />
+              <div>
+                <b>Logo</b>
+                <div className="faint small">
+                  {info?.status === "found" ? <>{info.manual ? "Chosen by you" : "Found on the website"}{from ? <> · <a href={info.source_url!} target="_blank" rel="noreferrer">{from.length > 48 ? from.slice(0, 48) + "…" : from}</a></> : null}</>
+                    : info?.manual ? "Removed by you: initials show" : website ? "None found on the website: initials show" : "No website saved: initials show"}
+                </div>
+              </div>
+              <button className="lgx-x" aria-label="Close" onClick={() => setOpen(false)}>×</button>
+            </div>
+            <label className="small"><b>Use an image from a web address</b></label>
+            <div className="lgx-row">
+              <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Image address (right-click a logo, Copy image address)"
+                     onKeyDown={(e) => { if (e.key === "Enter" && url.trim()) act({ action: "url", url }); }} />
+              <button className="btn primary" disabled={busy || !url.trim()} onClick={() => act({ action: "url", url })}>Use</button>
+            </div>
+            <div className="lgx-row">
+              {info?.status === "found" && <button className="btn" disabled={busy} onClick={() => act({ action: "remove" })}>Wrong logo: use initials</button>}
+              {website && <button className="btn" disabled={busy} onClick={() => act({ action: "refetch" })}>{busy ? "Working…" : "Look on the website again"}</button>}
+            </div>
+            {msg && <div className="small" style={{ marginTop: 8 }}>{msg}</div>}
+          </div>
+        </div>
+      )}
+    </>
+  );
 }

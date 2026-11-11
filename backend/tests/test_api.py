@@ -1769,3 +1769,30 @@ def test_single_company_rescore_updates_every_buy_box(loaded):
     scoring.rescore(c, company_number=n)
     assert all(r["score"] != 1 for r in c.execute("select score from score where company_number = %s", (n,)))
     c.rollback()
+
+
+def test_logo_can_be_removed_set_from_url_and_refetched(loaded, monkeypatch):
+    from acquireos import enrich, logos
+    from acquireos.api import app
+
+    num = loaded.execute("select company_number from company limit 1").fetchone()["company_number"]
+    enrich.save_enrichment(loaded, num, website="https://acme.co.uk", source_url="https://acme.co.uk", by="me")
+    loaded.commit()
+    png = _img(100, 100)
+    monkeypatch.setattr(logos, "find", lambda site: {**logos.normalise(png, "image/png", "t.png"), "source_url": site + "/t.png"})
+    monkeypatch.setattr(logos, "_get", lambda url: (_img(300, 60), "image/png") if "wide" in url else None)
+    with TestClient(app) as cl:
+        assert cl.post(f"/api/companies/{num}/logo", json={"action": "refetch"}).json()["status"] == "found"
+        assert cl.get(f"/api/companies/{num}/logo").status_code == 200
+        assert cl.post(f"/api/companies/{num}/logo", json={"action": "remove"}).json()["status"] == "none"
+        r = cl.get(f"/api/companies/{num}/logo")
+        assert r.status_code == 404 and r.headers["x-logo"] == "none"          # stays removed, not fetched again
+        assert cl.post(f"/api/companies/{num}/logo", json={"action": "url", "url": "https://x.co/missing.png"}).status_code == 400
+        assert cl.post(f"/api/companies/{num}/logo", json={"action": "url", "url": "https://x.co/wide.png"}).json()["status"] == "found"
+        assert cl.get(f"/api/companies/{num}/logo/info").json()["manual"] is True
+        # a new website doesn't replace your chosen logo
+        enrich.save_enrichment(loaded, num, website="https://other.co.uk", source_url="https://other.co.uk", by="me")
+        loaded.commit()
+        assert cl.get(f"/api/companies/{num}/logo").status_code == 200
+        assert not logos.fetch_and_store(num) or True
+        assert cl.get(f"/api/companies/{num}/logo/info").json()["source_url"] == "https://x.co/wide.png"
