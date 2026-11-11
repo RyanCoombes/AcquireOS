@@ -1628,7 +1628,7 @@ def remove_website(num: str):
 
 
 @app.get("/api/companies/{num}/logo")
-def company_logo(num: str):
+def company_logo(num: str, request: Request):
     """The company's logo, taken from its own website and kept here. 404 when
     there is none (yet): a missing one is fetched in the background, so ask
     again shortly."""
@@ -1640,8 +1640,13 @@ def company_logo(num: str):
         logos.request(num)
     if not row:
         return Response(status_code=404, headers={"Cache-Control": "no-store", "X-Logo": "pending" if fetch else "none"})
+    # The browser keeps a copy but asks each time whether it's still current (a
+    # tiny "not modified" reply when it is), so a logo you change shows at once.
+    etag = f'"{int(row["fetched_at"].timestamp())}-{len(row["image"])}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "private, no-cache"})
     return Response(bytes(row["image"]), media_type=row["content_type"], headers={
-        "Cache-Control": "private, max-age=604800",
+        "Cache-Control": "private, no-cache", "ETag": etag,
         # SVGs come from other people's websites: never let one run anything
         "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
         "X-Content-Type-Options": "nosniff"})

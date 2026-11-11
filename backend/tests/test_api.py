@@ -1790,6 +1790,9 @@ def test_logo_can_be_removed_set_from_url_and_refetched(loaded, monkeypatch):
         assert cl.post(f"/api/companies/{num}/logo", json={"action": "url", "url": "https://x.co/missing.png"}).status_code == 400
         assert cl.post(f"/api/companies/{num}/logo", json={"action": "url", "url": "https://x.co/wide.png"}).json()["status"] == "found"
         assert cl.get(f"/api/companies/{num}/logo/info").json()["manual"] is True
+        r = cl.get(f"/api/companies/{num}/logo")
+        assert "no-cache" in r.headers["cache-control"] and r.headers["etag"]       # the browser checks every time
+        assert cl.get(f"/api/companies/{num}/logo", headers={"If-None-Match": r.headers["etag"]}).status_code == 304
         # a new website doesn't replace your chosen logo
         enrich.save_enrichment(loaded, num, website="https://other.co.uk", source_url="https://other.co.uk", by="me")
         loaded.commit()

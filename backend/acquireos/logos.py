@@ -133,7 +133,7 @@ def stored(conn, num: str) -> tuple[dict | None, bool]:
     """(the stored logo or None, whether it should be fetched). Fetch when the
     company has a website and it has not been tried, its website changed, or
     a try that found nothing is over RETRY_DAYS old."""
-    row = conn.execute("""select e.website as site, l.status, l.image, l.content_type, l.website, l.manual,
+    row = conn.execute("""select e.website as site, l.status, l.image, l.content_type, l.website, l.manual, l.fetched_at,
                                  l.fetched_at < now() - make_interval(days => %s) as old
                             from company c left join enrichment e using (company_number)
                             left join company_logo l using (company_number)
