@@ -1551,3 +1551,10 @@ section.oneline { padding-top: 10px; padding-bottom: 10px; } section.oneline .se
   /* Company page: section tabs stay at the top */
   .secnav { position: sticky; top: 0; z-index: 30; overflow-x: auto; flex-wrap: nowrap; }
 }
+
+/* Company logos (from the company's own website) or coloured initials */
+.logo { display: inline-grid; place-items: center; flex: none; border-radius: 7px; color: #fff; font-weight: 800; letter-spacing: .02em; line-height: 1; }
+.logo.img { background: #fff; object-fit: contain; border: 1px solid var(--line); padding: 2px; }
+.has-logo { display: flex; align-items: center; gap: 9px; }
+.has-logo > :not(.logo) { min-width: 0; }
+h1.has-logo { gap: 12px; }

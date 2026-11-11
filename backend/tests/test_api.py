@@ -1606,3 +1606,62 @@ def test_claude_can_change_buy_box_settings(loaded):
     bb = _j.loads(m.get_buy_box())
     assert bb["criteria"]["exclude"]["sic_rules"][0]["unless"] == ["62", "63"] and bb["criteria"]["staff"]["min"] == 5
     assert bb["criteria"]["exclude"]["keywords"]   # other settings kept
+
+
+def _img(w, h, fmt="PNG", sizes=None):
+    import io
+    from PIL import Image
+    b = io.BytesIO()
+    im = Image.new("RGBA", (w, h), (20, 120, 100, 255))
+    im.save(b, fmt, **({"sizes": sizes} if sizes else {}))
+    return b.getvalue()
+
+
+def test_logo_candidates_and_sizes():
+    from acquireos import logos
+
+    html = ('<link rel="icon" href="/fav-16.png" sizes="16x16"><link rel="apple-touch-icon" href="/touch.png" sizes="180x180">'
+            '<header><img class="site-logo" src="img/logo.png" alt="Acme"></header><link rel="mask-icon" href="/m.svg">')
+    got = logos.candidates("https://acme.co.uk/home", html)
+    assert got[:3] == ["https://acme.co.uk/touch.png", "https://acme.co.uk/img/logo.png", "https://acme.co.uk/fav-16.png"]
+    assert "https://acme.co.uk/m.svg" not in got and got[-1] == "https://acme.co.uk/favicon.ico"
+    assert logos.normalise(_img(16, 16), "image/png", "x.png") is None          # too small: initials instead
+    assert logos.normalise(_img(400, 80), "image/png", "x.png") is None         # long wordmark
+    ok = logos.normalise(_img(180, 180), "image/png", "x.png")
+    assert ok["content_type"] == "image/png" and ok["width"] == logos.MAX_PX
+    ico = logos.normalise(_img(64, 64, "ICO", [(16, 16), (48, 48), (64, 64)]), "image/x-icon", "favicon.ico")
+    assert ico and ico["width"] == 64
+    assert logos.normalise(b"<svg xmlns='http://www.w3.org/2000/svg'/>", "image/svg+xml", "l.svg")["content_type"] == "image/svg+xml"
+    assert logos.normalise(b"not an image", "image/png", "x.png") is None
+
+
+def test_logo_endpoint_fetches_in_background_and_serves(loaded, monkeypatch):
+    from acquireos import enrich, logos
+    from acquireos.api import app
+
+    num = loaded.execute("select company_number from company limit 1").fetchone()["company_number"]
+    loaded.commit()
+    with TestClient(app) as cl:
+        r = cl.get(f"/api/companies/{num}/logo")
+        assert r.status_code == 404 and r.headers["x-logo"] == "none"    # no website: nothing to fetch
+        enrich.save_enrichment(loaded, num, website="https://acme.co.uk", source_url="https://acme.co.uk", by="me")
+        loaded.commit()
+        calls = []
+        monkeypatch.setattr(logos, "request", lambda n: calls.append(n))
+        r = cl.get(f"/api/companies/{num}/logo")
+        assert r.status_code == 404 and r.headers["x-logo"] == "pending" and calls == [num]
+        png = _img(100, 100)
+        monkeypatch.setattr(logos, "find", lambda site: {**logos.normalise(png, "image/png", "t.png"), "source_url": site + "/t.png"})
+        assert logos.fetch_and_store(num)
+        r = cl.get(f"/api/companies/{num}/logo")
+        assert r.status_code == 200 and r.headers["content-type"] == "image/png" and "sandbox" in r.headers["content-security-policy"]
+        # a different website means the old logo no longer applies
+        enrich.save_enrichment(loaded, num, website="https://other.co.uk", source_url="https://other.co.uk", by="me")
+        loaded.commit()
+        r = cl.get(f"/api/companies/{num}/logo")
+        assert r.status_code == 404 and r.headers["x-logo"] == "pending"
+        # nothing usable found: not asked for again straight away
+        monkeypatch.setattr(logos, "find", lambda site: None)
+        assert not logos.fetch_and_store(num)
+        r = cl.get(f"/api/companies/{num}/logo")
+        assert r.status_code == 404 and r.headers["x-logo"] == "none"

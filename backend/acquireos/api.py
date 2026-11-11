@@ -1629,6 +1629,26 @@ def remove_website(num: str):
     return {"removed": cur["website"]}
 
 
+@app.get("/api/companies/{num}/logo")
+def company_logo(num: str):
+    """The company's logo, taken from its own website and kept here. 404 when
+    there is none (yet): a missing one is fetched in the background, so ask
+    again shortly."""
+    from . import logos
+    num = num.strip().upper()
+    with db.conn() as c:
+        row, fetch = logos.stored(c, num)
+    if fetch:
+        logos.request(num)
+    if not row:
+        return Response(status_code=404, headers={"Cache-Control": "no-store", "X-Logo": "pending" if fetch else "none"})
+    return Response(bytes(row["image"]), media_type=row["content_type"], headers={
+        "Cache-Control": "private, max-age=604800",
+        # SVGs come from other people's websites: never let one run anything
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        "X-Content-Type-Options": "nosniff"})
+
+
 @app.get("/api/website-check")
 def website_check_summary():
     """Totals so far: companies checked, confirmed sites, possible ones, none found."""

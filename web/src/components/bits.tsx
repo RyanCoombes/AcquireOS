@@ -150,3 +150,21 @@ export function WatchButton({ kind, refId, on, label, onChange, small }: { kind:
 export function Hint({ text }: { text: string }) {
   return <span className="hint" tabIndex={0} role="note" aria-label={text} data-tip={text}>ⓘ</span>;
 }
+
+const LOGO_COLOURS = ["#3b6fd9", "#2b8a9a", "#c2702a", "#7a4fd6", "#1e9a57", "#8b4c7a", "#4b6584", "#b5543c"];
+const SUFFIX = /\b(LIMITED|LTD|PLC|LLP|THE|UK|GROUP|HOLDINGS?)\b\.?/gi;
+/** The company's logo from its own website (kept on the server), or coloured
+ *  initials when it has none. A missing logo is fetched in the background, so
+ *  it is asked for once more a few seconds later. */
+export function Logo({ num, name, website, size = 28 }: { num: string; name: string; website?: string | null; size?: number }) {
+  const [state, setState] = useState<"try" | "wait" | "retry" | "none">(website ? "try" : "none");
+  useEffect(() => { setState(website ? "try" : "none"); }, [num, website]);
+  const words = name.replace(SUFFIX, "").trim().split(/\s+/).filter(Boolean);
+  const initials = (words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? "?").slice(0, 2)).toUpperCase();
+  let h = 0; for (const ch of num) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const style = { width: size, height: size, fontSize: Math.round(size * 0.38) };
+  if (state === "none" || state === "wait") return <span className="logo" aria-hidden style={{ ...style, background: LOGO_COLOURS[h % LOGO_COLOURS.length] }}>{initials}</span>;
+  const src = `/api/companies/${encodeURIComponent(num)}/logo?w=${encodeURIComponent(website ?? "")}${state === "retry" ? "&r=1" : ""}`;
+  return <img className="logo img" src={src} alt="" style={style} loading="lazy"
+              onError={() => { if (state === "try") { setState("wait"); setTimeout(() => setState((s) => s === "wait" ? "retry" : s), 8000); } else setState("none"); }} />;
+}

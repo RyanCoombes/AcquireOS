@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type Status } from "../api";
-import { ErrorLine, Score, StatusMark, Toast, useAsync } from "../components/bits";
+import { ErrorLine, Score, StatusMark, Toast, useAsync, Logo } from "../components/bits";
 import { date, int, range } from "../format";
 
 const daysSince = (v: string | null) => v ? Math.max(0, Math.floor((Date.now() - new Date(v).getTime()) / 864e5)) : null;
@@ -96,7 +96,7 @@ export default function Pipeline() {
                       {r.website && <a className="card-web" href={r.website} target="_blank" rel="noreferrer" draggable={false}
                                        title={`Website: ${r.website.replace(/^https?:\/\/(www\.)?/, "")}`} aria-label={`${r.name} website`}
                                        onClick={(e) => e.stopPropagation()}>↗</a>}
-                      <div className="name"><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div>
+                      <div className="name has-logo"><Logo num={r.company_number} name={r.name} website={r.website} size={26} /><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div>
                       <div className="meta">
                         <Score value={r.score} />
                         <span>{r.value_low ? range(r.value_low, r.value_high) : ""}</span>
