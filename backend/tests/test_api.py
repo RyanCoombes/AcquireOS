@@ -1593,3 +1593,16 @@ def test_sic_exclusion_rules_with_exceptions():
     assert scoring.score_company(op, rule)["exclusion"] == "Industry left out: 61200 (no 62 or 63 code)"
     assert not scoring.score_company(sw, rule)["excluded"]
     assert not scoring.score_company(tel, rule)["excluded"]
+
+
+def test_claude_can_change_buy_box_settings(loaded):
+    import json as _j
+
+    from acquireos import mcp_server as m
+
+    loaded.commit()
+    r = _j.loads(m.update_buy_box({"exclude": {"sic_rules": [{"codes": ["61200"], "unless": ["62", "63"]}]}, "staff": {"min": 5}}))
+    assert any(x.startswith("exclude.sic_rules") for x in r["changed"]) and any(x.startswith("staff.min") for x in r["changed"])
+    bb = _j.loads(m.get_buy_box())
+    assert bb["criteria"]["exclude"]["sic_rules"][0]["unless"] == ["62", "63"] and bb["criteria"]["staff"]["min"] == 5
+    assert bb["criteria"]["exclude"]["keywords"]   # other settings kept

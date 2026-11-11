@@ -450,6 +450,52 @@ def list_buy_boxes() -> str:
     return _j(_api().buyboxes())
 
 
+@server.tool(description=(
+    "Every setting of one buy box (id from list_buy_boxes; omit for the active one): universe (who counts: "
+    "sic_prefixes, name_keywords, keyword_sic_prefixes, postcode_areas, min_years, include_parents), exclude (leave out: "
+    "keywords, ownership, accounts_types, recently_sold, possible_buyer, address_flags, regions, tiers, sic_prefixes, "
+    "sic_all, sic_rules [{codes, unless}]), the scored criteria with weights and ranges (staff, revenue, years_trading, "
+    "owner_age, ownership, net_asset_growth, sic...) and valuation settings. Read this before update_buy_box."))
+def get_buy_box(buy_box: int | None = None) -> str:
+    return _j(_api().get_buybox(buy_box))
+
+
+def _deep_merge(base: dict, changes: dict) -> dict:
+    out = dict(base)
+    for k, v in (changes or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+@server.tool(description=(
+    "Change a buy box's settings, ONLY when the user asks. changes holds just the settings to change, nested as in "
+    "get_buy_box, e.g. {\"exclude\": {\"sic_rules\": [{\"codes\": [\"61200\"], \"unless\": [\"62\", \"63\"]}]}} or "
+    "{\"staff\": {\"min\": 5}}; everything else is kept. Lists are replaced, not added to, so send the whole list. "
+    "name renames it. The box is rescored (in the background on a large database). Tell the user exactly what you changed."))
+def update_buy_box(changes: dict, buy_box: int | None = None, name: str | None = None) -> str:
+    api = _api()
+    cur = api.get_buybox(buy_box)
+    before = cur["criteria"]
+    after = _deep_merge(before, changes or {})
+    r = api.put_buybox(api.BuyBoxIn(name=name, criteria=after), cur["id"])
+
+    def diff(a, b, path=""):
+        out = []
+        for k in sorted(set(a) | set(b)):
+            x, y = a.get(k), b.get(k)
+            if isinstance(x, dict) and isinstance(y, dict):
+                out += diff(x, y, f"{path}{k}.")
+            elif x != y:
+                out.append(f"{path}{k}: {json.dumps(x, default=str)} -> {json.dumps(y, default=str)}")
+        return out
+
+    return _j({"buy_box": cur["id"], "name": name or cur["name"], "changed": diff(before, r["criteria"]),
+               "rescoring": "in the background" if r.get("background") else f"done, {r.get('rescored')} companies"})
+
+
 @server.tool(description="Set the user's own 0-5 score for one of their criteria on a company (see get_company -> "
                          "manual.criteria for the keys). Only when the user asks you to; value null clears it.")
 def set_my_score(company_number: str, criterion_key: str, value: int | None, note: str | None = None) -> str:
