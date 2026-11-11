@@ -89,7 +89,7 @@ _SPLIT = {"Creditors": {"WithinOneYear": "creditors_within", "AfterOneYear": "cr
 # Text kept as well as figures.
 TEXT_CONCEPTS = {"principal_activity": ["DescriptionPrincipalActivities", "PrincipalActivities", "DescriptionPrincipalActivity"]}
 # Bumped when new figures are read, so months read earlier can be read again.
-LOADER_VERSION = 4  # 4: a year's own accounts win over later comparatives
+LOADER_VERSION = 5  # 4: a year's own accounts win over later comparatives; 5: staff given only by category added up
 _LOCAL_TO_FIELD = {local: (field, rank) for field, names in CONCEPTS.items() for rank, local in enumerate(names)}
 _WANTED_LOCALS = set(_LOCAL_TO_FIELD) | set(_SPLIT)
 
@@ -221,6 +221,31 @@ def _context(raw: bytes, low: bytes, cid: str):
         pos = i + len(needle)
 
 
+_DIM_MEMBER_B = re.compile(rb'<(?:\w+:)?explicitMember\b[^>]*\bdimension="[\w.-]*:?(\w+)"[^>]*>\s*[\w.-]*:?(\w+)\s*<', re.I)
+
+
+def _breakdown_context(raw: bytes, low: bytes, cid: str):
+    """(period end, axis, member) for a context broken down by exactly one
+    member (e.g. staff by category), else None."""
+    needle = b'id="' + cid.encode() + b'"'
+    i = raw.find(needle)
+    while i != -1:
+        lt = raw.rfind(b"<", 0, i)
+        if b"context" in low[lt:i].split(b" ", 1)[0]:
+            close = low.find(b"context>", i)
+            body = raw[i:close] if close != -1 else raw[i:i + 4000]
+            members = _DIM_MEMBER_B.findall(body)
+            ends = _END_B.findall(body)
+            if len(members) != 1 or not ends:
+                return None
+            try:
+                return date.fromisoformat(ends[-1].decode()), members[0][0].decode(), members[0][1].decode()
+            except ValueError:
+                return None
+        i = raw.find(needle, i + len(needle))
+    return None
+
+
 def parse(content: str | bytes) -> dict[date, dict[str, float]]:
     """Return {period_end: {field: value}} for the plain (undimensioned)
     contexts in one set of accounts. Accepts text or raw bytes."""
@@ -229,6 +254,7 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
     low = raw.lower()
     facts = _facts_fast(raw, low)
     split: dict[date, dict[str, dict[tuple[str, str], float]]] = {}
+    emp_split: dict[date, dict[str, dict[str, float]]] = {}  # period -> axis -> member -> staff
     if facts:
         contexts: dict[str, tuple] = {}
 
@@ -242,6 +268,13 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
             local = attrs.get("name", "").split(":")[-1]
             d, member = ctx(attrs.get("contextRef", ""))
             if d is None:
+                # Staff given only by category (larger companies' accounts): kept to add up below.
+                if _LOCAL_TO_FIELD.get(local, ("",))[0] == "employees":
+                    b = _breakdown_context(raw, low, attrs.get("contextRef", ""))
+                    v = _number(_TAG_B.sub(b"", val_b).decode("utf-8", "replace"),
+                                {k: x for k, x in attrs.items() if k != "scale"}) if b else None
+                    if v is not None and v >= 0:
+                        emp_split.setdefault(b[0], {}).setdefault(b[1], {})[b[2]] = v
                 continue
             if member:
                 field = _SPLIT.get(local, {}).get(member)
@@ -265,6 +298,13 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
             slot = found.setdefault(d, {})
             if field not in slot or rank < slot[field][0]:
                 slot[field] = (rank, v)
+        # Staff by category, where there is no plain total: add up one breakdown
+        # (the one with most categories; never two breakdowns added together).
+        for d, axes in emp_split.items():
+            slot = found.setdefault(d, {})
+            parts = max(axes.values(), key=len)
+            if "employees" not in slot and len(parts) >= 2:
+                slot["employees"] = (98, sum(parts.values()))
         # Maturity breakdowns, where there is no plain total.
         for d, fields in split.items():
             slot = found.setdefault(d, {})
@@ -398,7 +438,9 @@ ALL_FIELDS = FIELDS + TEXT_FIELDS
 # - a later filing's comparative column never blanks or zeroes a figure the year
 #   already has (small companies' comparatives often have no P&L, and "-" reads as 0);
 # - a real, non-zero restated comparative still replaces a filed figure (restatements
-#   correct errors), but never figures saved by you or Claude (source manual / pdf:claude).
+#   correct errors), but never figures saved by you or Claude (source manual / pdf:claude);
+# - figures saved by you or Claude are never replaced by any import, even the
+#   year's own accounts read again: an import only fills their blanks.
 _OWN_NEW = "(excluded.source_balance_date - excluded.period_end) <= 45"
 _OWN_OLD = "(fp.source_balance_date is not null and (fp.source_balance_date - fp.period_end) <= 45 and not fp.period_inferred)"
 _KEEP = f"(not {_OWN_NEW} and {_OWN_OLD})"   # a comparative arriving on top of a year's own figures
@@ -513,20 +555,30 @@ CHECK_STAFF_SQL = """
 # A staff count more than five times off both the year before and the year
 # after (and at least 10 people off), e.g. 100 between 1 and 2, or 1 between
 # 900 and 950: a typo in a later filing's comparative column, or a misread.
+# For the latest year (no year after): a fall to under a fifth of the year
+# before while turnover holds up, e.g. 73 then 1 on similar sales.
 # Cleared (kept in staff_year_cleared with the old value) and read again from
 # the year's own filing. Figures saved by you or Claude are never touched.
 OUTLIER_STAFF_SQL = """
     with s as (
-      select company_number, period_end, employees as v, source,
-             lag(employees) over w as prev, lead(employees) over w as next
+      select company_number, period_end, employees as v, source, turnover as t,
+             lag(employees) over w as prev, lead(employees) over w as next, lag(turnover) over w as prev_t
         from financial_period
        where employees is not null and not period_inferred {only}
       window w as (partition by company_number order by period_end))
     select company_number, period_end, v from s
-     where prev is not null and next is not null
-       and coalesce(source, '') not in ('manual', 'pdf:claude') and coalesce(source, '') not like 'manual%%'
-       and ((v >= 5 * greatest(prev, next) and v - greatest(prev, next) >= 10)
-         or (5 * v <= least(prev, next) and least(prev, next) - v >= 10))"""
+     where coalesce(source, '') not in ('manual', 'pdf:claude') and coalesce(source, '') not like 'manual%%'
+       and (
+         -- between two years: over five times off both
+         (prev is not null and next is not null
+          and ((v >= 5 * greatest(prev, next) and v - greatest(prev, next) >= 10)
+            or (5 * v <= least(prev, next) and least(prev, next) - v >= 10)))
+         -- the latest year: a fall to under a fifth while turnover holds up (at least half)
+         or (next is null and prev is not null and 5 * v <= prev and prev - v >= 10
+             and t is not null and prev_t is not null and prev_t > 0 and t >= 0.5 * prev_t))"""
+
+
+BLANK_STAFF_LIMIT = 3000  # per run: each is one or two Companies House requests
 
 
 def staff_outliers(conn, numbers: list[str] | None = None) -> list[dict]:
@@ -565,15 +617,31 @@ def fix_year_staff(conn) -> dict:
                            where fp.employees is null""").fetchall()
     check = conn.execute(f"select company_number, period_end, employees from financial_period where {CHECK_STAFF_SQL}").fetchall()
     nums = sorted({r["company_number"] for r in rows} | {r["company_number"] for r in todo} | {r["company_number"] for r in check})
-    if not nums:
-        return {"years": 0, "companies": 0}
     # Years read from a PDF: read again with the fixed reader (it only fills gaps).
     requeued = conn.execute("""delete from pdf_read r using (select unnest(%s::text[]) n, unnest(%s::date[]) p) x
                                where r.company_number = x.n and abs(r.made_up - x.p) <= 45
                                  and r.status = 'done' and r.method in ('text', 'ocr')""",
                             ([r["company_number"] for r in rows], [r["period_end"] for r in rows])).rowcount
+    # Latest years with no staff figure at all, at companies in a buy box: read the
+    # filing once (larger companies often give staff only by category).
+    blank = conn.execute("""select l.company_number, l.period_end from company_latest l
+                            join financial_period fp using (company_number, period_end)
+                            where l.employees is null and fp.employees is null
+                              and coalesce(fp.source, '') not like 'pdf%%' and coalesce(fp.source, '') not like 'manual%%'
+                              and exists (select 1 from score s where s.company_number = l.company_number and not s.excluded)
+                              and not exists (select 1 from staff_blank_tried t
+                                              where t.company_number = l.company_number and t.period_end = l.period_end)
+                            order by l.turnover desc nulls last limit %s""", (BLANK_STAFF_LIMIT,)).fetchall()
+    if blank:
+        conn.execute("""insert into staff_blank_tried (company_number, period_end)
+                        select unnest(%s::text[]), unnest(%s::date[]) on conflict do nothing""",
+                     ([r["company_number"] for r in blank], [r["period_end"] for r in blank]))
+    filled = _reread_staff(conn, blank) if blank else {"data_years_reread": 0}
     reread = _reread_staff(conn, todo)
     checked = _reread_staff(conn, check, replace=True)
+    nums = sorted(set(nums) | {r["company_number"] for r in blank})
+    if not nums:
+        return {"years": 0, "companies": 0, "outliers": 0, "blank_filled": 0}
     conn.execute("drop table if exists staff_fix")
     conn.execute("create temp table staff_fix (company_number text)")
     conn.execute("insert into staff_fix select unnest(%s::text[])", (nums,))
@@ -583,7 +651,8 @@ def fix_year_staff(conn) -> dict:
     for n in nums:
         scoring.rescore(conn, company_number=n)
     conn.commit()
-    return {"years": len(rows), "companies": len({r["company_number"] for r in rows}), "outliers": len(out), "pdf_years_requeued": requeued,
+    return {"years": len(rows), "companies": len({r["company_number"] for r in rows}), "outliers": len(out), "blank_tried": len(blank),
+            "blank_filled": filled.get("data_years_reread", 0), "pdf_years_requeued": requeued,
             **reread, "large_checked": len(check), "large_corrected": checked.get("data_years_reread", 0)}
 
 
@@ -596,17 +665,19 @@ def _merge_sql(cols) -> str:
             # Staff counts are never restated in practice, but next year's comparative
             # column often has a typo: the year's own accounts always win.
             return (f"{c} = case when {_SAVING} then coalesce(excluded.{c}, fp.{c}) "
+                    f"when {_SAVED} then coalesce(fp.{c}, excluded.{c}) "
                     f"when {_KEEP} then coalesce(fp.{c}, excluded.{c}) "
                     f"when {_FILL} and not {_SAVED} then coalesce(excluded.{c}, fp.{c}) "
                     f"else coalesce(excluded.{c}, fp.{c}) end")
         return (f"{c} = case when {_SAVING} then coalesce(excluded.{c}, fp.{c}) "
-                f"when {_KEEP} and ({_SAVED} or {blank}) then coalesce(fp.{c}, excluded.{c}) "
+                f"when {_SAVED} then coalesce(fp.{c}, excluded.{c}) "   # yours or Claude's: an import only fills blanks
+                f"when {_KEEP} and {blank} then coalesce(fp.{c}, excluded.{c}) "
                 f"when {_FILL} then case when {fblank} then coalesce(excluded.{c}, fp.{c}) else fp.{c} end "
                 f"else coalesce(excluded.{c}, fp.{c}) end")
     sets = ", ".join(one(c) for c in cols)
     return f"""period_inferred = false,
-                source = case when ({_KEEP} or {_FILL}) and not {_SAVING} then fp.source else excluded.source end,
-                source_balance_date = case when ({_KEEP} or {_FILL}) and not {_SAVING} then fp.source_balance_date else excluded.source_balance_date end,
+                source = case when ({_KEEP} or {_FILL} or {_SAVED}) and not {_SAVING} then fp.source else excluded.source end,
+                source_balance_date = case when ({_KEEP} or {_FILL} or {_SAVED}) and not {_SAVING} then fp.source_balance_date else excluded.source_balance_date end,
                 {sets}
             where fp.period_inferred or fp.source_balance_date is null or {_OWN_NEW}
                or {_KEEP} or excluded.source_balance_date >= fp.source_balance_date"""

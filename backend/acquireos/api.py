@@ -581,18 +581,14 @@ def _count_all() -> int:
 
 
 def _score_join(c, bb: str):
-    """(join SQL aliased s, "in the box" condition, buy box id) for bb = 'all',
-    'active' or an id. For 'all', s is each company's best score across boxes."""
-    if bb == "all":
+    """(join SQL aliased s, "in the box" condition, buy box id) for bb = 'all'
+    or an id. For 'all' (or an unknown id), s is each company's best score across boxes."""
+    if not bb.isdigit() or not c.execute("select 1 from buy_box where id = %s and user_id = %s", (int(bb), UID)).fetchone():
         return ("""left join (select cb.company_number, cb.score, cb.coverage, cb.value_low, cb.value_high,
                                     cb.value_basis, cb.box_name, cb.boxes, null::text as exclusion
                              from company_best cb) s on s.company_number = c.company_number""",
                 "s.company_number is not null", None, None)
-    box = None
-    if bb.isdigit():
-        box = c.execute("select id, name from buy_box where id = %s and user_id = %s", (int(bb), UID)).fetchone()
-    if not box:
-        box = scoring.active_buy_box(c)
+    box = c.execute("select id, name from buy_box where id = %s and user_id = %s", (int(bb), UID)).fetchone()
     return (f"""left join (select sc.*, %(bbname)s::text as box_name, null::text[] as boxes from score sc
                            where sc.buy_box_id = {int(box['id'])}) s on s.company_number = c.company_number""",
             "s.excluded = false", box["id"], box["name"])
@@ -1035,12 +1031,14 @@ def dashboard(bb: str = "all"):
 def _scope(c, which: str):
     """(SQL for the scored companies in scope aliased d, params, buy box name).
     Reads company_best or score directly, through their indexes; no copy."""
-    active = scoring.active_buy_box(c)
     if which == "all":
         return ("(select company_number, score, coverage, value_low, value_high, box_name as box from company_best) d",
                 {}, "All buy boxes")
-    bid = int(which) if which.isdigit() else active["id"]
-    row = c.execute("select id, name from buy_box where id = %s and user_id = %s", (bid, UID)).fetchone() or active
+    bid = int(which) if which.isdigit() else None
+    row = c.execute("select id, name from buy_box where id = %s and user_id = %s", (bid, UID)).fetchone() if bid else None
+    if not row:  # no (or an unknown) box chosen: all of them
+        return ("(select company_number, score, coverage, value_low, value_high, box_name as box from company_best) d",
+                {}, "All buy boxes")
     return ("""(select s.company_number, s.score, s.coverage, s.value_low, s.value_high, %(bbname)s::text as box
                 from score s where s.buy_box_id = %(bbid)s and not s.excluded) d""",
             {"bbname": row["name"], "bbid": row["id"]}, row["name"])
@@ -1375,7 +1373,7 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
                        r.filename
                 from company_change ch join company c on c.company_number = ch.company_number
                 left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
-                left join score s on s.company_number = ch.company_number and s.buy_box_id = %(bb)s
+                left join (select company_number, score, false as excluded from company_best) s on s.company_number = ch.company_number
                 left join import_run r on r.id = ch.import_run_id
                 where {' and '.join(where)}
                 order by ch.detected_at desc, ch.id desc
@@ -1471,7 +1469,6 @@ def delete_search(sid: int):
 @app.get("/api/pipeline")
 def pipeline():
     with db.conn() as c:
-        bb = scoring.active_buy_box(c)
         rows = c.execute(
             """select uc.*, c.name, c.region, s.score, s.value_low, s.value_high,
                       (select en.website from enrichment en where en.company_number = uc.company_number) as website,
@@ -1481,10 +1478,10 @@ def pipeline():
                          and t.user_id = uc.user_id and t.stage = uc.status) as tasks_done,
                       (select max(created_at) from user_note n where n.company_number = uc.company_number) as last_note
                from user_company uc join company c on c.company_number = uc.company_number
-               left join score s on s.company_number = uc.company_number and s.buy_box_id = %s
+               left join company_best s on s.company_number = uc.company_number
                where uc.user_id = %s and uc.status <> 'new'
                order by uc.next_action_on nulls last, s.score desc nulls last""",
-            (bb["id"], UID),
+            (UID,),
         ).fetchall()
     for r in rows:
         r["tasks_total"] = len(stages.CHECKLISTS.get(r["status"], []))
@@ -1499,19 +1496,17 @@ def reports():
 
 def _reports():
     with db.conn() as c:
-        bb = scoring.active_buy_box(c)
-        p = {"bb": bb["id"], "uid": UID}
+        p = {"uid": UID}  # across all your buy boxes: each company once, at its best score
         staff = c.execute(
             """
             select b.band, b.ord, count(l.company_number) as n from (values
               ('0–4',0,0,4),('5–9',1,5,9),('10–19',2,10,19),('20–49',3,20,49),('50–99',4,50,99),('100+',5,100,1000000)) b(band,ord,lo,hi)
             left join (select l.company_number, l.employees from company_latest l
-                       join score sc on sc.company_number = l.company_number and sc.buy_box_id = %(bb)s
-                       where not sc.excluded) l on l.employees between b.lo and b.hi
+                       join company_best sc on sc.company_number = l.company_number) l on l.employees between b.lo and b.hi
             group by b.band, b.ord order by b.ord""", p).fetchall()
         score_hist = c.execute(
-            """select width_bucket(score, 0, 100, 10) as bucket, count(*) as n from score
-               where buy_box_id = %(bb)s and not excluded group by 1 order by 1""", p).fetchall()
+            """select width_bucket(score, 0, 100, 10) as bucket, count(*) as n from company_best
+               group by 1 order by 1""", p).fetchall()
         ownership = c.execute(
             """select coalesce(o.ownership_type,'unknown') as type, count(*) as n from company c
                left join company_ownership o on o.company_number = c.company_number group by 1 order by 2 desc""").fetchall()
@@ -1522,8 +1517,11 @@ def _reports():
         funnel = c.execute(
             "select status, count(*) as n from user_company where user_id = %(uid)s group by 1", p).fetchall()
         exclusions = c.execute(
-            """select split_part(exclusion, ' “', 1) as reason, count(*) as n from score
-               where buy_box_id = %(bb)s and excluded group by 1 order by 2 desc limit 8""", p).fetchall()
+            """select split_part(exclusion, ' “', 1) as reason, count(*) as n
+               from (select distinct on (s.company_number) s.exclusion from score s
+                     where s.excluded and not exists (select 1 from company_best cb where cb.company_number = s.company_number)
+                     order by s.company_number, s.buy_box_id) x
+               group by 1 order by 2 desc limit 8""", p).fetchall()
         owner_age = c.execute(
             """select (extract(year from current_date)::int - oldest_birth_year) / 5 * 5 as age, count(*) as n
                from company_ownership where oldest_birth_year is not null group by 1 order by 1""").fetchall()
@@ -2427,8 +2425,7 @@ def set_manual(num: str, body: ManualIn):
             )
         scoring.rescore_company_all_boxes(c, num)
         sc = c.execute("""select s.score, s.coverage, s.excluded, s.exclusion, s.reasons from score s
-                          join buy_box b on b.id = s.buy_box_id and b.is_active
-                          where s.company_number = %s""", (num,)).fetchone()
+                          where s.company_number = %s order by s.excluded, s.score desc limit 1""", (num,)).fetchone()
         values = {r["criterion_key"]: r for r in c.execute(
             "select criterion_key, value, note, updated_at from manual_score where user_id = %s and company_number = %s",
             (UID, num))}

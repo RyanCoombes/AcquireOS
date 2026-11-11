@@ -395,7 +395,7 @@ def describe_database() -> str:
         "company": "One row per company. status is the Companies House status. sic_codes is an array.",
         "financial_period": "Filed accounts by period_end. period_inferred=true means a prior-year figure with an assumed date.",
         "estimate": "Revenue range: basis 'filed' (turnover) or 'estimated' (from staff).",
-        "score": "Score per buy box (join buy_box where is_active). reasons is JSON. value_low/high = indicative value.",
+        "score": "Score per buy box (one row per box; company_best has each company's best). reasons is JSON. value_low/high = indicative value.",
         "company_ownership": "ownership_type, flags, oldest_birth_year of individual owners (traced through holdcos).",
         "company_person / person": "Owners (role='psc'). ceased_on null = current.",
         "company_link": "a,b company numbers. kind owned_by|shared_owner|shared_address, confidence.",
@@ -444,14 +444,15 @@ def set_status(company_number: str, status: str, next_action: str | None = None,
     return _j(_api().set_state(num, _api().StateIn(**body)))
 
 
-@server.tool(description="List the user's buy boxes (each is a separate search with its own universe and scoring) "
-                         "and which one is active. search_companies and audit_queue use the active one.")
+@server.tool(description="List the user's buy boxes (each is a separate search with its own universe and scoring). "
+                         "All of them count: search_companies and audit_queue use each company's best score across every box. "
+                         "is_active is a leftover and means nothing.")
 def list_buy_boxes() -> str:
     return _j(_api().buyboxes())
 
 
 @server.tool(description=(
-    "Every setting of one buy box (id from list_buy_boxes; omit for the active one): universe (who counts: "
+    "Every setting of one buy box (id from list_buy_boxes; omit for the first one): universe (who counts: "
     "sic_prefixes, name_keywords, keyword_sic_prefixes, postcode_areas, min_years, include_parents), exclude (leave out: "
     "keywords, ownership, accounts_types, recently_sold, possible_buyer, address_flags, regions, tiers, sic_prefixes, "
     "sic_all, sic_rules [{codes, unless}]), the scored criteria with weights and ranges (staff, revenue, years_trading, "

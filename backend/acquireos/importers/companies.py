@@ -187,7 +187,9 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
     if universe:
         from ..scoring import active_buy_box, merged
 
-        in_universe = universe_filter(merged(active_buy_box(conn)["criteria"]))
+        active_buy_box(conn)  # makes the first buy box if there is none
+        tests = [universe_filter(merged(b["criteria"])) for b in conn.execute("select criteria from buy_box where user_id = 1")]
+        in_universe = lambda vals: any(t(vals) for t in tests)  # noqa: E731  in any of your buy boxes
     seen_numbers: set[str] = set()
 
     def get(row, field):

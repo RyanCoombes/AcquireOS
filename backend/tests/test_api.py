@@ -1722,3 +1722,50 @@ def test_own_years_staff_wins_and_outliers_are_cleared_and_reread(loaded, monkey
     assert emp(b) == 4 and emp(m) is None
     assert c.execute("select employees from financial_period where company_number = %s and period_end = '2024-03-31'", (a,)).fetchone()["employees"] == 100
     c.rollback()
+
+
+def test_saved_staff_survives_reimport_and_staff_by_category(loaded):
+    from datetime import date
+
+    from acquireos.importers.accounts import _upsert, parse, staff_outliers
+
+    c = loaded
+    n = c.execute("select company_number from company order by company_number limit 1").fetchone()["company_number"]
+    c.execute("delete from financial_period where company_number = %s", (n,))
+    _upsert(c, n, date(2024, 3, 31), {"employees": 73}, "pdf:claude", balance_date=date(2024, 3, 31))
+    _upsert(c, n, date(2024, 3, 31), {"employees": 1, "turnover": 5_000_000}, "accounts:x", balance_date=date(2024, 3, 31))
+    row = c.execute("select employees, turnover, source from financial_period where company_number = %s", (n,)).fetchone()
+    assert row["employees"] == 73 and row["turnover"] == 5_000_000 and row["source"] == "pdf:claude"   # blanks filled, saves kept
+    # Latest year: 73 to 1 on similar turnover is an outlier; with turnover collapsing too it isn't.
+    _upsert(c, n, date(2025, 3, 31), {"employees": 1, "turnover": 4_800_000}, "accounts:y", balance_date=date(2025, 3, 31))
+    assert [(r["period_end"].year, r["v"]) for r in staff_outliers(c, [n])] == [(2025, 1)]
+    _upsert(c, n, date(2025, 3, 31), {"turnover": 200_000}, "accounts:y", balance_date=date(2025, 3, 31))
+    assert staff_outliers(c, [n]) == []
+    c.rollback()
+    # Staff given only by category: added up (one breakdown, never two).
+    ctx = lambda cid, dim="", ax="EmployeeCategoriesDimension": (
+        f'<xbrli:context id="{cid}"><xbrli:entity><xbrli:identifier>01</xbrli:identifier>'
+        + (f'<xbrli:segment><xbrldi:explicitMember dimension="core:{ax}">core:{dim}</xbrldi:explicitMember></xbrli:segment>' if dim else '')
+        + '</xbrli:entity><xbrli:period><xbrli:startDate>2024-04-01</xbrli:startDate><xbrli:endDate>2025-03-31</xbrli:endDate></xbrli:period></xbrli:context>')
+    f = lambda cid, v: f'<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="{cid}">{v}</ix:nonFraction>'
+    doc = ('<html><ix:header>' + ctx("a", "AdministrativeStaff") + ctx("s", "SalesStaff") + ctx("p", "ProductionStaff")
+           + ctx("m", "Male", "GenderDimension") + ctx("w", "Female", "GenderDimension") + '</ix:header>'
+           + f("a", 12) + f("s", 30) + f("p", 45) + f("m", 50) + f("w", 37) + '</html>')
+    assert parse(doc)[date(2025, 3, 31)]["employees"] == 87
+
+
+def test_single_company_rescore_updates_every_buy_box(loaded):
+    import json
+
+    from acquireos import scoring
+
+    c = loaded
+    scoring.active_buy_box(c)
+    c.execute("insert into buy_box (user_id, name, criteria, is_active) values (1, 'Second', %s, false)",
+              (json.dumps(scoring.DEFAULT_CRITERIA),))
+    scoring.rescore_all(c)
+    n = c.execute("select company_number from score group by 1 having count(*) = 2 limit 1").fetchone()["company_number"]
+    c.execute("update score set score = 1, facts_hash = null where company_number = %s", (n,))
+    scoring.rescore(c, company_number=n)
+    assert all(r["score"] != 1 for r in c.execute("select score from score where company_number = %s", (n,)))
+    c.rollback()

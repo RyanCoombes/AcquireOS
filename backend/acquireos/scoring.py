@@ -542,7 +542,13 @@ def rescore(conn, buy_box: dict | None = None, company_number: str | None = None
     """Score every company (streamed in batches) or one company."""
     from . import valuation
 
-    bb = buy_box or active_buy_box(conn)
+    if buy_box is None:  # no box named: every buy box, not just one
+        active_buy_box(conn)  # makes the first buy box if there is none
+        if company_number:
+            rescore_company_all_boxes(conn, company_number)
+            return 1
+        return rescore_all(conn, progress)
+    bb = buy_box
     criteria = merged(bb["criteria"])
     va = valuation.assumptions(bb["criteria"])
     scope = scope_test(criteria)

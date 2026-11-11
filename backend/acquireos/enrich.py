@@ -236,8 +236,8 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
     scoring.rescore(conn, company_number=num)
     row = conn.execute("select * from enrichment where company_number = %s", (num,)).fetchone()
     sc = conn.execute(
-        "select s.score, s.excluded, s.exclusion from score s join buy_box b on b.id = s.buy_box_id and b.is_active "
-        "where s.company_number = %s", (num,)).fetchone()
+        "select s.score, s.excluded, s.exclusion from score s where s.company_number = %s "
+        "order by s.excluded, s.score desc limit 1", (num,)).fetchone()
     return {"saved": list(given), "enrichment": row, "score_now": sc}
 
 
