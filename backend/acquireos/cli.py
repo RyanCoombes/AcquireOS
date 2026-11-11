@@ -74,11 +74,20 @@ def main(argv=None):
         from . import db as _db, jobs as _jobs
         from .fetch import run_staff_year_fix
 
-        job = _jobs.Job("fix-staff-years", ["Clear staff counts that were the year"])
-        job.stage("Clear staff counts that were the year")
+        job = _jobs.Job("fix-staff-years", ["Check staff counts"])
+        job.stage("Check staff counts")
+
+        last = [""]
+
+        def prog(frac, msg):
+            job.progress(frac, msg)
+            stem = msg.split(":")[0]
+            if stem != last[0]:  # a line in the log per step, not per company
+                job.log(msg)
+                last[0] = stem
         try:
             with _db.conn(dedicated=True) as c:
-                r = run_staff_year_fix(c)
+                r = run_staff_year_fix(c, progress=prog)
             job.finish(r)
         except Exception as e:
             job.finish({}, status="failed", error=str(e))

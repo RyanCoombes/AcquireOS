@@ -452,14 +452,14 @@ def reclassify_owners(c):
     log("Owners reclassified and rescored")
 
 
-def run_staff_year_fix(c) -> dict:
+def run_staff_year_fix(c, progress=None) -> dict:
     """Clear staff counts that were the year heading, and record when and how many."""
     from datetime import datetime
 
     from . import chsync
     from .importers.accounts import fix_year_staff
 
-    r = fix_year_staff(c)
+    r = fix_year_staff(c, progress=progress)
     # Add up across runs: a later run finding nothing new mustn't hide what an earlier one did.
     prev = chsync.get_setting(c, "staff_year_fix", None)
     prev = prev if isinstance(prev, dict) else {}

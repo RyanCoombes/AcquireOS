@@ -1708,7 +1708,7 @@ def test_own_years_staff_wins_and_outliers_are_cleared_and_reread(loaded, monkey
         f'{docs[seen[-1]]}</ix:nonFraction></html>').encode())
     import acquireos.importers.accounts as acc
     real = acc._reread_staff
-    def spy(conn, rows, replace=False):
+    def spy(conn, rows, replace=False, progress=None):
         out = {"data_years_reread": 0, "data_years_no_link": 0}
         for r in rows:
             seen.append(r["company_number"])

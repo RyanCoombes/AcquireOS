@@ -473,7 +473,7 @@ def implausible_staff(emp, turnover) -> bool:
     return emp >= 500 and 0 <= float(turnover) < 5_000 * emp
 
 
-def _reread_staff(conn, rows, replace: bool = False) -> dict:
+def _reread_staff(conn, rows, replace: bool = False, progress=None) -> dict:
     """For cleared years filed as data, read the filing again from Companies House
     (the real staff figure is often tagged too) and fill the blank. Only where
     the filing link is held and the API key is set; the rest stay blank."""
@@ -504,7 +504,10 @@ def _reread_staff(conn, rows, replace: bool = False) -> dict:
                 continue
         return None
 
-    for r in rows:
+    for i, r in enumerate(rows):
+        if progress and i % 10 == 0:
+            progress(i, len(rows))
+            conn.commit()  # keep what's been read so far
         link = link_for(r["company_number"], r["period_end"])
         if not link:
             missing += 1
@@ -578,15 +581,18 @@ OUTLIER_STAFF_SQL = """
              and t is not null and prev_t is not null and prev_t > 0 and t >= 0.5 * prev_t))"""
 
 
-BLANK_STAFF_LIMIT = 3000  # per run: each is one or two Companies House requests
+BLANK_STAFF_LIMIT = 500  # per run (each is two or three Companies House requests); "Run again" does the next lot
 
 
-def staff_outliers(conn, numbers: list[str] | None = None) -> list[dict]:
-    only = "and company_number = any(%(nums)s)" if numbers else ""
+def staff_outliers(conn, numbers: list[str] | None = None, in_boxes: bool = False) -> list[dict]:
+    """Outliers among the given companies, or (in_boxes) among those with a score
+    in any buy box: checking every UK company takes too long on a Pi."""
+    only = ("and company_number = any(%(nums)s)" if numbers
+            else "and company_number in (select company_number from score)" if in_boxes else "")
     return conn.execute(OUTLIER_STAFF_SQL.format(only=only), {"nums": numbers} if numbers else {}).fetchall()
 
 
-def fix_year_staff(conn) -> dict:
+def fix_year_staff(conn, progress=None) -> dict:
     """Clean staff counts that were misread: the year heading, a money amount or
     reference, or a headcount scaled by £000. They're cleared and read again from
     the filing (electronic accounts via Companies House, PDFs by the fixed
@@ -594,13 +600,20 @@ def fix_year_staff(conn) -> dict:
     from .. import scoring
     from .companies import refresh_estimates
 
+    def say(frac, msg):
+        if progress:
+            progress(frac, msg)
+
+    say(0.01, "Clearing misread staff counts (years, money amounts, references)")
     rows = conn.execute(f"update financial_period set employees = null where {BAD_STAFF_SQL} "
                         "returning company_number, period_end").fetchall()
     if rows:
         conn.execute("""insert into staff_year_cleared (company_number, period_end)
                         select unnest(%s::text[]), unnest(%s::date[]) on conflict do nothing""",
                      ([r["company_number"] for r in rows], [r["period_end"] for r in rows]))
-    out = staff_outliers(conn)
+    conn.commit()
+    say(0.05, f"Cleared {len(rows):,} misread counts. Looking for outliers against the years either side")
+    out = staff_outliers(conn, in_boxes=True)
     if out:
         conn.execute("""update financial_period fp set employees = null
                         from (select unnest(%s::text[]) n, unnest(%s::date[]) p) x
@@ -611,6 +624,8 @@ def fix_year_staff(conn) -> dict:
                         on conflict (company_number, period_end) do update set reason = 'outlier', old_value = excluded.old_value""",
                      ([r["company_number"] for r in out], [r["period_end"] for r in out], [r["v"] for r in out]))
         rows = list(rows) + [{"company_number": r["company_number"], "period_end": r["period_end"]} for r in out]
+    conn.commit()
+    say(0.1, f"{len(out):,} outliers cleared")
     # Every cleared year still blank (this run's, and earlier ones) gets another read.
     todo = conn.execute("""select k.company_number, k.period_end, k.old_value from staff_year_cleared k
                            join financial_period fp using (company_number, period_end)
@@ -636,19 +651,31 @@ def fix_year_staff(conn) -> dict:
         conn.execute("""insert into staff_blank_tried (company_number, period_end)
                         select unnest(%s::text[]), unnest(%s::date[]) on conflict do nothing""",
                      ([r["company_number"] for r in blank], [r["period_end"] for r in blank]))
-    filled = _reread_staff(conn, blank) if blank else {"data_years_reread": 0}
-    reread = _reread_staff(conn, todo)
-    checked = _reread_staff(conn, check, replace=True)
+    conn.commit()
+
+    def phase(lo, hi, what):
+        return lambda i, n: say(lo + (hi - lo) * i / max(n, 1), f"{what}: {i:,} of {n:,} (from Companies House)")
+    filled = _reread_staff(conn, blank, progress=phase(0.1, 0.45, "Reading missing staff counts")) if blank else {"data_years_reread": 0}
+    reread = _reread_staff(conn, todo, progress=phase(0.45, 0.7, "Reading cleared years again"))
+    checked = _reread_staff(conn, check, replace=True, progress=phase(0.7, 0.75, "Checking large companies"))
+    conn.commit()
     nums = sorted(set(nums) | {r["company_number"] for r in blank})
     if not nums:
         return {"years": 0, "companies": 0, "outliers": 0, "blank_filled": 0}
+    say(0.76, f"Updating estimates for {len(nums):,} companies")
     conn.execute("drop table if exists staff_fix")
     conn.execute("create temp table staff_fix (company_number text)")
     conn.execute("insert into staff_fix select unnest(%s::text[])", (nums,))
     refresh_estimates(conn, from_table="staff_fix")
     scoring.refresh_latest(conn, from_table="staff_fix")
     conn.commit()
-    for n in nums:
+    # Rescore only companies you can see (in a buy box, pipeline or your scores): the rest have no score to change.
+    seen = [r["company_number"] for r in conn.execute(
+        "select distinct company_number from score where company_number = any(%s)", (nums,))]
+    for i, n in enumerate(seen):
+        if i % 50 == 0:
+            say(0.8 + 0.2 * i / max(len(seen), 1), f"Rescoring: {i:,} of {len(seen):,}")
+            conn.commit()
         scoring.rescore(conn, company_number=n)
     conn.commit()
     return {"years": len(rows), "companies": len({r["company_number"] for r in rows}), "outliers": len(out), "blank_tried": len(blank),
