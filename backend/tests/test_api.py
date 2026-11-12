@@ -1896,3 +1896,173 @@ def test_pdf_comparison_column_uses_the_real_previous_year_end(loaded):
     rows = c.execute("select period_end, turnover, cash from financial_period where company_number = %s", (n,)).fetchall()
     assert [(x["period_end"], x["turnover"], x["cash"]) for x in rows] == [(date(2024, 6, 30), 4_820_000, 300_000)]
     c.rollback()
+
+
+def _periods(c, n):
+    return {x["period_end"]: x for x in c.execute(
+        "select * from financial_period where company_number = %s order by period_end", (n,))}
+
+
+def _read_pdf_accounts(c, monkeypatch, n, made_up, text):
+    """Run the real PDF path (fetch, read, save) on a made-up accounts text."""
+    from acquireos import chapi, pdfaccounts
+
+    c.execute("""insert into filing (company_number, transaction_id, type, filed_on, detail)
+                 values (%s, %s, 'AA', %s, %s) on conflict do nothing""",
+              (n, f"tx-{made_up}", made_up, __import__("json").dumps({"made_up_date": made_up, "document": f"/doc/{made_up}"})))
+    monkeypatch.setattr(chapi, "_doc_formats", lambda link: ["application/pdf"])
+    monkeypatch.setattr(chapi, "_document", lambda link, limit=0, accept="": b"%PDF")
+    monkeypatch.setattr(pdfaccounts, "pdf_text", lambda pdf: (text, "text"))
+    return pdfaccounts.read_and_save(c, n, made_up)
+
+
+def test_moved_year_end_full_pdf_flow_and_normal_years_untouched(loaded, monkeypatch):
+    """Edge cases for the comparison column of PDF accounts."""
+    from datetime import date
+
+    from acquireos.importers.accounts import _upsert
+
+    c = loaded
+    a, b, d, e = [x["company_number"] for x in c.execute("select company_number from company order by company_number limit 4")]
+    for n in (a, b, d, e):
+        c.execute("delete from financial_period where company_number = %s", (n,))
+        c.execute("delete from filing where company_number = %s", (n,))
+    txt = "Turnover 5,100,000 4,820,000\nOperating profit 300,000 250,000\n"
+
+    # 1. Haydale: 30 June 2024 held from its own accounts, then a 15-month period to 30 Sept 2025 read from a PDF.
+    _upsert(c, a, date(2024, 6, 30), {"turnover": 4_820_000}, "accounts:x", balance_date=date(2024, 6, 30))
+    _read_pdf_accounts(c, monkeypatch, a, "2025-09-30", txt)
+    p = _periods(c, a)
+    assert set(p) == {date(2024, 6, 30), date(2025, 9, 30)}            # no made-up 30 Sept 2024
+    assert p[date(2024, 6, 30)]["turnover"] == 4_820_000               # the real year kept as it was
+    assert p[date(2024, 6, 30)]["operating_profit"] == 250_000          # its blank filled from the comparison column
+    assert p[date(2025, 9, 30)]["turnover"] == 5_100_000
+
+    # 2. An ordinary 12-month year: the comparison column is the year before, as always.
+    _read_pdf_accounts(c, monkeypatch, b, "2025-03-31", txt)
+    assert set(_periods(c, b)) == {date(2024, 3, 31), date(2025, 3, 31)}
+    assert _periods(c, b)[date(2024, 3, 31)]["turnover"] == 4_820_000
+
+    # 3. A short 6-month period (year end brought forward): Dec 2023, then 6 months to June 2024.
+    _upsert(c, d, date(2023, 12, 31), {"turnover": 4_000_000}, "accounts:x", balance_date=date(2023, 12, 31))
+    _read_pdf_accounts(c, monkeypatch, d, "2024-06-30", txt)
+    assert set(_periods(c, d)) == {date(2023, 12, 31), date(2024, 6, 30)}   # compared with Dec 2023, not June 2023
+    assert _periods(c, d)[date(2023, 12, 31)]["turnover"] == 4_000_000      # held figure never replaced
+
+    # 4. Previous accounts known only from Companies House's filing list (no figures held yet).
+    c.execute("""insert into filing (company_number, transaction_id, type, filed_on, detail)
+                 values (%s, 'old', 'AA', '2024-01-15', '{"made_up_date": "2023-08-31"}')""", (e,))
+    _read_pdf_accounts(c, monkeypatch, e, "2024-11-30", txt)                 # 15 months after Aug 2023
+    assert set(_periods(c, e)) == {date(2023, 8, 31), date(2024, 11, 30)}
+    c.rollback()
+
+
+def test_false_year_cleanup_leaves_real_data_alone(loaded):
+    from datetime import date
+
+    from acquireos import pdfaccounts
+    from acquireos.importers.accounts import _upsert
+
+    c = loaded
+    nums = [x["company_number"] for x in c.execute("select company_number from company order by company_number limit 6")]
+    for n in nums:
+        c.execute("delete from financial_period where company_number = %s", (n,))
+    a, b, d, e, f, g = nums
+    # a: two real years from their own accounts only 3 months apart (a short period): both kept.
+    _upsert(c, a, date(2024, 6, 30), {"turnover": 1}, "accounts:x", balance_date=date(2024, 6, 30))
+    _upsert(c, a, date(2024, 9, 30), {"turnover": 2}, "accounts:y", balance_date=date(2024, 9, 30))
+    # b: a comparison-only year with no real year near it (an older year): kept.
+    _upsert(c, b, date(2019, 3, 31), {"turnover": 3}, "pdf:ocr", balance_date=date(2020, 3, 31))
+    _upsert(c, b, date(2020, 3, 31), {"turnover": 4}, "pdf:ocr", balance_date=date(2020, 3, 31))
+    # d: the made-up case, but the comparison row is saved by Claude: kept.
+    _upsert(c, d, date(2024, 6, 30), {"turnover": 5}, "accounts:x", balance_date=date(2024, 6, 30))
+    _upsert(c, d, date(2024, 9, 30), {"turnover": 6}, "pdf:claude", balance_date=date(2024, 9, 30))
+    # e: the made-up case from a data (iXBRL) filing, whose dates are exact: kept.
+    _upsert(c, e, date(2024, 6, 30), {"turnover": 7}, "accounts:x", balance_date=date(2024, 6, 30))
+    _upsert(c, e, date(2024, 9, 30), {"turnover": 8}, "accounts:y", balance_date=date(2025, 9, 30))
+    # f: two comparison rows near each other with no own-accounts year: neither removed.
+    _upsert(c, f, date(2024, 6, 30), {"turnover": 9}, "pdf:ocr", balance_date=date(2025, 6, 30))
+    _upsert(c, f, date(2024, 9, 30), {"turnover": 10}, "pdf:ocr", balance_date=date(2025, 9, 30))
+    # g: the real Haydale case: removed, and only that row.
+    _upsert(c, g, date(2024, 6, 30), {"turnover": 4_820_000}, "accounts:x", balance_date=date(2024, 6, 30))
+    _upsert(c, g, date(2024, 9, 30), {"turnover": 4_820_000}, "pdf:ocr", balance_date=date(2025, 9, 30))
+    _upsert(c, g, date(2025, 9, 30), {"turnover": 5_100_000}, "pdf:ocr", balance_date=date(2025, 9, 30))
+    before = {n: set(_periods(c, n)) for n in nums}
+    r = pdfaccounts.fix_false_prior_years(c)
+    after = {n: set(_periods(c, n)) for n in nums}
+    assert r["removed"] == 1
+    assert all(after[n] == before[n] for n in (a, b, d, e, f))
+    assert after[g] == {date(2024, 6, 30), date(2025, 9, 30)}
+    assert _periods(c, g)[date(2024, 6, 30)]["turnover"] == 4_820_000
+    assert pdfaccounts.fix_false_prior_years(c)["removed"] == 0             # running it again changes nothing
+    c.rollback()
+
+
+def test_prior_year_end_edge_dates(loaded):
+    from datetime import date
+
+    from acquireos import pdfaccounts
+    from acquireos.importers.accounts import _upsert
+
+    c = loaded
+    n = c.execute("select company_number from company order by company_number limit 1").fetchone()["company_number"]
+    c.execute("delete from financial_period where company_number = %s", (n,))
+    c.execute("delete from filing where company_number = %s", (n,))
+    assert pdfaccounts.prior_period_end(c, n, date(2024, 2, 29)) == date(2023, 2, 28)        # leap day
+    # The accounts' own date in the filing list is not the previous year.
+    c.execute("""insert into filing (company_number, transaction_id, type, filed_on, detail)
+                 values (%s, 'cur', 'AA', '2025-12-01', '{"made_up_date": "2025-09-30"}')""", (n,))
+    assert pdfaccounts.prior_period_end(c, n, date(2025, 9, 30)) == date(2024, 9, 30)
+    # Over 24 months back is a gap in the filings, not the comparison year: fall back to 12 months.
+    _upsert(c, n, date(2023, 3, 31), {"turnover": 1}, "accounts:x", balance_date=date(2023, 3, 31))
+    assert pdfaccounts.prior_period_end(c, n, date(2025, 9, 30)) == date(2024, 9, 30)
+    # The latest of several earlier years wins; a comparison-only row is not trusted as a year end.
+    _upsert(c, n, date(2024, 3, 31), {"turnover": 2}, "accounts:y", balance_date=date(2024, 3, 31))
+    _upsert(c, n, date(2024, 12, 31), {"turnover": 3}, "pdf:ocr", balance_date=date(2025, 12, 31))
+    assert pdfaccounts.prior_period_end(c, n, date(2025, 9, 30)) == date(2024, 3, 31)
+    c.rollback()
+
+
+def test_prior_year_end_with_52_week_years_and_very_short_periods(loaded):
+    from datetime import date
+
+    from acquireos import pdfaccounts
+    from acquireos.importers.accounts import _upsert
+
+    c = loaded
+    n = c.execute("select company_number from company order by company_number limit 1").fetchone()["company_number"]
+    c.execute("delete from financial_period where company_number = %s", (n,))
+    c.execute("delete from filing where company_number = %s", (n,))
+    # 52/53-week years: the same year a few days off is not the previous one.
+    _upsert(c, n, date(2024, 9, 27), {"turnover": 1}, "accounts:x", balance_date=date(2024, 9, 27))
+    _upsert(c, n, date(2025, 9, 28), {"turnover": 2}, "accounts:x", balance_date=date(2025, 9, 28))
+    assert pdfaccounts.prior_period_end(c, n, date(2025, 10, 3)) == date(2024, 9, 27)
+    # A 3-month short period counts as the previous year end.
+    c.execute("delete from financial_period where company_number = %s", (n,))
+    _upsert(c, n, date(2024, 6, 30), {"turnover": 1}, "accounts:x", balance_date=date(2024, 6, 30))
+    assert pdfaccounts.prior_period_end(c, n, date(2024, 9, 30)) == date(2024, 6, 30)
+    c.rollback()
+
+
+def test_assumed_date_rows_removed_only_next_to_a_real_year(loaded):
+    from datetime import date
+
+    from acquireos import pdfaccounts
+    from acquireos.importers.accounts import _upsert
+    from acquireos.importers.companies import _upsert_period
+
+    c = loaded
+    a, b = [x["company_number"] for x in c.execute("select company_number from company order by company_number limit 2")]
+    for n in (a, b):
+        c.execute("delete from financial_period where company_number = %s", (n,))
+    # a: an assumed 30 Sept 2024 from your search file, and the real 30 June 2024: the assumed one goes.
+    _upsert(c, a, date(2024, 6, 30), {"turnover": 4_820_000}, "accounts:x", balance_date=date(2024, 6, 30))
+    _upsert_period(c, a, date(2024, 9, 30), True, {"turnover": 4_800_000}, "search file")
+    # b: an assumed year with no real year near it: kept (it's the only figure for that year).
+    _upsert_period(c, b, date(2022, 3, 31), True, {"turnover": 900_000}, "search file")
+    _upsert(c, b, date(2024, 3, 31), {"turnover": 1_000_000}, "accounts:x", balance_date=date(2024, 3, 31))
+    r = pdfaccounts.fix_false_prior_years(c)
+    assert r["removed"] == 1
+    assert set(_periods(c, a)) == {date(2024, 6, 30)} and _periods(c, a)[date(2024, 6, 30)]["turnover"] == 4_820_000
+    assert set(_periods(c, b)) == {date(2022, 3, 31), date(2024, 3, 31)}
+    c.rollback()

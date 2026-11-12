@@ -757,7 +757,7 @@ def prior_period_end(conn, num: str, made_up: date) -> date:
              select period_end from financial_period
               where company_number = %(n)s and not period_inferred
                 and (source_balance_date - period_end) <= 45) x
-           where d between %(mu)s - interval '24 months' and %(mu)s - interval '6 months'""",
+           where d >= %(mu)s - interval '24 months' and d < %(mu)s - 45  -- over 45 days: not the same year (52/53-week years)""",
         {"n": num, "mu": made_up}).fetchone()
     if r and r["d"]:
         return r["d"]
