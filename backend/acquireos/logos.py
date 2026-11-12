@@ -23,6 +23,7 @@ MIN_PX = 32          # smaller than this looks blurry: initials instead
 MAX_PX = 128         # stored size
 MAX_BYTES = 400_000  # per image fetched
 RETRY_DAYS = 30      # a site with no usable logo is tried again after this
+RECHECK_DAYS = 182   # a logo found on the website is looked at again after this (a rebrand)
 
 _TAG = re.compile(r"<(link|img|meta)\b([^>]*)>", re.I)
 _ATTR = re.compile(r"""([a-zA-Z:_-]+)\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))""")
@@ -132,28 +133,32 @@ def find(website: str) -> dict | None:
 def stored(conn, num: str) -> tuple[dict | None, bool]:
     """(the stored logo or None, whether it should be fetched). Fetch when the
     company has a website and it has not been tried, its website changed, or
-    a try that found nothing is over RETRY_DAYS old."""
+    a try that found nothing is over RETRY_DAYS old, or a logo it found is over
+    RECHECK_DAYS old (the stored one keeps showing meanwhile)."""
     row = conn.execute("""select e.website as site, l.status, l.image, l.content_type, l.website, l.manual, l.fetched_at,
-                                 l.fetched_at < now() - make_interval(days => %s) as old
+                                 coalesce(l.checked_at, l.fetched_at) < now() - make_interval(days => %s) as old,
+                                 coalesce(l.checked_at, l.fetched_at) < now() - make_interval(days => %s) as stale
                             from company c left join enrichment e using (company_number)
                             left join company_logo l using (company_number)
-                           where c.company_number = %s""", (RETRY_DAYS, num)).fetchone()
+                           where c.company_number = %s""", (RETRY_DAYS, RECHECK_DAYS, num)).fetchone()
     if row and row["manual"]:  # chosen or removed by you: left alone
         return (row if row["status"] == "found" else None), False
     if not row or not row["site"]:
         return None, False
     if row["status"] and row["website"] == row["site"]:
-        return (row if row["status"] == "found" else None), (row["status"] == "none" and row["old"])
+        if row["status"] == "found":
+            return row, bool(row["stale"])
+        return None, bool(row["old"])
     return None, True
 
 
 def save(conn, num: str, *, image: dict | None, source_url: str | None, manual: bool) -> None:
     site = conn.execute("select website from enrichment where company_number = %s", (num,)).fetchone()
-    conn.execute("""insert into company_logo (company_number, website, status, image, content_type, source_url, width, manual, fetched_at)
-                    values (%s, %s, %s, %s, %s, %s, %s, %s, now())
+    conn.execute("""insert into company_logo (company_number, website, status, image, content_type, source_url, width, manual, fetched_at, checked_at)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, now(), now())
                     on conflict (company_number) do update set website = excluded.website, status = excluded.status,
                         image = excluded.image, content_type = excluded.content_type, source_url = excluded.source_url,
-                        width = excluded.width, manual = excluded.manual, fetched_at = now()""",
+                        width = excluded.width, manual = excluded.manual, fetched_at = now(), checked_at = now()""",
                  (num, (site and site["website"]) or "", "found" if image else "none", image and image["image"],
                   image and image["content_type"], source_url, image and image["width"], manual))
 
@@ -182,11 +187,20 @@ def fetch_and_store(num: str) -> bool:
         return False
     found = find(site)  # no database connection held while fetching
     with db.conn() as c:
-        c.execute("""insert into company_logo (company_number, website, status, image, content_type, source_url, width, fetched_at)
-                     values (%s, %s, %s, %s, %s, %s, %s, now())
+        old = c.execute("select website, status, image, manual from company_logo where company_number = %s", (num,)).fetchone()
+        if old and old["manual"]:
+            return False
+        if old and old["website"] == site and old["status"] == "found" and (
+                not found or bytes(old["image"]) == found["image"]):
+            # A re-check: the same logo (or the site didn't answer this time): keep it as it is,
+            # so its version, and the copy in your browser, stay the same.
+            c.execute("update company_logo set checked_at = now() where company_number = %s", (num,))
+            return True
+        c.execute("""insert into company_logo (company_number, website, status, image, content_type, source_url, width, fetched_at, checked_at)
+                     values (%s, %s, %s, %s, %s, %s, %s, now(), now())
                      on conflict (company_number) do update set website = excluded.website, status = excluded.status,
                          image = excluded.image, content_type = excluded.content_type, source_url = excluded.source_url,
-                         width = excluded.width, fetched_at = now()
+                         width = excluded.width, fetched_at = now(), checked_at = now()
                      where not company_logo.manual""",
                   (num, site, "found" if found else "none", found and found["image"], found and found["content_type"],
                    found and found["source_url"], found and found["width"]))
@@ -212,6 +226,19 @@ def _work():
         finally:
             with _lock:
                 _queued.discard(num)
+
+
+def recheck_stale(conn, numbers: list[str]) -> None:
+    """Queue a look at the website for logos it found over RECHECK_DAYS ago,
+    among these companies (the ones a page is showing). Browsers keep logos
+    for good, so this is how a rebrand is picked up."""
+    if not numbers:
+        return
+    for r in conn.execute("""select company_number from company_logo
+                             where company_number = any(%s) and status = 'found' and not manual
+                               and coalesce(checked_at, fetched_at) < now() - make_interval(days => %s)""",
+                          (list(numbers), RECHECK_DAYS)):
+        request(r["company_number"])
 
 
 def request(num: str) -> None:

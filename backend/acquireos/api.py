@@ -479,6 +479,9 @@ def companies(
             if total > COUNT_CAP:
                 total, capped = COUNT_CAP, True
         capped = capped or search_capped
+        if rows and format == "list":
+            from . import logos as _logos
+            _logos.recheck_stale(c, [r["company_number"] for r in rows if r.get("logo_v") not in (None, "none")])
     return {"total": total, "capped": capped, "rows": rows, "search_limited": search_capped}
 
 
@@ -675,6 +678,8 @@ def company(num: str, bb: str | None = None):
         sics = [{"code": code, "description": sic_mod.describe(code, sic_known)} for code in row["sic_codes"] or []]
         enr = c.execute("select * from enrichment where company_number = %s", (num,)).fetchone()
         logo_v = c.execute(f"select {_logo_sql('%s')}", (num,)).fetchone()["logo_v"]
+        from . import logos as _logos
+        _logos.recheck_stale(c, [num])
         signals = c.execute("select ao_signals(%s) as s", (num,)).fetchone()["s"] or []
         sold = c.execute("select sold_on, sold_to from company_signal where company_number = %s and 'recently_sold' = any(signals)",
                          (num,)).fetchone()
@@ -1496,6 +1501,8 @@ def pipeline():
                order by uc.next_action_on nulls last, s.score desc nulls last""",
             (UID,),
         ).fetchall()
+        from . import logos as _logos
+        _logos.recheck_stale(c, [r["company_number"] for r in rows if r.get("logo_v") not in (None, "none")])
     for r in rows:
         r["tasks_total"] = len(stages.CHECKLISTS.get(r["status"], []))
     return {"statuses": [x for x in stages.as_json() if x["value"] != "new"],

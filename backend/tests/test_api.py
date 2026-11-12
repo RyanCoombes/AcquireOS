@@ -1803,3 +1803,33 @@ def test_logo_can_be_removed_set_from_url_and_refetched(loaded, monkeypatch):
         assert cl.get(f"/api/companies/{num}/logo").status_code == 200
         assert not logos.fetch_and_store(num) or True
         assert cl.get(f"/api/companies/{num}/logo/info").json()["source_url"] == "https://x.co/wide.png"
+
+
+def test_found_logo_is_rechecked_after_six_months_and_only_replaced_if_changed(loaded, monkeypatch):
+    from acquireos import enrich, logos
+    from acquireos.api import app
+
+    num = loaded.execute("select company_number from company limit 1").fetchone()["company_number"]
+    enrich.save_enrichment(loaded, num, website="https://acme.co.uk", source_url="https://acme.co.uk", by="me")
+    loaded.commit()
+    img = {"v": _img(100, 100)}
+    monkeypatch.setattr(logos, "find", lambda site: {**logos.normalise(img["v"], "image/png", "t.png"), "source_url": site + "/t.png"})
+    queued = []
+    monkeypatch.setattr(logos, "request", lambda n: queued.append(n))
+    assert logos.fetch_and_store(num)
+    with TestClient(app) as cl:
+        v1 = cl.get(f"/api/companies/{num}").json()["logo_v"]
+        assert queued == []                                                      # fresh: no re-check
+        loaded.execute("update company_logo set checked_at = now() - interval '200 days', fetched_at = fetched_at - interval '200 days' where company_number = %s", (num,))
+        loaded.commit()
+        v1 = cl.get(f"/api/companies/{num}").json()["logo_v"]
+        assert queued == [num]                                                   # stale: looked at again
+        assert logos.fetch_and_store(num)                                        # same image: version kept
+        assert cl.get(f"/api/companies/{num}").json()["logo_v"] == v1
+        assert loaded.execute("select checked_at > now() - interval '1 minute' as fresh from company_logo where company_number = %s", (num,)).fetchone()["fresh"]
+        img["v"] = _img(120, 120, sizes=None)
+        from PIL import Image
+        import io
+        b = io.BytesIO(); Image.new("RGBA", (120, 120), (200, 10, 10, 255)).save(b, "PNG"); img["v"] = b.getvalue()
+        assert logos.fetch_and_store(num)                                        # a rebrand: new image, new version
+        assert cl.get(f"/api/companies/{num}").json()["logo_v"] != v1
