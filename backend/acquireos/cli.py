@@ -52,6 +52,7 @@ def main(argv=None):
     p.add_argument("--sheet")
 
     sub.add_parser("rebuild", help="Recompute ownership, links and scores")
+    sub.add_parser("find-logos", help="Look for every missing company logo on its website (used by the web app)")
     sub.add_parser("fix-staff-years", help="Clear staff counts that were really the year heading (used by the web app)")
     sub.add_parser("reclassify-owners", help="Classify owners with the current rules and rescore (used by the web app)")
     sub.add_parser("demo", help="Load a fictional demo dataset (for trying the app out)")
@@ -69,6 +70,22 @@ def main(argv=None):
         import secrets
 
         print(secrets.token_urlsafe(32))
+        return
+    if a.cmd == "find-logos":
+        from . import jobs as _jobs, logos as _logos
+
+        job = _jobs.Job("find-logos", ["Find logos"])
+        job.stage("Find logos")
+        try:
+            r = _logos.find_all(progress=lambda frac, msg: job.progress(frac, msg))
+            job.log(f"Looked at {r['looked_at']:,} websites, found {r['found']:,} logos")
+            job.finish(r)
+        except Exception as e:
+            job.finish({}, status="failed", error=str(e))
+            raise
+        finally:
+            from . import db as _db
+            _db.close_pool()  # a clean exit, without waiting on idle pool threads
         return
     if a.cmd == "fix-staff-years":
         from . import db as _db, jobs as _jobs

@@ -1651,7 +1651,7 @@ def test_logo_endpoint_fetches_in_background_and_serves(loaded, monkeypatch):
         r = cl.get(f"/api/companies/{num}/logo")
         assert r.status_code == 404 and r.headers["x-logo"] == "pending" and calls == [num]
         png = _img(100, 100)
-        monkeypatch.setattr(logos, "find", lambda site: {**logos.normalise(png, "image/png", "t.png"), "source_url": site + "/t.png"})
+        monkeypatch.setattr(logos, "find_with_reason", lambda site: ({**logos.normalise(png, "image/png", "t.png"), "source_url": site + "/t.png"}, None))
         assert logos.fetch_and_store(num)
         r = cl.get(f"/api/companies/{num}/logo")
         assert r.status_code == 200 and r.headers["content-type"] == "image/png" and "sandbox" in r.headers["content-security-policy"]
@@ -1661,7 +1661,7 @@ def test_logo_endpoint_fetches_in_background_and_serves(loaded, monkeypatch):
         r = cl.get(f"/api/companies/{num}/logo")
         assert r.status_code == 404 and r.headers["x-logo"] == "pending"
         # nothing usable found: not asked for again straight away
-        monkeypatch.setattr(logos, "find", lambda site: None)
+        monkeypatch.setattr(logos, "find_with_reason", lambda site: (None, "No logo or icon on the home page"))
         assert not logos.fetch_and_store(num)
         r = cl.get(f"/api/companies/{num}/logo")
         assert r.status_code == 404 and r.headers["x-logo"] == "none"
@@ -1779,7 +1779,7 @@ def test_logo_can_be_removed_set_from_url_and_refetched(loaded, monkeypatch):
     enrich.save_enrichment(loaded, num, website="https://acme.co.uk", source_url="https://acme.co.uk", by="me")
     loaded.commit()
     png = _img(100, 100)
-    monkeypatch.setattr(logos, "find", lambda site: {**logos.normalise(png, "image/png", "t.png"), "source_url": site + "/t.png"})
+    monkeypatch.setattr(logos, "find_with_reason", lambda site: ({**logos.normalise(png, "image/png", "t.png"), "source_url": site + "/t.png"}, None))
     monkeypatch.setattr(logos, "_get", lambda url: (_img(300, 60), "image/png") if "wide" in url else None)
     with TestClient(app) as cl:
         assert cl.post(f"/api/companies/{num}/logo", json={"action": "refetch"}).json()["status"] == "found"
@@ -1813,7 +1813,7 @@ def test_found_logo_is_rechecked_after_six_months_and_only_replaced_if_changed(l
     enrich.save_enrichment(loaded, num, website="https://acme.co.uk", source_url="https://acme.co.uk", by="me")
     loaded.commit()
     img = {"v": _img(100, 100)}
-    monkeypatch.setattr(logos, "find", lambda site: {**logos.normalise(img["v"], "image/png", "t.png"), "source_url": site + "/t.png"})
+    monkeypatch.setattr(logos, "find_with_reason", lambda site: ({**logos.normalise(img["v"], "image/png", "t.png"), "source_url": site + "/t.png"}, None))
     queued = []
     monkeypatch.setattr(logos, "request", lambda n: queued.append(n))
     assert logos.fetch_and_store(num)
@@ -1833,3 +1833,37 @@ def test_found_logo_is_rechecked_after_six_months_and_only_replaced_if_changed(l
         b = io.BytesIO(); Image.new("RGBA", (120, 120), (200, 10, 10, 255)).save(b, "PNG"); img["v"] = b.getvalue()
         assert logos.fetch_and_store(num)                                        # a rebrand: new image, new version
         assert cl.get(f"/api/companies/{num}").json()["logo_v"] != v1
+
+
+def test_logo_finder_manifest_lazy_images_wide_fallback_and_reasons(monkeypatch):
+    import json
+
+    from acquireos import logos
+
+    site = "https://acme.co.uk/"
+    files = {}
+    monkeypatch.setattr(logos, "_fetch", lambda url, limit=0: (site, files["page"]) if "page" in files else None)
+    monkeypatch.setattr(logos, "_get", lambda url, accept="image/*": files.get(url))
+    # Lazy-loaded header logo, srcset only
+    a = logos._attrs('class="site-logo" data-lazy-srcset="/l-1x.png 1x, /l-2x.png 2x"')
+    assert logos._img_src(a) == "/l-2x.png"
+    # Manifest icon (512px) wins over a tiny favicon
+    files["page"] = '<link rel="icon" href="/f16.png" sizes="16x16"><link rel="manifest" href="/site.webmanifest">'
+    files[site + "site.webmanifest"] = (json.dumps({"icons": [{"src": "/i192.png", "sizes": "192x192"}, {"src": "/i512.png", "sizes": "512x512"}]}).encode(), "application/json")
+    files[site + "i512.png"] = (_img(512, 512), "image/png")
+    files[site + "f16.png"] = (_img(16, 16), "image/png")
+    got, why = logos.find_with_reason(site)
+    assert got and got["source_url"] == site + "i512.png" and why is None
+    # Only a wide wordmark: used rather than nothing
+    files.clear()
+    files["page"] = '<header><img class="logo" src="/wordmark.png"></header>'
+    files[site + "wordmark.png"] = (_img(400, 80), "image/png")
+    got, why = logos.find_with_reason(site)
+    assert got and got["source_url"] == site + "wordmark.png"
+    # Reasons
+    files.clear()
+    files["page"] = '<link rel="icon" href="/f16.png">'
+    files[site + "f16.png"] = (_img(16, 16), "image/png")
+    assert logos.find_with_reason(site) == (None, "Only a tiny icon (under 32px), which would look blurred")
+    files.clear()
+    assert logos.find_with_reason(site)[1].startswith("The website didn't answer")

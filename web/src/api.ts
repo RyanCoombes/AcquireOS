@@ -281,7 +281,7 @@ export const api = {
   addOutreach: (body: Record<string, unknown>) => req<Outreach>("/api/outreach", { method: "POST", body: JSON.stringify(body) }),
   reports: () => req<Record<string, any>>("/api/reports"),
   fetchDetails: (n: string) => req<CompanyDetail["ch"]>(`/api/companies/${encodeURIComponent(n)}/fetch-details`, { method: "POST" }),
-  logoInfo: (n: string) => req<{ status: string | null; source_url: string | null; manual: boolean | null; fetched_at: string | null; website: string | null }>(`/api/companies/${encodeURIComponent(n)}/logo/info`),
+  logoInfo: (n: string) => req<{ status: string | null; source_url: string | null; manual: boolean | null; fetched_at: string | null; note: string | null; website: string | null }>(`/api/companies/${encodeURIComponent(n)}/logo/info`),
   setLogo: (n: string, body: { action: "url" | "remove" | "refetch"; url?: string }) =>
     req<{ status: string; message: string }>(`/api/companies/${encodeURIComponent(n)}/logo`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   removeWebsite: (n: string) => req<{ removed: string | null }>(`/api/companies/${encodeURIComponent(n)}/website`, { method: "DELETE" }),
@@ -322,6 +322,8 @@ export const api = {
   unwatch: (kind: string, ref: string) =>
     req<{ ok: boolean }>(`/api/watch?kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(ref)}`, { method: "DELETE" }),
   websiteSummary: () => req<{ checked: number; confirmed: number; possible: number; none: number; last_at: string | null; with_website: number }>("/api/website-check"),
+  logoSummary: () => req<{ with_website: number; found: number; none: number; yours: number; not_tried: number; reasons: { note: string; n: number }[] }>("/api/logos"),
+  findLogos: () => req<{ started: boolean }>("/api/logos/find", { method: "POST" }),
   websiteCheck: (scope: string, limit: number) =>
     req<{ started: boolean }>(`/api/website-check?scope=${scope}&limit=${limit}`, { method: "POST" }),
   chDetailsBatch: (scope: string, limit: number) =>

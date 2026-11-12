@@ -186,7 +186,7 @@ export function LogoEditor({ num, name, website, v, size = 40 }: { num: string; 
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [info, setInfo] = useState<{ status: string | null; source_url: string | null; manual: boolean | null } | null>(null);
+  const [info, setInfo] = useState<{ status: string | null; source_url: string | null; manual: boolean | null; note: string | null } | null>(null);
   useEffect(() => { if (open) api.logoInfo(num).then(setInfo).catch(() => setInfo(null)); }, [open, num, version]);
   useEffect(() => {
     if (!open) return;
@@ -214,7 +214,7 @@ export function LogoEditor({ num, name, website, v, size = 40 }: { num: string; 
                 <b>Logo</b>
                 <div className="faint small">
                   {info?.status === "found" ? <>{info.manual ? "Chosen by you" : "Found on the website"}{from ? <> · <a href={info.source_url!} target="_blank" rel="noreferrer">{from.length > 48 ? from.slice(0, 48) + "…" : from}</a></> : null}</>
-                    : info?.manual ? "Removed by you: initials show" : website ? "None found on the website: initials show" : "No website saved: initials show"}
+                    : info?.manual ? "Removed by you: initials show" : website ? `None found on the website${info?.note ? ` (${info.note.toLowerCase()})` : ""}: initials show` : "No website saved: initials show"}
                 </div>
               </div>
               <button className="lgx-x" aria-label="Close" onClick={() => setOpen(false)}>×</button>

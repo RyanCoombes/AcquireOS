@@ -172,6 +172,7 @@ export default function Import() {
       <ChSyncPanel />
       <PdfReadPanel />
       <WebsiteBatch />
+      <LogoBatch />
 
       <section>
         <h2>History</h2>
@@ -836,6 +837,44 @@ function WebsiteBatch() {
           All active companies with 10+ staff (several days)</button>
       </div>
       <p className="faint small">Stop it from the bar at the top; it resumes where it stopped.</p>
+      {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
+    </section>
+  );
+}
+
+
+function LogoBatch() {
+  const [msg, setMsg] = useState<string | null>(null);
+  const sum = useAsync(() => api.logoSummary(), []);
+  useEffect(() => { const t = setInterval(() => sum.reload(), 30_000); return () => clearInterval(t); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const d = sum.data;
+  return (
+    <section>
+      <div className="sechead"><h2>Logos</h2><span className="faint small">From each company's own website</span></div>
+      {d && (
+        <div className="factline" style={{ borderTop: 0, marginBottom: 8 }}>
+          <div><b>{int(d.found)}</b><span>Found</span></div>
+          <div><b>{int(d.none)}</b><span>None usable</span></div>
+          <div><b>{int(d.not_tried)}</b><span>Not looked for yet</span></div>
+          <div><b>{int(d.yours)}</b><span>Set or removed by you</span></div>
+        </div>
+      )}
+      <p className="small" style={{ marginTop: 0 }}>
+        Logos are looked for when a company is first shown. To fill them all in now, look for every missing one
+        (four websites at a time, in the background). Fix any single logo by clicking it on the company page.
+      </p>
+      <button className="btn" disabled={!d || d.not_tried === 0} onClick={async () => {
+        setMsg(null);
+        try { await api.findLogos(); setMsg("Started. Progress shows at the top."); } catch (e: any) { setMsg(e.message); }
+      }}>{d && d.not_tried === 0 ? "Nothing to look for" : `Look for ${d ? int(d.not_tried) : ""} missing logos`}</button>
+      {d && d.reasons.length > 0 && (
+        <details style={{ marginTop: 10 }}>
+          <summary className="small">Why {int(d.none)} have no logo</summary>
+          <table className="small" style={{ marginTop: 6 }}><tbody>
+            {d.reasons.map((r) => <tr key={r.note}><td>{r.note}</td><td className="num">{int(r.n)}</td></tr>)}
+          </tbody></table>
+        </details>
+      )}
       {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
     </section>
   );

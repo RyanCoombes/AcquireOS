@@ -582,7 +582,7 @@ def _logo_sql(num_expr: str) -> str:
     """A company's logo state for its rows: the version (a number) when there is
     one, 'none' when there's none to show (so no request is made), or null when
     it hasn't been looked for yet (the page asks for it once)."""
-    return f"""(select case when l.status = 'found' then extract(epoch from l.fetched_at)::bigint::text
+    return f"""(select case when l.status = 'found' then floor(extract(epoch from l.fetched_at))::bigint::text
                             when l.manual or l.website = (select e2.website from enrichment e2 where e2.company_number = l.company_number)
                             then 'none' end
                from company_logo l where l.company_number = {num_expr}) as logo_v"""
@@ -1683,11 +1683,31 @@ class LogoIn(BaseModel):
     url: str | None = None
 
 
+@app.get("/api/logos")
+def logos_summary():
+    """How many companies with a website have a logo, and why the rest don't."""
+    from . import logos
+    with db.conn() as c:
+        return logos.summary(c)
+
+
+@app.post("/api/logos/find")
+def logos_find():
+    """Look for every missing logo, as a background job."""
+    from . import jobs
+    with db.conn() as c:
+        cur = jobs.current(c)
+        if cur and cur["status"] == "running":
+            raise HTTPException(409, "A job is running: try again when it has finished")
+    _run_detached(["find-logos"])
+    return {"started": True}
+
+
 @app.get("/api/companies/{num}/logo/info")
 def company_logo_info(num: str):
     num = num.strip().upper()
     with db.conn() as c:
-        r = c.execute("""select l.status, l.source_url, l.manual, l.fetched_at, e.website
+        r = c.execute("""select l.status, l.source_url, l.manual, l.fetched_at, l.note, e.website
                          from company co left join company_logo l using (company_number)
                          left join enrichment e using (company_number) where co.company_number = %s""", (num,)).fetchone()
     if not r:

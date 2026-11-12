@@ -52,14 +52,22 @@ def candidates(page_url: str, html: str) -> list[str]:
             else:
                 score = 100 + min(size, 200) if size else 60
         elif tag == "img":
-            src = a.get("src") or a.get("data-src")
-            hint = " ".join(a.get(k, "") for k in ("src", "alt", "class", "id")).lower()
-            if not src or "logo" not in hint or src.startswith("data:"):
+            src = _img_src(a)
+            hint = " ".join(a.get(k, "") for k in ("src", "alt", "class", "id", "data-src", "data-lazy-src", "srcset")).lower()
+            if not src or "logo" not in hint:
                 continue
             score = 300 - min(i, 200) // 10  # earlier on the page (the header) is better
+            href = src
+        elif tag == "meta":  # a share image named "logo" (not a photo)
+            prop = (a.get("property") or a.get("name") or "").lower()
+            src = a.get("content") or ""
+            if prop not in ("og:image", "twitter:image", "og:logo") or ("logo" not in src.lower() and prop != "og:logo"):
+                continue
+            score, href = 200, src
         else:
             continue
-        href = a.get("href") if tag == "link" else (a.get("src") or a.get("data-src"))
+        if tag == "link":
+            href = a.get("href")
         scored.append((score, -i, urllib.parse.urljoin(page_url, href)))
     out = [u for _, _, u in sorted(scored, reverse=True)]
     root = urllib.parse.urljoin(page_url, "/")
@@ -70,8 +78,42 @@ def candidates(page_url: str, html: str) -> list[str]:
     return [u for u in out if u.startswith(("http://", "https://"))][:8]
 
 
-def _get(url: str) -> tuple[bytes, str] | None:
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "image/*"})
+def _img_src(a: dict) -> str | None:
+    """An <img>'s real address, including lazy-loaded and srcset-only ones."""
+    for k in ("src", "data-src", "data-lazy-src", "data-original"):
+        v = a.get(k)
+        if v and not v.startswith("data:"):
+            return v
+    for k in ("srcset", "data-srcset", "data-lazy-srcset"):
+        v = a.get(k)
+        if v:
+            return v.split(",")[-1].strip().split(" ")[0] or None  # the largest listed
+    return None
+
+
+def manifest_icons(page_url: str, html: str) -> list[str]:
+    """Icons from the site's web app manifest (often the only large one: 192 or 512px)."""
+    m = re.search(r"""<link\b[^>]*rel=["']?manifest["']?[^>]*>""", html[:400_000], re.I)
+    href = _attrs(m.group(0)).get("href") if m else None
+    if not href:
+        return []
+    url = urllib.parse.urljoin(page_url, href)
+    got = _get(url, accept="application/manifest+json, application/json")
+    if not got:
+        return []
+    try:
+        import json
+        icons = json.loads(got[0].decode("utf-8", "replace")).get("icons") or []
+    except Exception:
+        return []
+    def size(i):
+        return max([int(x) for x in re.findall(r"(\d+)x\d+", str(i.get("sizes") or ""))] or [0])
+    icons = [i for i in icons if isinstance(i, dict) and i.get("src") and "monochrome" not in str(i.get("purpose") or "")]
+    return [urllib.parse.urljoin(url, i["src"]) for i in sorted(icons, key=size, reverse=True)][:2]
+
+
+def _get(url: str, accept: str = "image/*") -> tuple[bytes, str] | None:
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept})
     try:
         with urllib.request.urlopen(req, timeout=6) as r:
             data = r.read(MAX_BYTES + 1)
@@ -116,18 +158,49 @@ def normalise(data: bytes, content_type: str, url: str, chosen: bool = False) ->
 
 def find(website: str) -> dict | None:
     """The best logo on a website, or None."""
+    return find_with_reason(website)[0]
+
+
+def find_with_reason(website: str) -> tuple[dict | None, str | None]:
+    """(the best logo, None) or (None, why there's none). Square icons first; a wide
+    logo (a wordmark) only when nothing square and at least 32px is found."""
     if not website.startswith(("http://", "https://")):
         website = "https://" + website
     page = _fetch(website)
     page_url, html = page if page else (website, "")
-    for url in candidates(page_url, html):
+    urls = candidates(page_url, html)
+    if html:
+        man = manifest_icons(page_url, html)
+        # the home-screen icon stays first; the manifest's large icons next
+        touch = [u for u in urls[:1] if "apple-touch-icon" in u]
+        urls = touch + man + [u for u in urls if u not in man and u not in touch]
+    seen, wide, small, loaded = set(), None, False, 0
+    for url in urls:
+        if url in seen:
+            continue
+        seen.add(url)
         got = _get(url)
         if not got:
             continue
+        loaded += 1
         img = normalise(got[0], got[1], url)
         if img:
-            return {**img, "source_url": url}
-    return None
+            return {**img, "source_url": url}, None
+        if wide is None:
+            w = normalise(got[0], got[1], url, chosen=True)
+            if w and (w["width"] is None or w["width"] >= MIN_PX):
+                wide = {**w, "source_url": url}
+            elif w:
+                small = True
+    if wide:
+        return wide, None
+    if not page:
+        return None, "The website didn't answer (or blocked the request)"
+    if small:
+        return None, "Only a tiny icon (under 32px), which would look blurred"
+    if not loaded:
+        return None, "No logo or icon on the home page"
+    return None, "No usable image (wrong format)"
 
 
 def stored(conn, num: str) -> tuple[dict | None, bool]:
@@ -185,7 +258,7 @@ def fetch_and_store(num: str) -> bool:
     site = r and r["website"]
     if not site:
         return False
-    found = find(site)  # no database connection held while fetching
+    found, note = find_with_reason(site)  # no database connection held while fetching
     with db.conn() as c:
         old = c.execute("select website, status, image, manual from company_logo where company_number = %s", (num,)).fetchone()
         if old and old["manual"]:
@@ -196,14 +269,14 @@ def fetch_and_store(num: str) -> bool:
             # so its version, and the copy in your browser, stay the same.
             c.execute("update company_logo set checked_at = now() where company_number = %s", (num,))
             return True
-        c.execute("""insert into company_logo (company_number, website, status, image, content_type, source_url, width, fetched_at, checked_at)
-                     values (%s, %s, %s, %s, %s, %s, %s, now(), now())
+        c.execute("""insert into company_logo (company_number, website, status, image, content_type, source_url, width, note, fetched_at, checked_at)
+                     values (%s, %s, %s, %s, %s, %s, %s, %s, now(), now())
                      on conflict (company_number) do update set website = excluded.website, status = excluded.status,
                          image = excluded.image, content_type = excluded.content_type, source_url = excluded.source_url,
-                         width = excluded.width, fetched_at = now(), checked_at = now()
+                         width = excluded.width, note = excluded.note, fetched_at = now(), checked_at = now()
                      where not company_logo.manual""",
                   (num, site, "found" if found else "none", found and found["image"], found and found["content_type"],
-                   found and found["source_url"], found and found["width"]))
+                   found and found["source_url"], found and found["width"], note))
     return bool(found)
 
 
@@ -252,3 +325,46 @@ def request(num: str) -> None:
                 threading.Thread(target=_work, daemon=True, name="logo-fetch").start()
             _started = True
     _queue.put(num)
+
+
+def todo(conn) -> list[str]:
+    """Companies with a website whose logo hasn't been looked for, whose website
+    changed, or where nothing was found over RETRY_DAYS ago."""
+    return [r["company_number"] for r in conn.execute(
+        """select e.company_number from enrichment e left join company_logo l using (company_number)
+           where e.website is not null and coalesce(l.manual, false) = false
+             and (l.company_number is null or l.website is distinct from e.website
+                  or (l.status = 'none' and coalesce(l.checked_at, l.fetched_at) < now() - make_interval(days => %s)))
+           order by e.company_number""", (RETRY_DAYS,))]
+
+
+def summary(conn) -> dict:
+    r = conn.execute("""select count(*) filter (where e.website is not null) as with_website,
+                               count(*) filter (where l.status = 'found') as found,
+                               count(*) filter (where l.status = 'none' and not l.manual) as none,
+                               count(*) filter (where l.manual) as yours
+                        from enrichment e left join company_logo l using (company_number)""").fetchone()
+    reasons = conn.execute("""select coalesce(note, 'Not recorded (looked for before reasons were kept)') as note, count(*) as n
+                              from company_logo where status = 'none' and not manual group by 1 order by 2 desc""").fetchall()
+    return {**r, "not_tried": len(todo(conn)), "reasons": reasons}
+
+
+def find_all(progress=None, workers: int = 4) -> dict:
+    """Look for every missing logo (see todo), a few websites at a time."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from . import db
+    with db.conn() as c:
+        nums = todo(c)
+    found = done = 0
+    with ThreadPoolExecutor(workers) as pool:
+        futs = [pool.submit(fetch_and_store, n) for n in nums]
+        for f in as_completed(futs):
+            done += 1
+            try:
+                found += bool(f.result())
+            except Exception:
+                pass
+            if progress and (done % 10 == 0 or done == len(nums)):
+                progress(done / max(len(nums), 1), f"Looked at {done:,} of {len(nums):,} websites: {found:,} logos found")
+    return {"looked_at": done, "found": found}
