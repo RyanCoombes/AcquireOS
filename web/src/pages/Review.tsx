@@ -158,7 +158,7 @@ export default function Review() {
           <div>
             <section>
               <div className="crumb">{i + 1} of {rows.length}{done[cur.company_number] ? <> · <StatusMark s={done[cur.company_number]} /></> : null}</div>
-              <h1 className="has-logo" style={{ fontSize: 24, margin: "2px 0 6px" }}><Logo num={cur.company_number} name={cur.name} website={d?.enrichment?.website} size={36} /><span>{cur.name}</span></h1>
+              <h1 className="has-logo" style={{ fontSize: 24, margin: "2px 0 6px" }}><Logo num={cur.company_number} name={cur.name} website={d?.company.company_number === cur.company_number ? d?.enrichment?.website : null} v={d?.company.company_number === cur.company_number ? d?.logo_v : "none"} size={36} /><span>{cur.name}</span></h1>
               {d && <div className="rv-chips"><Signals s={d.signals} region={d.company.region}
                 titles={d.sold?.sold_to ? { recently_sold: `Sold${d.sold.sold_on ? ` ${date(d.sold.sold_on)}` : ""} to ${d.sold.sold_to}` } : undefined} /></div>}
               {d && <div className="muted small" style={{ margin: "6px 0 10px" }}>

@@ -545,7 +545,7 @@ function TargetRow({ r, cols, cursor, onOpen, showBox, mode, sics, dim, href, ti
   );
   const nameCell = (
     <td className="c-name"><div className="cn">
-      <Logo num={r.company_number} name={r.name} website={r.website} size={26} />
+      <Logo num={r.company_number} name={r.name} website={r.website} v={r.logo_v} size={26} />
       <div className="cn-body">
       <div className="name">
         <Link className="rowlink" to={href} onClick={(e) => e.stopPropagation()}>{r.name}</Link>

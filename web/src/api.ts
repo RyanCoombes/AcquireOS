@@ -64,6 +64,7 @@ export interface Row {
   last_kinds: string[] | null;
   staff_trend: number[] | null;
   website?: string | null;
+  logo_v?: string | null;
   business_type?: string | null;
   box_name?: string | null;
   boxes?: string[] | null;
@@ -197,6 +198,7 @@ export interface CompanyDetail {
     facts?: { label: string; value: string; source_url: string | null }[];
     links?: { title: string; url: string; date: string | null; kind: string }[] | null;
   } | null;
+  logo_v?: string | null;
   issues: { id: number; issue: string; detail: string | null; suggested_fix: string | null; status: string; created_by: string | null; created_at: string; resolution: string | null }[];
   notes: Note[];
   fin_summary?: {

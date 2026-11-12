@@ -1785,13 +1785,17 @@ def test_logo_can_be_removed_set_from_url_and_refetched(loaded, monkeypatch):
         assert cl.post(f"/api/companies/{num}/logo", json={"action": "refetch"}).json()["status"] == "found"
         assert cl.get(f"/api/companies/{num}/logo").status_code == 200
         assert cl.post(f"/api/companies/{num}/logo", json={"action": "remove"}).json()["status"] == "none"
+        assert cl.get(f"/api/companies/{num}").json()["logo_v"] == "none"       # pages show initials without asking
         r = cl.get(f"/api/companies/{num}/logo")
         assert r.status_code == 404 and r.headers["x-logo"] == "none"          # stays removed, not fetched again
         assert cl.post(f"/api/companies/{num}/logo", json={"action": "url", "url": "https://x.co/missing.png"}).status_code == 400
         assert cl.post(f"/api/companies/{num}/logo", json={"action": "url", "url": "https://x.co/wide.png"}).json()["status"] == "found"
         assert cl.get(f"/api/companies/{num}/logo/info").json()["manual"] is True
-        r = cl.get(f"/api/companies/{num}/logo")
-        assert "no-cache" in r.headers["cache-control"] and r.headers["etag"]       # the browser checks every time
+        v = cl.get(f"/api/companies/{num}").json()["logo_v"]
+        assert v and v != "none"
+        r = cl.get(f"/api/companies/{num}/logo?v={v}")
+        assert "immutable" in r.headers["cache-control"]                      # kept for good: a change gets a new v
+        assert "immutable" not in cl.get(f"/api/companies/{num}/logo?v=1").headers["cache-control"]
         assert cl.get(f"/api/companies/{num}/logo", headers={"If-None-Match": r.headers["etag"]}).status_code == 304
         # a new website doesn't replace your chosen logo
         enrich.save_enrichment(loaded, num, website="https://other.co.uk", source_url="https://other.co.uk", by="me")

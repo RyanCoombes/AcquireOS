@@ -443,7 +443,7 @@ def companies(
                    s.score, s.coverage, not ({sx}) as excluded, s.exclusion, s.value_low, s.value_high, s.value_basis,
                    s.box_name, s.boxes,
                    coalesce(uc.status, 'new') as status, uc.rating, uc.next_action, uc.next_action_on,
-                   ch.last_change, ch.last_kinds, en.website, en.business_type,
+                   ch.last_change, ch.last_kinds, en.website, en.business_type, {_logo_sql("c.company_number")},
                    ao_signals(c.company_number) as signals, ao_same_business(c.company_number) as same_business,
                    en.trading_region, sg.sold_on, sg.sold_to
             from page p join company c on c.company_number = p.company_number
@@ -575,6 +575,16 @@ def _search_candidates(c, q: str) -> tuple[list[str], bool]:
     return list(found)[: SEARCH_CAP * 2], limited
 
 
+def _logo_sql(num_expr: str) -> str:
+    """A company's logo state for its rows: the version (a number) when there is
+    one, 'none' when there's none to show (so no request is made), or null when
+    it hasn't been looked for yet (the page asks for it once)."""
+    return f"""(select case when l.status = 'found' then extract(epoch from l.fetched_at)::bigint::text
+                            when l.manual or l.website = (select e2.website from enrichment e2 where e2.company_number = l.company_number)
+                            then 'none' end
+               from company_logo l where l.company_number = {num_expr}) as logo_v"""
+
+
 def _count_all() -> int:
     with db.conn() as c:
         return c.execute("select count(*) as n from company").fetchone()["n"]
@@ -664,6 +674,7 @@ def company(num: str, bb: str | None = None):
 
         sics = [{"code": code, "description": sic_mod.describe(code, sic_known)} for code in row["sic_codes"] or []]
         enr = c.execute("select * from enrichment where company_number = %s", (num,)).fetchone()
+        logo_v = c.execute(f"select {_logo_sql('%s')}", (num,)).fetchone()["logo_v"]
         signals = c.execute("select ao_signals(%s) as s", (num,)).fetchone()["s"] or []
         sold = c.execute("select sold_on, sold_to from company_signal where company_number = %s and 'recently_sold' = any(signals)",
                          (num,)).fetchone()
@@ -723,6 +734,7 @@ def company(num: str, bb: str | None = None):
         "watched_owners": [r["ref"] for r in c.execute("select ref from watch where kind = 'owner'")],
         "signals": signals, "sold": sold, "same_business": same_business,
         "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
+        "logo_v": logo_v,
         "changes": changes, "valuation": val, "fin_summary": fintrends.summary(fin), "ch": ch_details, "deals": deals_list,
         "company": row, "financials": fin, "estimate": est, "ownership": own, "people": people,
         "links": links, "score": sc, "state": state or {"status": "new", "rating": None, "tags": []},
@@ -1470,8 +1482,9 @@ def delete_search(sid: int):
 def pipeline():
     with db.conn() as c:
         rows = c.execute(
-            """select uc.*, c.name, c.region, s.score, s.value_low, s.value_high,
+            f"""select uc.*, c.name, c.region, s.score, s.value_low, s.value_high,
                       (select en.website from enrichment en where en.company_number = uc.company_number) as website,
+                      {_logo_sql("uc.company_number")},
                       (select max(created_at) from stage_event e where e.company_number = uc.company_number
                          and e.user_id = uc.user_id and e.to_status = uc.status) as stage_entered_at,
                       (select count(*) filter (where done) from deal_task t where t.company_number = uc.company_number
@@ -1642,11 +1655,17 @@ def company_logo(num: str, request: Request):
         return Response(status_code=404, headers={"Cache-Control": "no-store", "X-Logo": "pending" if fetch else "none"})
     # The browser keeps a copy but asks each time whether it's still current (a
     # tiny "not modified" reply when it is), so a logo you change shows at once.
+    # Pages ask for /logo?v=<version>: a new logo has a new version (so a new
+    # address), so the browser can keep each one for good and never re-ask.
+    # Without a version: kept for a day.
     etag = f'"{int(row["fetched_at"].timestamp())}-{len(row["image"])}"'
+    v = request.query_params.get("v")
+    cache = ("private, max-age=31536000, immutable" if v and v == str(int(row["fetched_at"].timestamp()))
+             else "private, max-age=86400")
     if request.headers.get("if-none-match") == etag:
-        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "private, no-cache"})
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": cache})
     return Response(bytes(row["image"]), media_type=row["content_type"], headers={
-        "Cache-Control": "private, no-cache", "ETag": etag,
+        "Cache-Control": cache, "ETag": etag,
         # SVGs come from other people's websites: never let one run anything
         "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
         "X-Content-Type-Options": "nosniff"})

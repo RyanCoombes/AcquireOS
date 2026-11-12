@@ -156,24 +156,31 @@ const SUFFIX = /\b(LIMITED|LTD|PLC|LLP|THE|UK|GROUP|HOLDINGS?)\b\.?/gi;
 /** The company's logo from its own website (kept on the server), or coloured
  *  initials when it has none. A missing logo is fetched in the background, so
  *  it is asked for once more a few seconds later. */
-export function Logo({ num, name, website, size = 28, always, version }: { num: string; name: string; website?: string | null; size?: number;
-                       always?: boolean; version?: number }) {
-  const want = !!(website || always);
+export function Logo({ num, name, website, v, size = 28, always, version }: { num: string; name: string; website?: string | null;
+                       v?: string | null; size?: number; always?: boolean; version?: number }) {
+  // v (from the page's data): a number = the stored logo's version, kept by the browser for good;
+  // "none" = nothing to show (no request); missing = not looked for yet (asked for once).
+  // version: set by the logo popup after a change, to show the new one at once.
+  const want = !!version || (v !== "none" && !!(website || always || v));
   const [state, setState] = useState<"try" | "wait" | "retry" | "none">(want ? "try" : "none");
-  useEffect(() => { setState(want ? "try" : "none"); }, [num, website, want, version]);
+  useEffect(() => { setState(want ? "try" : "none"); }, [num, website, want, v, version]);
   const words = name.replace(SUFFIX, "").trim().split(/\s+/).filter(Boolean);
   const initials = (words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? "?").slice(0, 2)).toUpperCase();
   let h = 0; for (const ch of num) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   const style = { width: size, height: size, fontSize: Math.round(size * 0.38) };
   if (state === "none" || state === "wait") return <span className="logo" aria-hidden style={{ ...style, background: LOGO_COLOURS[h % LOGO_COLOURS.length] }}>{initials}</span>;
-  const src = `/api/companies/${encodeURIComponent(num)}/logo?w=${encodeURIComponent(website ?? "")}${version ? `&v=${version}` : ""}${state === "retry" ? "&r=1" : ""}`;
+  const base = `/api/companies/${encodeURIComponent(num)}/logo`;
+  const src = version ? `${base}?changed=${version}`
+    : v && v !== "none" ? `${base}?v=${v}`
+    : `${base}?w=${encodeURIComponent(website ?? "")}${state === "retry" ? "&r=1" : ""}`;
+  const pending = !version && !(v && v !== "none") && !!website;  // being looked for: ask once more shortly
   return <img className="logo img" src={src} alt="" style={style} loading="lazy"
-              onError={() => { if (state === "try" && website) { setState("wait"); setTimeout(() => setState((s) => s === "wait" ? "retry" : s), 8000); } else setState("none"); }} />;
+              onError={() => { if (state === "try" && pending) { setState("wait"); setTimeout(() => setState((s) => s === "wait" ? "retry" : s), 8000); } else setState("none"); }} />;
 }
 
 /** The company page's logo: click it to fix a wrong one (use initials, use an
  *  image from a URL, or look on the website again). */
-export function LogoEditor({ num, name, website, size = 40 }: { num: string; name: string; website?: string | null; size?: number }) {
+export function LogoEditor({ num, name, website, v, size = 40 }: { num: string; name: string; website?: string | null; v?: string | null; size?: number }) {
   const [open, setOpen] = useState(false);
   const [version, setVersion] = useState(0);
   const [url, setUrl] = useState("");
@@ -196,13 +203,13 @@ export function LogoEditor({ num, name, website, size = 40 }: { num: string; nam
   return (
     <>
       <button className="logo-btn" title="Logo: click to change or remove" aria-label="Change logo" onClick={() => setOpen(true)}>
-        <Logo num={num} name={name} website={website} size={size} always version={version} />
+        <Logo num={num} name={name} website={website} v={v} size={size} always version={version || undefined} />
       </button>
       {open && (
         <div className="lgx-back" onClick={() => setOpen(false)}>
           <div className="lgx" role="dialog" aria-label="Logo" onClick={(e) => e.stopPropagation()}>
             <div className="lgx-head">
-              <Logo num={num} name={name} website={website} size={64} always version={version} />
+              <Logo num={num} name={name} website={website} v={v} size={64} always version={version || undefined} />
               <div>
                 <b>Logo</b>
                 <div className="faint small">

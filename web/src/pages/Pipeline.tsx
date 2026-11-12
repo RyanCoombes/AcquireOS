@@ -96,7 +96,7 @@ export default function Pipeline() {
                       {r.website && <a className="card-web" href={r.website} target="_blank" rel="noreferrer" draggable={false}
                                        title={`Website: ${r.website.replace(/^https?:\/\/(www\.)?/, "")}`} aria-label={`${r.name} website`}
                                        onClick={(e) => e.stopPropagation()}>↗</a>}
-                      <div className="name has-logo"><Logo num={r.company_number} name={r.name} website={r.website} size={26} /><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div>
+                      <div className="name has-logo"><Logo num={r.company_number} name={r.name} website={r.website} v={r.logo_v} size={26} /><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div>
                       <div className="meta">
                         <Score value={r.score} />
                         <span>{r.value_low ? range(r.value_low, r.value_high) : ""}</span>
