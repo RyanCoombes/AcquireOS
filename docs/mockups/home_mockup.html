@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Home mockup</title>
+<style>
+:root{--ink:#14181f;--ink2:#4a5261;--ink3:#8a91a0;--line:#e6e8ec;--canvas:#f5f6f8;--panel:#fff;--teal:#0e7c66;--teal2:#0a5e4d;--tint:#e8f5f1;
+ --red:#c0392b;--redS:#fdecea;--amber:#b7791f;--amberS:#fdf1dc;--blue:#2f62d8;--blueS:#eef3ff}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 Inter,system-ui,-apple-system,sans-serif;color:var(--ink);background:var(--canvas)}
+a{color:var(--teal);text-decoration:none}
+.wrap{max-width:1240px;margin:0 auto;padding:18px 20px 60px}
+.note{background:#fff8e6;border:1px solid #f0d9a0;border-radius:10px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#6b5414}
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+h1{font-size:26px;margin:0}.muted{color:var(--ink2)}.faint{color:var(--ink3);font-size:12.5px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 12px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;color:var(--ink)}
+.btn.p{background:var(--teal);color:#fff;border-color:var(--teal)}
+.btn.s{padding:3px 8px;font-size:12px}
+.strip{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.k{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px;display:flex;align-items:baseline;gap:10px}
+.k b{font-size:22px}.k span{color:var(--ink2);font-size:12.5px}
+.grid{display:grid;grid-template-columns:1.35fr 1fr;gap:14px;align-items:start}
+section{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:14px}
+.sh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}.sh h2{font-size:16px;margin:0}
+/* to-do */
+.counts{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 10px}
+.cnt{border-radius:99px;padding:2px 10px;font-size:12px;font-weight:700}
+.cnt.r{background:var(--redS);color:var(--red)}.cnt.a{background:var(--amberS);color:var(--amber)}.cnt.b{background:var(--blueS);color:var(--blue)}.cnt.g{background:#f0f1f4;color:var(--ink2)}
+.grp{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin:12px 0 4px}
+.grp.r{color:var(--red)}
+.todo{display:grid;grid-template-columns:22px 28px 1fr auto auto;gap:10px;align-items:center;padding:8px 6px;border-radius:10px}
+.todo:hover{background:#fafbfc}.todo:hover .snz{visibility:visible}
+.todo input{width:18px;height:18px;accent-color:var(--teal);cursor:pointer}
+.todo .what{font-weight:600}.todo .co{font-size:12.5px;color:var(--ink2)}
+.todo.done .what{text-decoration:line-through;color:var(--ink3)}
+.due{font-size:12px;font-weight:700;border-radius:7px;padding:2px 8px;white-space:nowrap}
+.due.r{background:var(--redS);color:var(--red)}.due.a{background:var(--amberS);color:var(--amber)}.due.b{background:var(--blueS);color:var(--blue)}.due.g{background:#f0f1f4;color:var(--ink2)}
+.snz{visibility:hidden;display:flex;gap:4px}
+.logo{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:#fff;font-size:11px;font-weight:800}
+.add{display:grid;grid-template-columns:1.2fr 1.6fr 130px auto;gap:6px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)}
+.add input{border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;font-size:13px;min-width:0}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#14181f;color:#fff;border-radius:10px;padding:9px 14px;font-size:13px;display:none;gap:12px;align-items:center}
+.toast a{color:#7fe0c9;font-weight:700}
+/* side */
+.feed{list-style:none;margin:0;padding:0}.feed li{display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid #f0f1f4;font-size:13px}
+.feed li:last-child{border:0}.feed .when{margin-left:auto;color:var(--ink3);font-size:12px;white-space:nowrap}
+.sc{font-weight:700;border-radius:6px;padding:0 6px;background:var(--tint);color:var(--teal2);font-size:12px}
+details.more{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 16px}
+details.more summary{cursor:pointer;font-weight:700}
+.charts{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
+.chart{height:110px;border-radius:10px;background:repeating-linear-gradient(90deg,#eef0f3 0 18px,#fff 18px 24px);display:grid;place-items:center;color:var(--ink3);font-size:12px}
+@media (max-width:860px){.grid{grid-template-columns:1fr}.strip{grid-template-columns:1fr 1fr}.charts{grid-template-columns:1fr 1fr}.add{grid-template-columns:1fr}}
+</style></head><body><div class="wrap">
+<div class="note"><b>Mockup.</b> The to-do list moves to the top left, as the first thing you see. Tick to mark done (with Undo), snooze with one click, add a task without leaving the page. Each task shows how overdue it is or how long is left. The five big KPI cards shrink to one slim line; the charts fold into "Your search in numbers" at the bottom. Try ticking a box.</div>
+
+<div class="top">
+  <div><h1>Good afternoon, Ryan</h1><div class="muted">Thursday 12 November · showing <u>all buy boxes</u></div></div>
+  <div style="display:flex;gap:8px"><span class="faint" style="align-self:center">Data updated today</span><button class="btn">Refresh data</button><button class="btn p">Open targets</button></div>
+</div>
+
+<div class="strip">
+  <div class="k"><b>255</b><span>targets · 41 score 70+</span></div>
+  <div class="k"><b>18</b><span>in pipeline · 3 in talks</span></div>
+  <div class="k"><b>6</b><span>changes this week</span></div>
+  <div class="k"><b>£4.1–9.8m</b><span>pipeline value</span></div>
+</div>
+
+<div class="grid">
+  <div>
+    <section>
+      <div class="sh"><h2>To do</h2><a href="#">All in pipeline</a></div>
+      <div class="counts"><span class="cnt r">3 overdue</span><span class="cnt a">1 today</span><span class="cnt b">2 this week</span><span class="cnt g">2 later</span></div>
+      <div id="list"></div>
+      <div class="add">
+        <input placeholder="Company (search)"><input placeholder="What to do, e.g. Call the owner"><input type="date"><button class="btn p">Add</button>
+      </div>
+      <div class="faint" style="margin-top:8px">One task per company, as now (it's the company's "next action"). Ticking it done logs it in the company's activity.</div>
+    </section>
+
+    <section>
+      <div class="sh"><h2>Best new targets</h2><a href="#">Review them</a></div>
+      <ul class="feed">
+        <li><div class="logo" style="background:#3b6fd9">AS</div><b>ASHCOMBE SOFTWARE LIMITED</b><span class="when"><span class="sc">100</span></span></li>
+        <li><div class="logo" style="background:#c2702a">BD</div><b>BRIGHTFIELD DIGITAL LIMITED</b><span class="when"><span class="sc">100</span></span></li>
+        <li><div class="logo" style="background:#1e9a57">FD</div><b>FERNHILL DIGITAL LIMITED</b><span class="when"><span class="sc">98</span></span></li>
+        <li><div class="logo" style="background:#7a4fd6">HI</div><b>HARBOURLINE IT SERVICES LIMITED</b><span class="when"><span class="sc">95</span></span></li>
+      </ul>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <div class="sh"><h2>What changed</h2><a href="#">All changes</a></div>
+      <ul class="feed">
+        <li><span style="color:var(--red)">●</span><span><b>Kestrel Computing</b> · accounts overdue</span><span class="when">today</span></li>
+        <li><span style="color:var(--teal)">●</span><span><b>Linden IT Services</b> · new accounts: £1.2m turnover</span><span class="when">2 days ago</span></li>
+        <li><span style="color:var(--amber)">●</span><span><b>Thornbury IT Support</b> · director resigned</span><span class="when">4 days ago</span></li>
+        <li><span style="color:var(--teal)">●</span><span><b>Calder Software</b> · staff 22 → 26</span><span class="when">6 days ago</span></li>
+      </ul>
+    </section>
+    <section>
+      <div class="sh"><h2>Your buy boxes</h2><a href="#">Manage</a></div>
+      <ul class="feed">
+        <li><b>SaaS &amp; MSP</b><span class="when">212 in scope · 33 score 70+</span></li>
+        <li><b>Telco</b><span class="when">61 in scope · 8 score 70+</span></li>
+      </ul>
+    </section>
+  </div>
+</div>
+
+<details class="more"><summary>Your search in numbers <span class="faint">(staff, score spread, funnel, ownership)</span></summary>
+  <div class="charts"><div class="chart">Staff bands</div><div class="chart">Score spread</div><div class="chart">Search funnel</div><div class="chart">Who owns them</div></div>
+</details>
+</div>
+<div class="toast" id="toast"><span id="tmsg"></span><a href="#" id="undo">Undo</a></div>
+<script>
+const T=[
+ {g:'Overdue',w:'Write to the owner',co:'Talbot Technology Ltd',due:'4 days overdue',c:'r',l:'#3b6fd9'},
+ {g:'Overdue',w:'Chase management accounts',co:'Brightfield Systems Ltd',due:'2 days overdue',c:'r',l:'#5a7bb5'},
+ {g:'Overdue',w:'Reply to owner email',co:'Kestrel Computing Ltd',due:'Yesterday',c:'r',l:'#8b4c7a'},
+ {g:'Today',w:'Call the accountant',co:'Penrith IT Services Ltd',due:'Today',c:'a',l:'#445566'},
+ {g:'This week',w:'Lender call',co:'Talbot Systems Ltd',due:'Tomorrow',c:'b',l:'#a0602a'},
+ {g:'This week',w:'Follow-up call',co:'Calder Computing Ltd',due:'in 3 days',c:'b',l:'#6a5acd'},
+ {g:'Later',w:'Site visit',co:'Kestrel Networks Ltd',due:'in 9 days',c:'g',l:'#2e8b57'},
+ {g:'Later',w:'Check new accounts are filed',co:'Linden IT Services Ltd',due:'in 5 weeks',c:'g',l:'#2b8a9a'}];
+const ini=s=>s.split(' ').slice(0,2).map(w=>w[0]).join('');
+let html='',last='';
+T.forEach((t,i)=>{if(t.g!==last){html+=`<div class="grp ${t.c=='r'?'r':''}">${t.g}</div>`;last=t.g}
+ html+=`<div class="todo" id="t${i}"><input type="checkbox" title="Mark done" data-i="${i}"><div class="logo" style="background:${t.l}">${ini(t.co)}</div>
+ <div><div class="what">${t.w}</div><div class="co">${t.co}</div></div>
+ <div class="snz"><button class="btn s">+1 day</button><button class="btn s">+1 week</button><button class="btn s">Edit</button></div>
+ <span class="due ${t.c}">${t.due}</span></div>`;});
+document.getElementById('list').innerHTML=html;
+const toast=document.getElementById('toast');let tm;
+document.querySelectorAll('.todo input').forEach(cb=>cb.onchange=()=>{const row=cb.closest('.todo');
+ if(cb.checked){row.classList.add('done');document.getElementById('tmsg').textContent='Done: '+T[cb.dataset.i].w+' ('+T[cb.dataset.i].co+')';
+  toast.style.display='flex';clearTimeout(tm);tm=setTimeout(()=>{toast.style.display='none';row.style.display='none'},4000);
+  document.getElementById('undo').onclick=e=>{e.preventDefault();cb.checked=false;row.classList.remove('done');toast.style.display='none';clearTimeout(tm)}}
+ else row.classList.remove('done');});
+</script></body></html>
