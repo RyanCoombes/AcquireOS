@@ -76,7 +76,7 @@ function Side({ meta }: { meta: Meta | null }) {
       <div className="group">Set up</div>
       {item("/buy-box", "buybox", "Buy boxes")}
       {item("/import", "import", "Data")}
-      {item("/connect", "claude", "Connect Claude")}
+      {item("/connect", "claude", "Connect AI")}
       <div className="foot">
         {c ? <>{c.companies.toLocaleString("en-GB")} companies</> : " "}
         {c?.last_import ? <div>Updated {new Date(c.last_import).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</div> : null}
@@ -110,7 +110,7 @@ function MobileNav({ meta }: { meta: Meta | null }) {
           {sheetItem("/", "home", "Home")}{sheetItem("/companies", "companies", "Companies")}{sheetItem("/watch", "watch", "Watching")}
           {sheetItem("/map", "map", "Map")}{sheetItem("/owners", "owners", "Owners")}{sheetItem("/connections", "connections", "Connections")}
           {sheetItem("/reports", "reports", "Reports")}{sheetItem("/buy-box", "buybox", "Buy boxes")}{sheetItem("/import", "import", "Data")}
-          {sheetItem("/connect", "claude", "Connect Claude")}
+          {sheetItem("/connect", "claude", "Connect AI")}
         </div></div>}
     </>
   );

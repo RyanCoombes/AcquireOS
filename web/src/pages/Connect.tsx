@@ -37,9 +37,9 @@ export default function Connect() {
     <>
       <div className="pagehead">
         <div>
-          <h1>Connect Claude</h1>
+          <h1>Connect Claude, Gemini or Codex</h1>
           <div className="lede">
-            Let Claude search, analyse and enrich your companies.
+            Let an AI assistant search, analyse and enrich your companies. The same tools work in each.
           </div>
         </div>
       </div>
@@ -81,7 +81,38 @@ export default function Connect() {
       </section>
 
       <section>
-        <h2>What Claude can do</h2>
+        <h2>Gemini CLI (free with a Google account)</h2>
+        <p className="muted" style={{ marginTop: 0, maxWidth: "80ch" }}>
+          Google's free command-line Gemini has its own web search, so it can research and enrich companies like Claude.
+          Install it (needs Node.js), sign in with your Google account, then add AcquireOS to <code>~/.gemini/settings.json</code>
+          (<code>%USERPROFILE%\.gemini\settings.json</code> on Windows), inside <code>{"{ }"}</code>, and restart <code>gemini</code>.
+          It connects straight to the Pi: no bridge needed. Type <code>/mcp</code> in Gemini to check it's connected.
+        </p>
+        <Copy text={`npm install -g @google/gemini-cli`} />
+        <Copy text={`"mcpServers": ${JSON.stringify({ acquireos: { httpUrl: url, ...(data.token_set ? { headers: { Authorization: `Bearer ${tok}` } } : {}) } }, null, 2)}`} />
+      </section>
+
+      <section>
+        <h2>OpenAI Codex (app, command line or VS Code)</h2>
+        <p className="muted" style={{ marginTop: 0, maxWidth: "80ch" }}>
+          Codex comes with a ChatGPT plan (Plus and up). Add this to <code>~/.codex/config.toml</code>
+          (<code>%USERPROFILE%\.codex\config.toml</code> on Windows) and restart Codex; the desktop app, command line and VS Code
+          extension share it. Turn on web search in Codex for research. Type <code>/mcp</code> to check it's connected.
+        </p>
+        <Copy text={`[mcp_servers.acquireos]\nurl = "${url}"${data.token_set ? `\nhttp_headers = { "Authorization" = "Bearer ${tok}" }` : ""}`} />
+      </section>
+
+      <section>
+        <h2>ChatGPT and the Gemini app</h2>
+        <p className="muted" style={{ marginTop: 0, maxWidth: "80ch" }}>
+          These run in the cloud, so they can't reach a Pi on your home network. ChatGPT can use custom connectors (developer mode),
+          but only from a public https address, which would mean exposing AcquireOS to the internet with a tunnel and an API token.
+          The Gemini app has no way to add tools like this. Use Gemini CLI or Codex above instead.
+        </p>
+      </section>
+
+      <section>
+        <h2>What they can do</h2>
         <table>
           <tbody>
             {[
