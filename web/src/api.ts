@@ -386,6 +386,11 @@ export const api = {
   cancelJob: (id: number) => req<{ ok: boolean; message: string }>(`/api/jobs/${id}/cancel`, { method: "POST" }),
   changes: (params: Record<string, string>) =>
     req<{ rows: Change[]; summary: { kind: string; n: number }[]; unread: number }>("/api/changes?" + new URLSearchParams(params)),
+  nextActionDone: (n: string) => req<{ done: string; was: { next_action: string | null; next_action_on: string | null } }>(`/api/companies/${encodeURIComponent(n)}/next-action/done`, { method: "POST" }),
+  nextActionUndo: (n: string, was: { next_action: string | null; next_action_on: string | null }) =>
+    req<{ ok: boolean }>(`/api/companies/${encodeURIComponent(n)}/next-action/undo`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(was) }),
+  alertRules: () => req<AlertRules & { all_kinds: string[] }>("/api/alert-rules"),
+  saveAlertRules: (r: AlertRules) => req<AlertRules>("/api/alert-rules", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(r) }),
   changesSeen: () => req<{ ok: boolean }>("/api/changes/seen", { method: "POST" }),
   changesRead: (ids: number[]) => req<{ ok: boolean }>("/api/changes/read", { method: "POST", body: JSON.stringify({ ids }) }),
   searches: () => req<SavedSearch[]>("/api/searches"),
@@ -444,3 +449,5 @@ export type Suspicious = { company_number: string; name: string; period_end: str
 
 export type ChExtras = { directors_total: number; directors_checked: number; disqualified_found: number; disqualified_known: number;
   companies_total: number; companies_done: number; paused: boolean };
+
+export type AlertRules = { who: "tracked" | "watch" | "buy_box"; routine: boolean; kinds: string[] };

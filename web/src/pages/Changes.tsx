@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { api, type Change } from "../api";
+import { api, type AlertRules, type Change } from "../api";
 import { ErrorLine, Score, StatusMark, useAsync } from "../components/bits";
 import { CHANGE_KIND, date, describeChange, isBadStatus } from "../format";
 
@@ -12,6 +12,8 @@ export default function Changes() {
   const days = params.get("days") ?? "90";
   const kind = params.get("kind") ?? "";
   const tracked = params.get("tracked") === "1";
+  const alerts = params.get("alerts") === "1";
+  const [rulesOpen, setRulesOpen] = useState(false);
   const unreadOnly = params.get("unread") === "1";
   const set = (k: string, v: string | null) => {
     const p = new URLSearchParams(params);
@@ -20,9 +22,11 @@ export default function Changes() {
   };
   const q: Record<string, string> = { days };
   if (kind) q.kind = kind;
-  if (tracked) q.tracked = "true";
+  if (alerts) q.alerts = "true";
+  else if (tracked) q.tracked = "true";
   if (unreadOnly) q.unread = "true";
-  const { data, error } = useAsync(() => api.changes(q), [days, kind, tracked, unreadOnly]);
+  const [rulesVer, setRulesVer] = useState(0);
+  const { data, error } = useAsync(() => api.changes(q), [days, kind, tracked, alerts, unreadOnly, rulesVer]);
   // Opening the page counts as seeing the changes (clears the alert badge).
   const [read, setRead] = useState<Set<number>>(new Set());
   const [allRead, setAllRead] = useState(false);
@@ -71,9 +75,10 @@ export default function Changes() {
           </select>
         </div>
         <label className="check">
-          <input type="checkbox" checked={tracked} onChange={(e) => set("tracked", e.target.checked ? "1" : null)} />
-          Only my pipeline and watched
+          <input type="checkbox" checked={alerts} onChange={(e) => set("alerts", e.target.checked ? "1" : null)} />
+          Only my notifications
         </label>
+        <button className="linkish small" onClick={() => setRulesOpen((o) => !o)}>{rulesOpen ? "Close rules" : "Notification rules"}</button>
         <label className="check">
           <input type="checkbox" checked={unreadOnly} onChange={(e) => set("unread", e.target.checked ? "1" : null)} />
           Unread only
@@ -83,6 +88,7 @@ export default function Changes() {
         </button>
       </div>
 
+      {rulesOpen && <AlertRulesPanel onSaved={() => { setRulesVer((v) => v + 1); window.dispatchEvent(new Event("ao:meta")); }} />}
       <ErrorLine error={error} />
       {data && data.summary.length > 0 && (
         <div className="summary-line">
@@ -124,5 +130,56 @@ export default function Changes() {
         </div>
       ))}
     </>
+  );
+}
+
+
+const WHO: [AlertRules["who"], string, string][] = [
+  ["watch", "Only companies and people I watch", "The quietest: just your watchlist"],
+  ["tracked", "My pipeline and watchlist", "Companies you've moved past New, plus your watchlist"],
+  ["buy_box", "Everything in my buy boxes", "Every target, plus your pipeline and watchlist"],
+];
+
+function AlertRulesPanel({ onSaved }: { onSaved: () => void }) {
+  const r = useAsync(() => api.alertRules(), []);
+  const [rules, setRules] = useState<AlertRules | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => { if (r.data) setRules({ who: r.data.who, routine: r.data.routine, kinds: r.data.kinds }); }, [r.data]);
+  if (!rules || !r.data) return <section><div className="faint">Loading…</div></section>;
+  const toggle = (k: string) => setRules({ ...rules, kinds: rules.kinds.includes(k) ? rules.kinds.filter((x) => x !== k) : [...rules.kinds, k] });
+  return (
+    <section className="alert-rules">
+      <div className="sechead"><h2>Notification rules</h2><span className="faint small">What counts towards the badge and "Only my notifications"</span></div>
+      <div className="ar-grid">
+        <div>
+          <div className="small"><b>Whose changes</b></div>
+          {WHO.map(([v, l, d]) => (
+            <label key={v} className="check ar-opt">
+              <input type="radio" name="who" checked={rules.who === v} onChange={() => setRules({ ...rules, who: v })} />
+              <span>{l}<div className="faint small">{d}</div></span>
+            </label>
+          ))}
+          <label className="check ar-opt" style={{ marginTop: 10 }}>
+            <input type="checkbox" checked={!rules.routine} onChange={(e) => setRules({ ...rules, routine: !e.target.checked })} />
+            <span>Skip filings that change nothing<div className="faint small">Confirmation statements with no updates (or none to shareholders or industry codes), and someone's address or details edited</div></span>
+          </label>
+        </div>
+        <div>
+          <div className="small"><b>Which kinds</b></div>
+          <div className="ar-kinds">
+            {r.data.all_kinds.map((k) => (
+              <label key={k} className="check"><input type="checkbox" checked={rules.kinds.includes(k)} onChange={() => toggle(k)} />
+                {CHANGE_KIND[k] ?? (k === "watch" ? "Watched people and owners" : k === "location" ? "Office locations" : k)}</label>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
+        <button className="btn primary" onClick={async () => {
+          try { await api.saveAlertRules(rules); setMsg("Saved."); onSaved(); } catch (e: any) { setMsg(e.message); }
+        }}>Save rules</button>
+        {msg && <span className="faint small">{msg}</span>}
+      </div>
+    </section>
   );
 }

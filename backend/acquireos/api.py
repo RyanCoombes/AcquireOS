@@ -168,10 +168,8 @@ def _meta():
                          select 1 from user_company uc where uc.company_number = cb.company_number and uc.user_id = %(uid)s
                          and (uc.status in ('rejected', 'passed')))) as in_scope,
                       (select count(*) from company_change ch
-                         where {UNREAD_SQL} and (ch.kind = 'watch'
-                           or exists (select 1 from user_company uc where uc.company_number = ch.company_number
-                                      and uc.user_id = %(uid)s and uc.status not in ('new', 'rejected', 'passed'))
-                           or exists (select 1 from watch w where w.kind = 'company' and w.ref = ch.company_number))
+                         left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
+                         where {UNREAD_SQL} and {alert_sql(alert_rules(c))}
                       ) as pipeline_new""",
             {"uid": UID}).fetchone()}
         boxes = [dict(r) for r in c.execute(
@@ -898,6 +896,39 @@ class StateIn(BaseModel):
     clear_rating: bool = False
 
 
+@app.post("/api/companies/{num}/next-action/done")
+def next_action_done(num: str):
+    """Tick off a company's next action: cleared, and noted in its activity."""
+    import hashlib
+    import time
+    num = num.strip().upper()
+    with db.conn() as c:
+        uc = c.execute("select next_action, next_action_on from user_company where user_id = %s and company_number = %s",
+                       (UID, num)).fetchone()
+        if not uc or not (uc["next_action"] or uc["next_action_on"]):
+            raise HTTPException(404, "No next action to tick off")
+        text = f"Done: {uc['next_action'] or 'Follow up'}"
+        c.execute("update user_company set next_action = null, next_action_on = null, updated_at = now() "
+                  "where user_id = %s and company_number = %s", (UID, num))
+        c.execute("""insert into user_note (user_id, company_number, body, source, content_hash)
+                     values (%s, %s, %s, 'app', %s)""",
+                  (UID, num, text, hashlib.sha256(f"{time.time_ns()}:{text}".encode()).hexdigest()))
+    return {"done": text, "was": uc}
+
+
+@app.post("/api/companies/{num}/next-action/undo")
+def next_action_undo(num: str, body: StateIn):
+    """Put a ticked-off next action back (the Undo after Done)."""
+    num = num.strip().upper()
+    with db.conn() as c:
+        c.execute("update user_company set next_action = %s, next_action_on = %s, updated_at = now() "
+                  "where user_id = %s and company_number = %s", (body.next_action, body.next_action_on, UID, num))
+        c.execute("""delete from user_note where id = (select id from user_note where user_id = %s and company_number = %s
+                     and body = %s order by created_at desc limit 1)""",
+                  (UID, num, f"Done: {body.next_action or 'Follow up'}"))
+    return {"ok": True}
+
+
 class BulkStateIn(StateIn):
     numbers: list[str]
 
@@ -1141,11 +1172,19 @@ def _dashboard(which: str = "all"):
                       or coalesce(uc.status, 'new') <> 'new')
                order by (coalesce(uc.status,'new') <> 'new') desc, (ch.kind = 'status') desc, ch.detected_at desc
                limit 8""", p).fetchall()
+        # Follow-ups on your pipeline: each company's next action, soonest first.
         due = c.execute(
-            """select uc.company_number, c.name, uc.status, uc.next_action, uc.next_action_on
+            f"""select uc.company_number, c.name, uc.status, uc.next_action, uc.next_action_on,
+                       (select en.website from enrichment en where en.company_number = uc.company_number) as website,
+                       {_logo_sql("uc.company_number")}
                from user_company uc join company c on c.company_number = uc.company_number
-               where uc.user_id = %(uid)s and uc.next_action_on is not null and uc.status not in ('rejected','passed')
-               order by uc.next_action_on limit 6""", p).fetchall()
+               where uc.user_id = %(uid)s and uc.status not in ('new', 'rejected', 'passed')
+                 and (uc.next_action is not null or uc.next_action_on is not null)
+               order by uc.next_action_on nulls last, c.name limit 100""", p).fetchall()
+        no_next = c.execute(
+            """select count(*) as n from user_company uc where uc.user_id = %(uid)s
+               and uc.status not in ('new', 'rejected', 'passed') and uc.next_action is null and uc.next_action_on is null""",
+            p).fetchone()["n"]
         funnel = c.execute("select status, count(*) as n from user_company where user_id = %(uid)s group by 1", p).fetchall()
         freshness = c.execute(
             "select kind, max(finished_at) as last from import_run where finished_at is not null group by kind").fetchall()
@@ -1166,7 +1205,7 @@ def _dashboard(which: str = "all"):
     trend = [t for t in trend if t["companies"] >= peak * 0.5]
     return {
         "head": head, "score_hist": [{"b": i, "n": next((h["n"] for h in hist if h["b"] == i), 0)} for i in range(1, 11)],
-        "top": top, "recent": recent, "due": due, "ownership": stored["ownership"],
+        "top": top, "recent": recent, "due": due, "no_next": no_next, "ownership": stored["ownership"],
         "funnel": [{"status": st, "label": STATUS_LABELS[st], "n": fmap.get(st, 0)} for st in STATUSES if st != "new"],
         "freshness": {r["kind"]: r["last"] for r in freshness}, "trend": trend,
         "buy_box": bb_name, "scope": which, "boxes": boxes,
@@ -1367,17 +1406,82 @@ UNREAD_SQL = """(ch.detected_at > coalesce((select (value #>> '{}')::timestamptz
                and not exists (select 1 from change_read cr where cr.change_id = ch.id))"""
 
 
+# Which changes notify you (the badge, and "Only my notifications" on the Changes page).
+ALERT_KINDS = ["status", "accounts", "staff", "director", "owner", "shareholders", "charge", "insolvency",
+               "address", "name", "sic", "filing", "watch", "location", "new_company"]
+ALERT_DEFAULT = {"who": "tracked", "routine": False,
+                 "kinds": [k for k in ALERT_KINDS if k not in ("new_company", "location")]}
+# Filings that change nothing worth knowing: a confirmation statement with no
+# updates (or none to shareholders or industry codes), or someone's details edited.
+ROUTINE_SQL = """(ch.kind = 'filing' and (coalesce(ch.new_value, '') like '%%no-updates%%'
+                  or coalesce(ch.new_value, '') like '%%::no change to shareholders%%'
+                  or ch.field in ('CH01', 'CH02', 'CH03', 'CH04', 'PSC04', 'PSC05', 'PSC06')))"""
+
+
+def alert_rules(c) -> dict:
+    from . import chsync
+    r = chsync.get_setting(c, "alert_rules", None)
+    r = r if isinstance(r, dict) else {}
+    out = {**ALERT_DEFAULT, **{k: v for k, v in r.items() if k in ALERT_DEFAULT}}
+    out["kinds"] = [k for k in out["kinds"] if k in ALERT_KINDS]
+    if out["who"] not in ("tracked", "watch", "buy_box"):
+        out["who"] = "tracked"
+    return out
+
+
+def alert_sql(rules: dict) -> str:
+    """SQL for "this change notifies you" (ch = company_change, uc = your row for it)."""
+    watched = ("(ch.kind = 'watch' or exists (select 1 from watch w where w.kind = 'company' and w.ref = ch.company_number))")
+    who = {"watch": watched,
+           "tracked": f"(coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed') or {watched})",
+           "buy_box": ("(exists (select 1 from company_best cb where cb.company_number = ch.company_number) "
+                       f"or coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed') or {watched})")}[rules["who"]]
+    kinds = ", ".join(f"'{k}'" for k in rules["kinds"] if k in ALERT_KINDS) or "''"
+    parts = [who, f"ch.kind in ({kinds})"]
+    if not rules["routine"]:
+        parts.append(f"not {ROUTINE_SQL}")
+    return "(" + " and ".join(parts) + ")"
+
+
+class AlertRulesIn(BaseModel):
+    who: str
+    routine: bool = False
+    kinds: list[str]
+
+
+@app.get("/api/alert-rules")
+def get_alert_rules():
+    with db.conn() as c:
+        return {**alert_rules(c), "all_kinds": ALERT_KINDS}
+
+
+@app.put("/api/alert-rules")
+def put_alert_rules(body: AlertRulesIn):
+    from . import chsync
+    if body.who not in ("tracked", "watch", "buy_box"):
+        raise HTTPException(400, "who must be tracked, watch or buy_box")
+    with db.conn() as c:
+        chsync.set_setting(c, "alert_rules", {"who": body.who, "routine": body.routine,
+                                              "kinds": [k for k in body.kinds if k in ALERT_KINDS]})
+        out = alert_rules(c)
+    clear_cache()
+    return out
+
+
 @app.get("/api/changes")
 def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limit: int = 500, scope: str = "buy_box",
-            unread: bool = False):
+            unread: bool = False, alerts: bool = False):
     with db.conn() as c:
+        rules_sql = alert_sql(alert_rules(c)) if alerts else None
         bb = scoring.active_buy_box(c)
         where, params = ["ch.detected_at > now() - make_interval(days => %(days)s)"], {"days": days, "uid": UID, "bb": bb["id"], "limit": min(limit, 2000)}
         if unread:
             where.append(UNREAD_SQL)
         if kind:
             where.append("ch.kind = %(kind)s"); params["kind"] = kind
-        if tracked:  # your pipeline and everything you watch
+        if rules_sql:  # only what your notification rules ask for
+            where.append(rules_sql)
+        elif tracked:  # your pipeline and everything you watch
             where.append("""(coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed') or ch.kind = 'watch'
                              or exists (select 1 from watch w where w.kind = 'company' and w.ref = ch.company_number))""")
         elif scope == "buy_box":
@@ -1401,7 +1505,7 @@ def changes(days: int = 90, kind: str | None = None, tracked: bool = False, limi
             f"""select ch.kind, count(*) as n from company_change ch
                 left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
                 where ch.detected_at > now() - make_interval(days => %(days)s) {"and " + UNREAD_SQL if unread else ""}
-                {"and (coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed') or ch.kind = 'watch' or exists (select 1 from watch w where w.kind = 'company' and w.ref = ch.company_number))" if tracked else
+                {"and " + rules_sql if rules_sql else "and (coalesce(uc.status, 'new') not in ('new', 'rejected', 'passed') or ch.kind = 'watch' or exists (select 1 from watch w where w.kind = 'company' and w.ref = ch.company_number))" if tracked else
                  "and (exists (select 1 from company_best cb where cb.company_number = ch.company_number) or coalesce(uc.status, 'new') <> 'new')" if scope == "buy_box" else ""}
                 group by 1 order by 2 desc""",
             params,

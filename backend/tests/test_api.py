@@ -2066,3 +2066,61 @@ def test_assumed_date_rows_removed_only_next_to_a_real_year(loaded):
     assert set(_periods(c, a)) == {date(2024, 6, 30)} and _periods(c, a)[date(2024, 6, 30)]["turnover"] == 4_820_000
     assert set(_periods(c, b)) == {date(2022, 3, 31), date(2024, 3, 31)}
     c.rollback()
+
+
+def test_notification_rules_filter_the_badge_and_changes(loaded):
+    from acquireos.api import app
+
+    c = loaded
+    a, b, d = [x["company_number"] for x in c.execute("select company_number from company order by company_number limit 3")]
+    c.execute("delete from company_change")
+    c.execute("insert into user_company (user_id, company_number, status) values (1, %s, 'researching') on conflict (user_id, company_number) do update set status = 'researching'", (a,))
+    c.execute("insert into watch (kind, ref) values ('company', %s) on conflict do nothing", (b,))
+    for num, kind, field, new in [(a, "filing", "CS01", "confirmation-statement-with-no-updates"),          # routine
+                                  (a, "filing", "CS01", "confirmation-statement-with-updates::shareholders: X 10% → 20%"),
+                                  (a, "filing", "CH01", "change-person-director-company-with-change-date"),  # routine
+                                  (a, "director", "Appointed", "Jane Smith (director)"),
+                                  (b, "status", "status", "liquidation"),
+                                  (d, "accounts", "turnover", "1000000")]:                                    # not tracked
+        c.execute("insert into company_change (company_number, kind, field, new_value, source) values (%s, %s, %s, %s, 'api')",
+                  (num, kind, field, new))
+    c.commit()
+    with TestClient(app) as cl:
+        r = cl.get("/api/alert-rules").json()
+        assert r["who"] == "tracked" and not r["routine"]
+        rows = cl.get("/api/changes?alerts=true&days=30").json()["rows"]
+        assert {(x["company_number"], x["field"]) for x in rows} == {(a, "CS01"), (a, "Appointed"), (b, "status")}
+        assert all("no-updates" not in (x["new_value"] or "") for x in rows)
+        assert cl.get("/api/meta").json()["counts"]["pipeline_new"] == 3
+        # Only the watchlist
+        cl.put("/api/alert-rules", json={"who": "watch", "routine": False, "kinds": r["kinds"]})
+        assert {x["company_number"] for x in cl.get("/api/changes?alerts=true&days=30").json()["rows"]} == {b}
+        # Everything, routine filings included, but no director changes
+        cl.put("/api/alert-rules", json={"who": "buy_box", "routine": True, "kinds": [k for k in r["all_kinds"] if k != "director"]})
+        rows = cl.get("/api/changes?alerts=true&days=30").json()["rows"]
+        assert (a, "Appointed") not in {(x["company_number"], x["field"]) for x in rows}
+        assert sum(1 for x in rows if x["field"] in ("CS01", "CH01")) == 3
+        # The page without the switch still shows everything
+        assert len(cl.get("/api/changes?days=30&scope=all").json()["rows"]) == 6
+
+
+def test_next_action_tick_off_and_undo(loaded):
+    from acquireos.api import app
+
+    c = loaded
+    n = c.execute("select company_number from company order by company_number limit 1").fetchone()["company_number"]
+    c.execute("""insert into user_company (user_id, company_number, status, next_action, next_action_on)
+                 values (1, %s, 'contacted', 'Call the owner', current_date - 3)
+                 on conflict (user_id, company_number) do update set status = 'contacted', next_action = 'Call the owner',
+                 next_action_on = current_date - 3""", (n,))
+    c.commit()
+    with TestClient(app) as cl:
+        due = cl.get("/api/dashboard").json()["due"]
+        assert [d["company_number"] for d in due] == [n]
+        r = cl.post(f"/api/companies/{n}/next-action/done").json()
+        assert r["done"] == "Done: Call the owner"
+        assert cl.get("/api/dashboard").json()["due"] == []
+        assert any(x["body"] == "Done: Call the owner" for x in cl.get(f"/api/companies/{n}").json()["notes"])
+        cl.post(f"/api/companies/{n}/next-action/undo", json=r["was"])
+        assert [d["next_action"] for d in cl.get("/api/dashboard").json()["due"]] == ["Call the owner"]
+        assert not any(x["body"] == "Done: Call the owner" for x in cl.get(f"/api/companies/{n}").json()["notes"])

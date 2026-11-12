@@ -66,7 +66,7 @@ function Side({ meta }: { meta: Meta | null }) {
       {item("/targets", "targets", "Targets", c?.in_scope)}
       {item("/review", "review", "Review")}
       {item("/pipeline", "pipeline", "Pipeline", c?.tracked)}
-      {item(c?.pipeline_new ? "/changes?tracked=1&unread=1" : "/changes", "changes", "Changes", c?.pipeline_new, false, true)}
+      {item(c?.pipeline_new ? "/changes?alerts=1&unread=1" : "/changes", "changes", "Changes", c?.pipeline_new, false, true)}
       {item("/watch", "watch", "Watching")}
       <div className="group">Analyse</div>
       {item("/map", "map", "Map")}
@@ -101,7 +101,7 @@ function MobileNav({ meta }: { meta: Meta | null }) {
         {tab("/targets", "targets", "Targets")}
         {tab("/review", "review", "Review")}
         {tab("/pipeline", "pipeline", "Pipeline")}
-        {tab(c?.pipeline_new ? "/changes?tracked=1&unread=1" : "/changes", "changes", "Changes", c?.pipeline_new)}
+        {tab(c?.pipeline_new ? "/changes?alerts=1&unread=1" : "/changes", "changes", "Changes", c?.pipeline_new)}
         <button className={`mtab ${more ? "active" : ""}`} onClick={() => setMore(!more)} aria-expanded={more}>
           <svg viewBox="0 0 24 24" aria-hidden><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg><span>More</span></button>
       </nav>

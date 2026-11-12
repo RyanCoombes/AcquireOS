@@ -98,9 +98,12 @@ def get_company(company_number: str) -> str:
 @server.tool(description=(
     "What changed: from the monthly bulk files (status|accounts|staff|name|address|sic|owner|new_company) and from "
     "Companies House API checks (filing|director|charge|shareholders|insolvency; source 'api'). "
-    "pipeline_only for companies you are pursuing."))
-def list_changes(days: int = 30, kind: str | None = None, pipeline_only: bool = False, unread_only: bool = False) -> str:
-    return _j(_api().changes(days=days, kind=kind, tracked=pipeline_only, limit=300, unread=unread_only))
+    "pipeline_only for companies you are pursuing; notifications_only for just what the user's notification rules "
+    "ask for (whose changes, which kinds, routine no-change filings skipped)."))
+def list_changes(days: int = 30, kind: str | None = None, pipeline_only: bool = False, unread_only: bool = False,
+                 notifications_only: bool = False) -> str:
+    return _j(_api().changes(days=days, kind=kind, tracked=pipeline_only, limit=300, unread=unread_only,
+                             alerts=notifications_only))
 
 
 @server.tool(description="Mark changes as read (ids from list_changes), or all of them with all=true. Only when the user asks.")

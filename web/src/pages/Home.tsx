@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
-import { ErrorLine, Score, StatusMark, useAsync } from "../components/bits";
+import { ErrorLine, Logo, Score, StatusMark, useAsync } from "../components/bits";
 import { Columns, HBars, TrendLine } from "../components/charts";
-import { ageFrom, CHANGE_KIND, date, describeChange, int, isBadStatus, OWNERSHIP, range, relDays } from "../format";
+import { ageFrom, CHANGE_KIND, describeChange, int, isBadStatus, OWNERSHIP, range, relDays } from "../format";
 
 function greeting() {
   const h = new Date().getHours();
@@ -68,34 +68,15 @@ export default function Home() {
         <div className="right">
           {running ? <span className="pill-live">Refreshing from Companies House…</span>
             : <span className="fresh">{lastData ? `Data updated ${relDays(lastData)}` : "No data loaded yet"}</span>}
-          <button className="btn" onClick={refreshNow} disabled={running || starting}>
+          <button className="btn m-hide" onClick={refreshNow} disabled={running || starting}>
             <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>Refresh data
           </button>
-          <Link className="btn" to="/companies">All companies</Link>
+          <Link className="btn m-hide" to="/companies">All companies</Link>
           <Link className="btn primary" to={tq({ in_box: "1" })}>Open targets</Link>
         </div>
       </div>
 
-      {which === "all" && (data.boxes ?? []).length > 0 && (
-        <section>
-          <div className="sechead"><h2>Your buy boxes</h2><span className="right"><Link to="/buy-box">Manage</Link></span></div>
-          <table>
-            <thead><tr><th>Buy box</th><th className="num">In scope</th><th className="num">Score 70+</th><th className="num">In your pipeline</th><th className="num">Scored</th><th /></tr></thead>
-            <tbody>
-              {data.boxes.map((b: any) => (
-                <tr key={b.id}>
-                  <td><b>{b.name}</b></td>
-                  <td className="num">{int(b.in_scope)}</td><td className="num">{int(b.strong)}</td><td className="num">{int(b.pipeline)}</td>
-                  <td className="num faint small">{b.scored_at ? relDays(b.scored_at) : "not yet"}</td>
-                  <td className="num"><button className="btn quiet" onClick={() => setParams({ bb: String(b.id) }, { replace: true })}>View</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
-
-      <div className="kpis">
+      <div className="kpis slim m-hide">
         <Link className="kpi" to={tq({ in_box: "1" })}>
           <span className="k"><i />{which === "all" ? "In any buy box" : "In this buy box"}</span>
           <span className="v">{int(h.in_scope)}</span>
@@ -123,8 +104,10 @@ export default function Home() {
         </Link>
       </div>
 
-      <div className="home-grid">
-        <section className="span-7">
+      <div className="home-top">
+        <div className="home-main">
+          <ToDo due={data.due} noNext={data.no_next ?? 0} onChanged={reload} />
+        <section>
           <div className="sechead"><h2>Best new targets</h2><span className="faint small">Scoring 40+, not yet reviewed</span>
             <span className="right"><Link to={tq({ in_box: "1", status: "new" })}>See all</Link></span></div>
           <table>
@@ -143,7 +126,9 @@ export default function Home() {
           </table>
         </section>
 
-        <section className="span-5">
+        </div>
+        <div className="home-side">
+        <section>
           <div className="sechead"><h2>What changed</h2><span className="right"><Link to="/changes?days=30">All changes</Link></span></div>
           {data.recent.length ? (
             <ul className="feed">
@@ -161,6 +146,26 @@ export default function Home() {
           ) : <div className="faint">Nothing changed in the last 30 days.</div>}
         </section>
 
+        {which === "all" && (data.boxes ?? []).length > 0 && (
+          <section>
+            <div className="sechead"><h2>Your buy boxes</h2><span className="right"><Link to="/buy-box">Manage</Link></span></div>
+            <ul className="feed">
+              {data.boxes.map((b: any) => (
+                <li key={b.id}>
+                  <span className="what"><button className="linkish" onClick={() => setParams({ bb: String(b.id) }, { replace: true })}><b>{b.name}</b></button>
+                    <div className="small muted">{int(b.in_scope)} in scope · {int(b.strong)} score 70+ · {int(b.pipeline)} in your pipeline</div></span>
+                  <span className="when">{b.scored_at ? `scored ${relDays(b.scored_at)}` : "not scored yet"}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        </div>
+      </div>
+
+      <details className="home-more">
+        <summary>Your search in numbers <span className="faint small">staff over time, score spread, funnel, ownership</span></summary>
+        <div className="home-grid">
         <section className="span-8">
           <div className="sechead"><h2>Staff across your buy box</h2>
             <span className="faint small">Median staff by year</span></div>
@@ -171,25 +176,6 @@ export default function Home() {
               {" · "}{int(h.with_history)} companies have 3+ years of accounts
             </div>
           )}
-        </section>
-
-        <section className="span-4">
-          <div className="sechead"><h2>Next actions</h2><span className="right"><Link to="/pipeline">Pipeline</Link></span></div>
-          {data.due.length ? (
-            <ul className="feed">
-              {data.due.map((d: any) => {
-                const overdue = d.next_action_on < new Date().toISOString().slice(0, 10);
-                return (
-                  <li key={d.company_number}>
-                    <span className={`dot ${overdue ? "red" : "teal"}`} />
-                    <span className="what"><Link to={`/c/${d.company_number}`}><b>{d.name}</b></Link>
-                      <div className="small muted">{d.next_action ?? "Follow up"}</div></span>
-                    <span className={`when ${overdue ? "overdue" : ""}`}>{date(d.next_action_on)}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : <div className="faint">No dated actions. Set a next action on any company to see it here.</div>}
         </section>
 
         <section className="span-4">
@@ -208,7 +194,101 @@ export default function Home() {
           <HBars rows={data.ownership.map((o: any) => ({ label: OWNERSHIP[o.type] ?? o.type, n: o.n, key: o.type }))}
                  accent={(k) => k === "owner_held"} onPick={(k) => nav(tq({ in_box: "1", ownership: k }))} />
         </section>
-      </div>
+        </div>
+      </details>
     </>
+  );
+}
+
+
+/** Follow-ups on your pipeline: each company's next action, as a to-do list.
+ *  Six at a time so it never takes over the page; the rest one click away. */
+function ToDo({ due, noNext, onChanged }: { due: any[]; noNext: number; onChanged: () => void }) {
+  const [all, setAll] = useState(false);
+  const [gone, setGone] = useState<Set<string>>(new Set());
+  const [undo, setUndo] = useState<{ num: string; name: string; was: any } | null>(null);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const days = (d: string | null) => d ? Math.round((new Date(d + "T00:00:00").getTime() - today.getTime()) / 864e5) : null;
+  const when = (n: number | null): [string, string] =>
+    n === null ? ["No date", "g"] : n < -1 ? [`${-n} days overdue`, "r"] : n === -1 ? ["Yesterday", "r"] : n === 0 ? ["Today", "a"]
+      : n === 1 ? ["Tomorrow", "b"] : n <= 7 ? [`in ${n} days`, "b"] : n <= 60 ? [`in ${Math.round(n / 7)} weeks`, "g"] : [`in ${Math.round(n / 30)} months`, "g"];
+  const group = (n: number | null) => n === null ? "No date" : n < 0 ? "Overdue" : n === 0 ? "Today" : n <= 7 ? "This week" : "Later";
+  const rows = due.filter((d) => !gone.has(d.company_number)).map((d) => ({ ...d, n: days(d.next_action_on) }));
+  const counts: Record<string, number> = {};
+  rows.forEach((r) => { counts[group(r.n)] = (counts[group(r.n)] ?? 0) + 1; });
+  const shown = all ? rows : rows.slice(0, 6);
+  const done = async (r: any) => {
+    setGone((g) => new Set([...g, r.company_number]));
+    try { const res = await api.nextActionDone(r.company_number); setUndo({ num: r.company_number, name: r.name, was: res.was }); }
+    catch { setGone((g) => { const x = new Set(g); x.delete(r.company_number); return x; }); }
+  };
+  const snooze = async (r: any, by: number) => {
+    const base = r.n !== null && r.n > 0 ? new Date(r.next_action_on + "T00:00:00") : new Date(today);
+    base.setDate(base.getDate() + by);
+    const iso = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
+    await api.setState(r.company_number, { next_action_on: iso } as any);
+    onChanged();
+  };
+  let last = "";
+  return (
+    <section className="todo-box">
+      <div className="sechead"><h2>To do</h2><span className="right"><Link to="/pipeline">Pipeline</Link></span></div>
+      {rows.length > 0 && (
+        <div className="todo-counts">
+          {counts["Overdue"] ? <span className="cnt r">{counts["Overdue"]} overdue</span> : null}
+          {counts["Today"] ? <span className="cnt a">{counts["Today"]} today</span> : null}
+          {counts["This week"] ? <span className="cnt b">{counts["This week"]} this week</span> : null}
+          {counts["Later"] ? <span className="cnt g">{counts["Later"]} later</span> : null}
+          {counts["No date"] ? <span className="cnt g">{counts["No date"]} no date</span> : null}
+        </div>
+      )}
+      <div className={`todo-list ${all ? "all" : ""}`}>
+        {shown.map((r) => {
+          const g = group(r.n); const [label, cls] = when(r.n);
+          const head = g !== last ? <div className={`todo-grp ${g === "Overdue" ? "r" : ""}`}>{g}</div> : null;
+          last = g;
+          return (
+            <div key={r.company_number}>
+              {head}
+              <div className="todo-row">
+                <input type="checkbox" title="Done" aria-label={`Mark done: ${r.next_action ?? "follow up"} (${r.name})`} onChange={() => done(r)} />
+                <Logo num={r.company_number} name={r.name} website={r.website} v={r.logo_v} size={26} />
+                <div className="todo-what">
+                  <div className="t">{r.next_action ?? "Follow up"}</div>
+                  <Link to={`/c/${r.company_number}`} className="c">{r.name}</Link>
+                </div>
+                <div className="todo-snz">
+                  <button className="btn quiet" title="Move to tomorrow (or a day later)" onClick={() => snooze(r, 1)}>+1 day</button>
+                  <button className="btn quiet" title="Move a week on" onClick={() => snooze(r, 7)}>+1 week</button>
+                </div>
+                <span className={`due-chip ${cls}`}>{label}</span>
+              </div>
+            </div>
+          );
+        })}
+        {!rows.length && <div className="faint">Nothing to follow up. Next actions you set on pipeline companies show here.</div>}
+      </div>
+      {rows.length > 6 && (
+        <button className="linkish small" style={{ marginTop: 6 }} onClick={() => setAll((a) => !a)}>
+          {all ? "Show fewer" : `Show all ${rows.length}`}</button>
+      )}
+      {noNext > 0 && (
+        <div className="faint small" style={{ marginTop: 8 }}>
+          <Link to="/pipeline">{noNext} pipeline {noNext === 1 ? "company has" : "companies have"} no next step</Link> set.
+        </div>
+      )}
+      {undo && (
+        <div className="todo-undo">
+          <span>Done: {undo.was?.next_action ?? "Follow up"} ({undo.name})</span>
+          <button className="linkish" onClick={async () => {
+            const u = undo; setUndo(null);
+            await api.nextActionUndo(u.num, u.was);
+            setGone((g) => { const x = new Set(g); x.delete(u.num); return x; });
+            onChanged();
+          }}>Undo</button>
+          <button className="linkish faint" aria-label="Close" onClick={() => setUndo(null)}>×</button>
+        </div>
+      )}
+    </section>
   );
 }

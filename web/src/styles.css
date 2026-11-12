@@ -1573,3 +1573,44 @@ td.c-name .cn-body { min-width: 0; flex: 1; }
 .lgx-x { position: absolute; right: -6px; top: -8px; border: 0; background: none; font-size: 22px; color: var(--ink-3); cursor: pointer; }
 .lgx-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .lgx-row input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 13px; }
+
+/* Changes: notification rules */
+.alert-rules .ar-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 6px; }
+.alert-rules .ar-opt { align-items: flex-start; margin-top: 8px; }
+.alert-rules .ar-opt input { margin-top: 3px; }
+.alert-rules .ar-kinds { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; margin-top: 8px; }
+@media (max-width: 760px) { .alert-rules .ar-grid { grid-template-columns: 1fr; } }
+
+/* Home: to-do first, then targets; changes and buy boxes on the right; numbers folded away */
+.kpis.slim { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.kpis.slim .kpi { padding: 10px 14px; }
+.kpis.slim .kpi .v { font-size: 22px; }
+.kpis.slim .kpi .s { display: none; }
+.home-top { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.home-main > section, .home-side > section { margin-bottom: 14px; }
+.home-more { background: var(--panel, #fff); border: 1px solid var(--line); border-radius: var(--radius, 12px); padding: 12px 16px; margin-top: 4px; }
+.home-more > summary { cursor: pointer; font-weight: 650; }
+.home-more .home-grid { margin-top: 12px; }
+.todo-counts { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 6px; }
+.todo-counts .cnt { border-radius: 99px; padding: 2px 10px; font-size: 12px; font-weight: 700; }
+.cnt.r, .due-chip.r { background: #fdecea; color: #c0392b; }
+.cnt.a, .due-chip.a { background: #fdf1dc; color: #b7791f; }
+.cnt.b, .due-chip.b { background: #eef3ff; color: #2f62d8; }
+.cnt.g, .due-chip.g { background: #f0f1f4; color: var(--ink-2); }
+.todo-list.all { max-height: 420px; overflow: auto; padding-right: 4px; }
+.todo-grp { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); margin: 10px 0 2px; }
+.todo-grp.r { color: #c0392b; }
+.todo-row { display: grid; grid-template-columns: 20px 26px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 6px 4px; border-radius: 9px; }
+.todo-row:hover { background: #fafbfc; }
+.todo-row input { width: 17px; height: 17px; accent-color: var(--teal); cursor: pointer; margin: 0; }
+.todo-what { min-width: 0; }
+.todo-what .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.todo-what .c { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.todo-snz { display: flex; gap: 4px; visibility: hidden; }
+.todo-row:hover .todo-snz, .todo-row:focus-within .todo-snz { visibility: visible; }
+.todo-snz .btn { padding: 2px 7px; font-size: 11.5px; }
+.due-chip { font-size: 12px; font-weight: 700; border-radius: 7px; padding: 2px 8px; white-space: nowrap; }
+.todo-undo { display: flex; gap: 12px; align-items: center; margin-top: 10px; background: #14181f; color: #fff; border-radius: 9px; padding: 7px 12px; font-size: 13px; }
+.todo-undo .linkish { color: #7fe0c9; font-weight: 700; }
+@media (max-width: 900px) { .home-top { grid-template-columns: 1fr; } .kpis.slim { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .todo-snz { display: none; } }
