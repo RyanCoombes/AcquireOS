@@ -202,9 +202,8 @@ export default function Home() {
 
 
 /** Follow-ups on your pipeline: each company's next action, as a to-do list.
- *  Six at a time so it never takes over the page; the rest one click away. */
+ *  A fixed height: more than fits scrolls inside the box, so the page never moves. */
 function ToDo({ due, noNext, onChanged }: { due: any[]; noNext: number; onChanged: () => void }) {
-  const [all, setAll] = useState(false);
   const [gone, setGone] = useState<Set<string>>(new Set());
   const [undo, setUndo] = useState<{ num: string; name: string; was: any } | null>(null);
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -216,7 +215,7 @@ function ToDo({ due, noNext, onChanged }: { due: any[]; noNext: number; onChange
   const rows = due.filter((d) => !gone.has(d.company_number)).map((d) => ({ ...d, n: days(d.next_action_on) }));
   const counts: Record<string, number> = {};
   rows.forEach((r) => { counts[group(r.n)] = (counts[group(r.n)] ?? 0) + 1; });
-  const shown = all ? rows : rows.slice(0, 6);
+  const shown = rows;
   const done = async (r: any) => {
     setGone((g) => new Set([...g, r.company_number]));
     try { const res = await api.nextActionDone(r.company_number); setUndo({ num: r.company_number, name: r.name, was: res.was }); }
@@ -242,7 +241,7 @@ function ToDo({ due, noNext, onChanged }: { due: any[]; noNext: number; onChange
           {counts["No date"] ? <span className="cnt g">{counts["No date"]} no date</span> : null}
         </div>
       )}
-      <div className={`todo-list ${all ? "all" : ""}`}>
+      <div className="todo-list">
         {shown.map((r) => {
           const g = group(r.n); const [label, cls] = when(r.n);
           const head = g !== last ? <div className={`todo-grp ${g === "Overdue" ? "r" : ""}`}>{g}</div> : null;
@@ -268,10 +267,6 @@ function ToDo({ due, noNext, onChanged }: { due: any[]; noNext: number; onChange
         })}
         {!rows.length && <div className="faint">Nothing to follow up. Next actions you set on pipeline companies show here.</div>}
       </div>
-      {rows.length > 6 && (
-        <button className="linkish small" style={{ marginTop: 6 }} onClick={() => setAll((a) => !a)}>
-          {all ? "Show fewer" : `Show all ${rows.length}`}</button>
-      )}
       {noNext > 0 && (
         <div className="faint small" style={{ marginTop: 8 }}>
           <Link to="/pipeline">{noNext} pipeline {noNext === 1 ? "company has" : "companies have"} no next step</Link> set.
