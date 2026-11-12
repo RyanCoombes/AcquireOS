@@ -369,13 +369,7 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
                     if cur:
                         _upsert(conn, num, mu, cur, f"pdf:{method}", balance_date=mu)
                         prior = {k: v[1] for k, v in ex["figures"].items() if v[1] is not None}
-                        try:
-                            pe = mu.replace(year=mu.year - 1)
-                        except ValueError:  # 29 February
-                            pe = mu.replace(year=mu.year - 1, day=28)
-                        has_prior = conn.execute(
-                            """select 1 from financial_period where company_number = %s and not period_inferred
-                               and abs(period_end - %s) <= 45""", (num, pe)).fetchone()
+                        pe = prior_period_end(conn, num, mu)
                         prior = {k: v for k, v in prior.items() if k not in held(pe)}
                         if prior:
                             _upsert(conn, num, pe, prior, f"pdf:{method}", balance_date=mu)
@@ -747,6 +741,72 @@ def correct(conn, company_number: str, period_end: str, values: dict) -> dict:
                      (num, f"Corrected the {pe:%b %Y} accounts figures read from the PDF: " + "; ".join(changes)))
     mark_checked(conn, num, str(pe))
     return {"changed": changes}
+
+
+def prior_period_end(conn, num: str, made_up: date) -> date:
+    """The year end of the comparison column in accounts made up to made_up: the
+    company's previous accounts, which aren't always 12 months earlier (a year
+    end moved, e.g. a 15-month period to 30 September 2025 compares with 30 June
+    2024). From its filed accounts or the years already held; 12 months earlier
+    only when neither is known."""
+    r = conn.execute(
+        """select max(d) as d from (
+             select (detail->>'made_up_date')::date as d from filing
+              where company_number = %(n)s and type = 'AA' and detail->>'made_up_date' ~ '^\\d{4}-\\d{2}-\\d{2}$'
+             union all
+             select period_end from financial_period
+              where company_number = %(n)s and not period_inferred
+                and (source_balance_date - period_end) <= 45) x
+           where d between %(mu)s - interval '24 months' and %(mu)s - interval '6 months'""",
+        {"n": num, "mu": made_up}).fetchone()
+    if r and r["d"]:
+        return r["d"]
+    try:
+        return made_up.replace(year=made_up.year - 1)
+    except ValueError:  # 29 February
+        return made_up.replace(year=made_up.year - 1, day=28)
+
+
+def fix_false_prior_years(conn) -> dict:
+    """Remove years that exist only because a PDF's comparison column was dated
+    12 months back when the year end had moved: a comparison-only row with a
+    real year (from its own accounts) 6 weeks to 6 months away. Figures the real
+    year is missing are moved across first; saves by you or Claude are kept."""
+    rows = conn.execute(
+        """select f.company_number, f.period_end, r.period_end as real_end
+           from financial_period f
+           join lateral (select r.period_end from financial_period r
+                         where r.company_number = f.company_number and not r.period_inferred
+                           and r.period_end <> f.period_end and abs(r.period_end - f.period_end) between 46 and 200
+                           and (r.source_balance_date - r.period_end) <= 45
+                         order by abs(r.period_end - f.period_end) limit 1) r on true
+           where (f.period_inferred
+                  or (f.source in ('pdf:text', 'pdf:ocr') and f.source_balance_date - f.period_end > 45))""").fetchall()
+    cols = [r["column_name"] for r in conn.execute(
+        """select column_name from information_schema.columns where table_name = 'financial_period'
+           and column_name not in ('company_number', 'period_end', 'period_inferred', 'source', 'source_balance_date')
+           and data_type in ('numeric', 'integer', 'bigint', 'double precision', 'real')""")]
+    for r in rows:
+        if cols:
+            sets = ", ".join(f"{c} = coalesce(t.{c}, x.{c})" for c in cols)
+            conn.execute(f"""update financial_period t set {sets} from financial_period x
+                             where t.company_number = %(n)s and t.period_end = %(real)s
+                               and x.company_number = %(n)s and x.period_end = %(false)s""",
+                         {"n": r["company_number"], "real": r["real_end"], "false": r["period_end"]})
+        conn.execute("delete from financial_period where company_number = %s and period_end = %s",
+                     (r["company_number"], r["period_end"]))
+    nums = sorted({r["company_number"] for r in rows})
+    if nums:
+        from . import scoring
+        from .importers.companies import refresh_estimates
+        conn.execute("drop table if exists prior_fix")
+        conn.execute("create temp table prior_fix (company_number text)")
+        conn.execute("insert into prior_fix select unnest(%s::text[])", (nums,))
+        refresh_estimates(conn, from_table="prior_fix")
+        scoring.refresh_latest(conn, from_table="prior_fix")
+        for n in nums:
+            scoring.rescore(conn, company_number=n)
+    return {"removed": len(rows), "companies": len(nums)}
 
 
 def mark_read_by_claude(conn, company_number: str, period_end) -> int:

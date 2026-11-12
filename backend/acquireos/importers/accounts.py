@@ -818,7 +818,7 @@ def run(conn, paths: list[Path], only_numbers: set[str] | None = None, record_ch
     conn.execute(
         """delete from financial_period i using financial_period r
            where i.company_number = r.company_number and i.period_inferred and not r.period_inferred
-             and abs(i.period_end - r.period_end) <= 45
+             and abs(i.period_end - r.period_end) <= 200  -- 200: a moved year end puts the real one months away
              and i.company_number in (select company_number from acc_touched)"""
     )
     refresh_estimates(conn, from_table="acc_touched")

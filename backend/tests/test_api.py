@@ -1867,3 +1867,32 @@ def test_logo_finder_manifest_lazy_images_wide_fallback_and_reasons(monkeypatch)
     assert logos.find_with_reason(site) == (None, "Only a tiny icon (under 32px), which would look blurred")
     files.clear()
     assert logos.find_with_reason(site)[1].startswith("The website didn't answer")
+
+
+def test_pdf_comparison_column_uses_the_real_previous_year_end(loaded):
+    from datetime import date
+
+    from acquireos import pdfaccounts
+    from acquireos.importers.accounts import _upsert
+
+    c = loaded
+    n = c.execute("select company_number from company order by company_number limit 1").fetchone()["company_number"]
+    c.execute("delete from financial_period where company_number = %s", (n,))
+    # The year to 30 June 2024 is held from its own accounts; the next accounts are a 15-month period to 30 Sept 2025.
+    _upsert(c, n, date(2024, 6, 30), {"turnover": 4_820_000}, "accounts:x", balance_date=date(2024, 6, 30))
+    assert pdfaccounts.prior_period_end(c, n, date(2025, 9, 30)) == date(2024, 6, 30)
+    # With nothing known, 12 months back.
+    c.execute("delete from financial_period where company_number = %s", (n,))
+    assert pdfaccounts.prior_period_end(c, n, date(2025, 9, 30)) == date(2024, 9, 30)
+    # A filed accounts date counts too.
+    c.execute("""insert into filing (company_number, transaction_id, type, filed_on, detail)
+                 values (%s, 'tx1', 'AA', '2024-12-01', '{"made_up_date": "2024-06-30"}')""", (n,))
+    assert pdfaccounts.prior_period_end(c, n, date(2025, 9, 30)) == date(2024, 6, 30)
+    # Clean-up: a comparison-only row 3 months from a real year is removed; its extra figures move across.
+    _upsert(c, n, date(2024, 6, 30), {"turnover": 4_820_000}, "accounts:x", balance_date=date(2024, 6, 30))
+    _upsert(c, n, date(2024, 9, 30), {"turnover": 4_820_000, "cash": 300_000}, "pdf:ocr", balance_date=date(2025, 9, 30))
+    r = pdfaccounts.fix_false_prior_years(c)
+    assert r["removed"] == 1
+    rows = c.execute("select period_end, turnover, cash from financial_period where company_number = %s", (n,)).fetchall()
+    assert [(x["period_end"], x["turnover"], x["cash"]) for x in rows] == [(date(2024, 6, 30), 4_820_000, 300_000)]
+    c.rollback()

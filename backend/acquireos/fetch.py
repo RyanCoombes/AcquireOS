@@ -505,6 +505,20 @@ def _all_boxes_catch_up(c):
     log("Every buy box rescored")
 
 
+def _false_prior_catch_up(c):
+    """Once after the update: remove years made up from a PDF's comparison column
+    when the company's year end had moved (dated 12 months back instead of to the
+    real previous year end)."""
+    from . import chsync, pdfaccounts
+
+    if chsync.get_setting(c, "false_prior_fixed", None):
+        return
+    r = pdfaccounts.fix_false_prior_years(c)
+    chsync.set_setting(c, "false_prior_fixed", {**r, "v": 1})
+    c.commit()
+    log(f"Moved year ends: removed {r['removed']} made-up years in {r['companies']} companies")
+
+
 def _ownership_catch_up():
     import time
 
@@ -518,6 +532,7 @@ def _ownership_catch_up():
                     time.sleep(300)
                 _staff_year_catch_up(c)
                 _all_boxes_catch_up(c)
+                _false_prior_catch_up(c)
             done = int(chsync.get_setting(c, "ownership_version", 1) or 1)
             if done >= ownership.OWNERSHIP_VERSION or c.execute("select count(*) as n from company").fetchone()["n"] == 0:
                 return
