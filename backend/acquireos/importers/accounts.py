@@ -619,6 +619,7 @@ OUTLIER_STAFF_SQL = """
              and t is not null and prev_t is not null and prev_t > 0 and t >= 0.5 * prev_t))"""
 
 
+REREAD_LIMIT = 1000  # cleared years read again from Companies House per run
 BLANK_STAFF_LIMIT = 500  # per run (each is two or three Companies House requests); "Run again" does the next lot
 
 
@@ -650,8 +651,8 @@ def fix_year_staff(conn, progress=None) -> dict:
                         select unnest(%s::text[]), unnest(%s::date[]) on conflict do nothing""",
                      ([r["company_number"] for r in rows], [r["period_end"] for r in rows]))
     conn.commit()
-    say(0.05, f"Cleared {len(rows):,} misread counts. Looking for outliers against the years either side")
-    out = staff_outliers(conn, in_boxes=True)
+    say(0.05, f"Cleared {len(rows):,} misread counts. Looking for outliers against the years either side (every company)")
+    out = staff_outliers(conn)  # every company: a local check, no Companies House requests
     if out:
         conn.execute("""update financial_period fp set employees = null
                         from (select unnest(%s::text[]) n, unnest(%s::date[]) p) x
@@ -665,9 +666,16 @@ def fix_year_staff(conn, progress=None) -> dict:
     conn.commit()
     say(0.1, f"{len(out):,} outliers cleared")
     # Every cleared year still blank (this run's, and earlier ones) gets another read.
+    # Reading the filing again means Companies House requests, so only for companies in a
+    # buy box (largest first, a capped number a run); elsewhere a cleared count stays blank,
+    # which is better than a wrong one.
     todo = conn.execute("""select k.company_number, k.period_end, k.old_value from staff_year_cleared k
                            join financial_period fp using (company_number, period_end)
-                           where fp.employees is null""").fetchall()
+                           left join company_latest l on l.company_number = k.company_number
+                           where fp.employees is null
+                             and exists (select 1 from score s where s.company_number = k.company_number)
+                           order by greatest(coalesce(l.turnover, 0), 2 * coalesce(l.net_assets, 0)) desc
+                           limit %s""", (REREAD_LIMIT,)).fetchall()
     check = conn.execute(f"select company_number, period_end, employees from financial_period where {CHECK_STAFF_SQL}").fetchall()
     nums = sorted({r["company_number"] for r in rows} | {r["company_number"] for r in todo} | {r["company_number"] for r in check})
     # Years read from a PDF: read again with the fixed reader (it only fills gaps).

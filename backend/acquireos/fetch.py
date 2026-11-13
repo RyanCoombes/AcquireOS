@@ -471,7 +471,7 @@ def run_staff_year_fix(c, progress=None) -> dict:
     total = {k: int(prev.get(k) or 0) + int(r.get(k) or 0) for k in keys}
     total["data_years_no_link"] = int(r.get("data_years_no_link") or 0)  # still blank now
     now = datetime.now().isoformat(timespec="minutes")
-    chsync.set_setting(c, "staff_year_fix", {**total, "v": 6, "at": now, "first_at": prev.get("first_at") or prev.get("at") or now,
+    chsync.set_setting(c, "staff_year_fix", {**total, "v": 7, "at": now, "first_at": prev.get("first_at") or prev.get("at") or now,
                                              "last": {**r, "at": now}})
     c.commit()
     return r
@@ -483,7 +483,7 @@ def _staff_year_catch_up(c):
     from .importers.accounts import fix_year_staff
 
     done = chsync.get_setting(c, "staff_year_fix", None)
-    if isinstance(done, dict) and int(done.get("v", 1)) >= 6:
+    if isinstance(done, dict) and int(done.get("v", 1)) >= 7:
         return
     r = run_staff_year_fix(c)
     log(f"Misread staff counts: cleared {r['years']} years in {r['companies']} companies"
