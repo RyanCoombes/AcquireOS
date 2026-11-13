@@ -773,6 +773,19 @@ def rescore_all(conn, progress=None) -> int:
     return n
 
 
+def rescore_each(conn, numbers, progress=None) -> int:
+    """Rescore many companies one at a time, saving after each. Each rescore makes
+    temporary working tables; in one long transaction their locks pile up until
+    PostgreSQL runs out ("out of shared memory ... max_locks_per_transaction")."""
+    numbers = list(numbers)
+    for i, n in enumerate(numbers):
+        if progress and i % 50 == 0:
+            progress(i, len(numbers))
+        rescore(conn, company_number=n)
+        conn.commit()
+    return len(numbers)
+
+
 def rescore_company_all_boxes(conn, company_number: str):
     """After a manual score or edit: update this company in every buy box."""
     for bb in conn.execute("select * from buy_box where user_id = 1").fetchall():

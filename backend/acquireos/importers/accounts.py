@@ -732,12 +732,7 @@ def fix_year_staff(conn, progress=None) -> dict:
     # Rescore only companies you can see (in a buy box, pipeline or your scores): the rest have no score to change.
     seen = [r["company_number"] for r in conn.execute(
         "select distinct company_number from score where company_number = any(%s)", (nums,))]
-    for i, n in enumerate(seen):
-        if i % 50 == 0:
-            say(0.8 + 0.2 * i / max(len(seen), 1), f"Rescoring: {i:,} of {len(seen):,}")
-            conn.commit()
-        scoring.rescore(conn, company_number=n)
-    conn.commit()
+    scoring.rescore_each(conn, seen, progress=lambda i, t: say(0.8 + 0.2 * i / max(t, 1), f"Rescoring: {i:,} of {t:,}"))
     return {"years": len(rows), "companies": len({r["company_number"] for r in rows}), "outliers": len(out), "blank_tried": len(blank), "pdf_staff_requeued": pdf_again,
             "blank_filled": filled.get("data_years_reread", 0), "pdf_years_requeued": requeued,
             **reread, "large_checked": len(check), "large_corrected": checked.get("data_years_reread", 0)}
@@ -1054,8 +1049,6 @@ def fix_negative_balances(conn) -> dict:
         refresh_estimates(conn, from_table="neg_fix")
         scoring.refresh_latest(conn, from_table="neg_fix")
         conn.commit()
-        for n in [r["company_number"] for r in conn.execute(
-                "select distinct company_number from score where company_number = any(%s)", (nums,))]:
-            scoring.rescore(conn, company_number=n)
-        conn.commit()
+        scoring.rescore_each(conn, [r["company_number"] for r in conn.execute(
+            "select distinct company_number from score where company_number = any(%s)", (nums,))])
     return {"years": len(rows), "companies": len(nums), "pdf_cleared": len(pdf_rows), "pdf_requeued": requeued}

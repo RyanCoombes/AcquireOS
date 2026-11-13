@@ -681,9 +681,7 @@ def _rescore(nums: list[str]) -> None:
         refresh_estimates(c, from_table="redo_touched")
         scoring.refresh_latest(c, from_table="redo_touched")
         c.commit()
-        for n in nums:
-            scoring.rescore(c, company_number=n)
-            c.commit()
+        scoring.rescore_each(c, nums)
 
 
 SUSPICIOUS_SQL = f"""
@@ -918,8 +916,9 @@ def fix_false_prior_years(conn) -> dict:
         conn.execute("insert into prior_fix select unnest(%s::text[])", (nums,))
         refresh_estimates(conn, from_table="prior_fix")
         scoring.refresh_latest(conn, from_table="prior_fix")
-        for n in nums:
-            scoring.rescore(conn, company_number=n)
+        conn.commit()  # the fixes are kept even if rescoring is interrupted
+        scoring.rescore_each(conn, [r["company_number"] for r in conn.execute(
+            "select distinct company_number from score where company_number = any(%s)", (nums,))])
     return {"removed": len(rows), "companies": len(nums)}
 
 
