@@ -2124,3 +2124,63 @@ def test_next_action_tick_off_and_undo(loaded):
         cl.post(f"/api/companies/{n}/next-action/undo", json=r["was"])
         assert [d["next_action"] for d in cl.get("/api/dashboard").json()["due"]] == ["Call the owner"]
         assert not any(x["body"] == "Done: Call the owner" for x in cl.get(f"/api/companies/{n}").json()["notes"])
+
+
+def test_accounts_gaps_found_explained_and_filled(loaded, monkeypatch):
+    from datetime import date, datetime
+
+    from acquireos import chapi, gaps
+    from acquireos.importers.accounts import _upsert
+
+    c = loaded
+    nums = [x["company_number"] for x in c.execute("select company_number from company order by company_number limit 6")]
+    pugh, ok, dormant, failed, waiting, never = nums
+    for n in nums:
+        c.execute("""insert into user_company (user_id, company_number, status) values (1, %s, 'researching')
+                     on conflict (user_id, company_number) do update set status = 'researching'""", (n,))
+        c.execute("delete from financial_period where company_number = %s", (n,))
+        c.execute("delete from ch_fetch where company_number = %s", (n,))
+        c.execute("delete from filing where company_number = %s", (n,))
+        c.execute("delete from pdf_read where company_number = %s", (n,))
+        c.execute("update company set last_accounts_date = '2025-01-31', accounts_category = 'MICRO ENTITY', status = 'Active' where company_number = %s", (n,))
+    # Pugh: figures to January 2020 only, never checked with Companies House since.
+    _upsert(c, pugh, date(2020, 1, 31), {"turnover": 1}, "accounts:x", balance_date=date(2020, 1, 31))
+    # Up to date: not a gap.
+    _upsert(c, ok, date(2025, 1, 31), {"turnover": 1}, "accounts:x", balance_date=date(2025, 1, 31))
+    # Dormant: no figures expected.
+    c.execute("update company set accounts_category = 'DORMANT' where company_number = %s", (dormant,))
+    # Checked since, PDF couldn't be read.
+    _upsert(c, failed, date(2022, 1, 31), {"turnover": 1}, "accounts:x", balance_date=date(2022, 1, 31))
+    c.execute("insert into ch_fetch (company_number, fetched_at) values (%s, '2025-06-01')", (failed,))
+    c.execute("""insert into pdf_read (company_number, made_up, status, tries, version) values (%s, '2025-01-31', 'failed', 3, 1)""", (failed,))
+    # Checked since, PDF filing known and waiting.
+    _upsert(c, waiting, date(2022, 1, 31), {"turnover": 1}, "accounts:x", balance_date=date(2022, 1, 31))
+    c.execute("insert into ch_fetch (company_number, fetched_at) values (%s, '2025-06-01')", (waiting,))
+    c.execute("""insert into filing (company_number, transaction_id, type, filed_on, detail)
+                 values (%s, 'w1', 'AA', '2025-05-01', '{"made_up_date": "2025-01-31", "document": "/doc/w1"}')""", (waiting,))
+    # Never had any figures, never checked.
+    c.commit()
+    got = {r["company_number"]: r["reason"] for r in gaps.find(c)}
+    assert got.get(pugh) == "not_checked" and got.get(never) == "not_checked"
+    assert got.get(failed) == "pdf_unreadable" and got.get(waiting) == "pdf_waiting"
+    assert ok not in got and dormant not in got
+    s = gaps.summary(c)
+    assert s["by_reason"]["not_checked"] >= 2
+    # Fill: each not-checked company is fetched from Companies House (here: Pugh's missing years arrive as data).
+    monkeypatch.setattr(chapi, "enabled", lambda: True)
+    fetched = []
+    def fake_fetch(conn, num, people=True):
+        fetched.append(num)
+        conn.execute("insert into ch_fetch (company_number, fetched_at) values (%s, now()) on conflict (company_number) do update set fetched_at = now()", (num,))
+        if num == pugh:
+            for y in range(2021, 2026):
+                _upsert(conn, num, date(y, 1, 31), {"turnover": y}, "api:x", balance_date=date(y, 1, 31))
+            return {"accounts_added": 5}
+        return {"accounts_added": 0}
+    monkeypatch.setattr(chapi, "fetch", fake_fetch)
+    r = gaps.fill(c)
+    assert pugh in fetched and never in fetched and failed not in fetched and waiting not in fetched
+    assert r["years_added_from_data"] == 5
+    after = {x["company_number"]: x["reason"] for x in gaps.find(c)}
+    assert pugh not in after                                   # filled
+    assert after.get(never) == "no_document"                   # checked now; nothing readable to fetch

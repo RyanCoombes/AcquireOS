@@ -302,7 +302,7 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
         have = {r["period_end"] for r in conn.execute(
             "select period_end from financial_period where company_number = %s and not period_inferred", (num,))}
         aa = [f for f in filings_raw if (f.get("type") or "").upper() == "AA"
-              and (f.get("links") or {}).get("document_metadata")][:5]
+              and (f.get("links") or {}).get("document_metadata")][:10]  # 10: a long gap (e.g. six missing years) fills in one go
         for f in aa:
             mu = _d((f.get("description_values") or {}).get("made_up_date"))
             if not mu or any(abs((mu - h).days) <= 45 for h in have):

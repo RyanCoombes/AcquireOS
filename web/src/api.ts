@@ -322,6 +322,8 @@ export const api = {
   unwatch: (kind: string, ref: string) =>
     req<{ ok: boolean }>(`/api/watch?kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(ref)}`, { method: "DELETE" }),
   websiteSummary: () => req<{ checked: number; confirmed: number; possible: number; none: number; last_at: string | null; with_website: number }>("/api/website-check"),
+  accountsGaps: () => req<{ total: number; by_reason: Record<string, number>; examples: { company_number: string; name: string; last_accounts_date: string; latest_held: string | null; reason: string; why: string; score: number | null; in_pipeline: boolean }[] }>("/api/accounts-gaps"),
+  fillAccountsGaps: () => req<{ started: boolean }>("/api/accounts-gaps/fill", { method: "POST" }),
   logoSummary: () => req<{ with_website: number; found: number; none: number; yours: number; not_tried: number; reasons: { note: string; n: number }[] }>("/api/logos"),
   findLogos: () => req<{ started: boolean }>("/api/logos/find", { method: "POST" }),
   websiteCheck: (scope: string, limit: number) =>

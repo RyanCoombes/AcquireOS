@@ -4,7 +4,7 @@ import { duration, elapsed, useJob } from "../components/JobBar";
 import { Link } from "react-router-dom";
 import { api, type ChSync, type PdfFailure, type PdfRead, type PdfCheck, type PdfYear, type Preview } from "../api";
 import { ErrorLine, Hint, useAsync } from "../components/bits";
-import { dateTime, int } from "../format";
+import { date, dateTime, int } from "../format";
 
 const KINDS = {
   companies: {
@@ -173,6 +173,7 @@ export default function Import() {
       <PdfReadPanel />
       <WebsiteBatch />
       <LogoBatch />
+      <AccountsGaps />
 
       <section>
         <h2>History</h2>
@@ -875,6 +876,59 @@ function LogoBatch() {
           </tbody></table>
         </details>
       )}
+      {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
+    </section>
+  );
+}
+
+
+const GAP_REASONS: [string, string][] = [
+  ["not_checked", "Not checked with Companies House since the newer accounts were filed"],
+  ["pdf_waiting", "Filed as PDF, waiting for the PDF reader"],
+  ["pdf_unreadable", "Filed as PDF, couldn't be read"],
+  ["no_document", "No readable document at Companies House"],
+];
+
+function AccountsGaps() {
+  const [msg, setMsg] = useState<string | null>(null);
+  const g = useAsync(() => api.accountsGaps(), []);
+  const d = g.data;
+  const fixable = d?.by_reason["not_checked"] ?? 0;
+  return (
+    <section>
+      <div className="sechead"><h2>Missing accounts years</h2><span className="faint small">Your buy boxes and pipeline</span></div>
+      <p className="small" style={{ marginTop: 0 }}>
+        Companies whose latest accounts at Companies House are much newer than the latest year held here (e.g. nothing since 2020
+        though they file every year). Usually newer years were filed as PDF, or in a monthly file that didn't load, and the company
+        hasn't been checked since.
+      </p>
+      {d && (d.total === 0 ? <div className="faint small">None: every company's figures are up to date with its filings.</div> : <>
+        <table className="small"><tbody>
+          {GAP_REASONS.filter(([k]) => d.by_reason[k]).map(([k, l]) => <tr key={k}><td>{l}</td><td className="num"><b>{int(d.by_reason[k])}</b></td></tr>)}
+        </tbody></table>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+          <button className="btn primary" disabled={!fixable} onClick={async () => {
+            setMsg(null);
+            try { await api.fillAccountsGaps(); setMsg("Started. Progress shows at the top; PDF-only years then go to the PDF reader."); }
+            catch (e: any) { setMsg(e.message); }
+          }}>{fixable ? `Check ${int(Math.min(fixable, 300))} with Companies House` : "Nothing to check"}</button>
+          <span className="faint small">Up to 300 a run, pipeline first, then best scores. Needs your Companies House key.</span>
+        </div>
+        <details style={{ marginTop: 10 }}>
+          <summary className="small">Show the companies</summary>
+          <table className="small" style={{ marginTop: 6 }}>
+            <thead><tr><th>Company</th><th>Latest filed</th><th>Latest held</th><th>Why</th></tr></thead>
+            <tbody>{d.examples.map((r) => (
+              <tr key={r.company_number}>
+                <td><Link to={`/c/${r.company_number}`}>{r.name}</Link></td>
+                <td className="nowrap">{date(r.last_accounts_date)}</td>
+                <td className="nowrap">{r.latest_held ? date(r.latest_held) : "none"}</td>
+                <td className="faint">{GAP_REASONS.find(([k]) => k === r.reason)?.[1] ?? r.why}</td>
+              </tr>))}</tbody>
+          </table>
+          {d.total > d.examples.length && <div className="faint small">and {int(d.total - d.examples.length)} more</div>}
+        </details>
+      </>)}
       {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
     </section>
   );

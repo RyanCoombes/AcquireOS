@@ -52,6 +52,7 @@ def main(argv=None):
     p.add_argument("--sheet")
 
     sub.add_parser("rebuild", help="Recompute ownership, links and scores")
+    sub.add_parser("fill-accounts-gaps", help="Check companies whose newer accounts never arrived with Companies House (used by the web app)")
     sub.add_parser("find-logos", help="Look for every missing company logo on its website (used by the web app)")
     sub.add_parser("fix-staff-years", help="Clear staff counts that were really the year heading (used by the web app)")
     sub.add_parser("reclassify-owners", help="Classify owners with the current rules and rescore (used by the web app)")
@@ -70,6 +71,23 @@ def main(argv=None):
         import secrets
 
         print(secrets.token_urlsafe(32))
+        return
+    if a.cmd == "fill-accounts-gaps":
+        from . import db as _db, gaps as _gaps, jobs as _jobs
+
+        job = _jobs.Job("fill-accounts-gaps", ["Fill missing accounts years"])
+        job.stage("Fill missing accounts years")
+        try:
+            with _db.conn(dedicated=True) as c:
+                r = _gaps.fill(c, progress=lambda frac, msg: job.progress(frac, msg))
+            job.log(f"Checked {r['checked']:,} companies; {r['years_added_from_data']:,} added from data filings; "
+                    f"PDF-only years go to the PDF reader. {r['still_to_check']:,} still to check.")
+            job.finish(r)
+        except Exception as e:
+            job.finish({}, status="failed", error=str(e))
+            raise
+        finally:
+            _db.close_pool()
         return
     if a.cmd == "find-logos":
         from . import jobs as _jobs, logos as _logos

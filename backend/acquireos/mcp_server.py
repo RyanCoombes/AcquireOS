@@ -106,6 +106,15 @@ def list_changes(days: int = 30, kind: str | None = None, pipeline_only: bool = 
                              alerts=notifications_only))
 
 
+@server.tool(description=(
+    "Companies whose latest accounts on the Companies House register are much newer than the latest year of "
+    "figures held (years that never arrived), with the reason for each: not checked with Companies House since "
+    "(fixable with fill), filed as PDF and unreadable, waiting for the PDF reader, or no document. "
+    "scope 'targets' (buy boxes and pipeline, default) or 'all'."))
+def list_accounts_gaps(scope: str = "targets") -> str:
+    return _j(_api().accounts_gaps(scope))
+
+
 @server.tool(description="Mark changes as read (ids from list_changes), or all of them with all=true. Only when the user asks.")
 def mark_changes_read(ids: list[int] | None = None, all: bool = False) -> str:
     a = _api()

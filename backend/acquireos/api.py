@@ -1787,6 +1787,29 @@ class LogoIn(BaseModel):
     url: str | None = None
 
 
+@app.get("/api/accounts-gaps")
+def accounts_gaps(scope: str = "targets"):
+    """Companies whose latest accounts on the register are much newer than the
+    latest year held, with why, in your buy boxes and pipeline (or scope=all)."""
+    from . import gaps
+    with db.conn() as c:
+        return gaps.summary(c, scope)
+
+
+@app.post("/api/accounts-gaps/fill")
+def accounts_gaps_fill():
+    """Check those not looked at since their newer accounts were filed, as a background job."""
+    from . import chapi, jobs
+    if not chapi.enabled():
+        raise HTTPException(400, "Add your Companies House API key (CH_API_KEY in the stack) to fill missing years")
+    with db.conn() as c:
+        cur = jobs.current(c)
+        if cur and cur["status"] == "running":
+            raise HTTPException(409, "A job is running: try again when it has finished")
+    _run_detached(["fill-accounts-gaps"], after=clear_cache)
+    return {"started": True}
+
+
 @app.get("/api/logos")
 def logos_summary():
     """How many companies with a website have a logo, and why the rest don't."""
