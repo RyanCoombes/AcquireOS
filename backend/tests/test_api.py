@@ -2351,3 +2351,23 @@ def test_background_cleanups_report_status_and_one_failure_doesnt_stop_the_rest(
         assert cu["Putting right negative cash, debtors and stock"]["status"] == "done"
         assert "years in" in cu["Putting right negative cash, debtors and stock"]["detail"]
     assert calls == ["staff"]
+
+
+def test_every_column_sorts_on_both_lists(loaded):
+    from acquireos.api import SORTS, app
+
+    loaded.commit()
+    keys = ["score", "name", "staff", "revenue", "value", "profit", "ebitda", "net_assets", "cash", "debt", "age",
+            "years", "industry", "region", "ownership", "website", "changed", "next", "status"]
+    assert set(keys) - {"name"} <= set(SORTS) | {"changed"}
+    with TestClient(app) as cl:
+        for in_box in ("true", "false"):
+            for k in keys:
+                for d in ("asc", "desc"):
+                    r = cl.get(f"/api/companies?sort={k}&dir={d}&in_box={in_box}&limit=50")
+                    assert r.status_code == 200, (k, d, in_box, r.text[:200])
+        # The directory (every company), sorted by indicative value, highest first.
+        rows = cl.get("/api/companies?sort=value&dir=desc&limit=50").json()["rows"]
+        vals = [float(x["value_high"]) for x in rows if x.get("value_high") is not None]
+        assert vals and vals == sorted(vals, reverse=True)
+        assert rows[0]["value_high"] is not None  # companies with a value come first

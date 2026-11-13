@@ -213,6 +213,10 @@ SORTS = {
     "age": "o.oldest_birth_year", "years": "c.incorporation_date", "net_assets": "l.net_assets",
     "updated": "uc.updated_at", "status": "uc.status", "value": "s.value_high",
     "changed": "ch.last_change", "profit": "l.operating_profit", "cash": "l.cash",
+    # Every column on the lists can be sorted.
+    "ebitda": "(l.operating_profit + coalesce(l.da, 0))", "debt": "l.bank_debt", "industry": "c.sic_codes[1]",
+    "region": "c.region", "ownership": "o.ownership_type", "next": "uc.next_action_on",
+    "website": "(select en2.website from enrichment en2 where en2.company_number = c.company_number)",
 }
 
 
@@ -500,6 +504,10 @@ SIDE_SORTS = {
     ("net_assets", "desc"): ("company_latest", "net_assets"),
     ("revenue", "desc"): ("estimate", "revenue_high"),
     ("age", "asc"): ("company_ownership", "oldest_birth_year"),  # oldest owners first
+    ("value", "desc"): ("company_best", "value_high"),
+    ("profit", "desc"): ("company_latest", "operating_profit"),
+    ("cash", "desc"): ("company_latest", "cash"),
+    ("debt", "desc"): ("company_latest", "bank_debt"),
 }
 
 

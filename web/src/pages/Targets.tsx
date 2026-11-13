@@ -11,48 +11,42 @@ import { ageFrom, cap, CHANGE_KIND, date, int, isBadStatus, money, OWNERSHIP, ra
 const PAGE = 100;
 type Mode = "directory" | "targets";
 type Col = { key: string; label: string; num?: boolean; sm?: boolean; nosort?: boolean };
-// The directory: every company, A to Z, described by what it is.
-const DIR_COLS: Col[] = [
-  { key: "name", label: "Company" },
-  { key: "industry", label: "Industry", sm: true, nosort: true },
-  { key: "years", label: "Years", num: true, sm: true },
-  { key: "staff", label: "Staff", num: true },
-  { key: "revenue", label: "Revenue", num: true, sm: true },
-  { key: "age", label: "Owners", sm: true },
-  { key: "score", label: "Best fit" },
-  { key: "status", label: "My status" },
-];
-const COLS: Col[] = [
+// One set of columns for both lists: every column can be shown on either, and
+// sorted. The lists only differ in which ones they show to start with.
+const ALL_COLS: Col[] = [
   { key: "score", label: "Score" },
   { key: "name", label: "Company" },
+  { key: "industry", label: "Industry", sm: true },
+  { key: "years", label: "Years", num: true, sm: true },
   { key: "staff", label: "Staff", num: true },
   { key: "revenue", label: "Revenue", num: true, sm: true },
   { key: "value", label: "Indicative value", num: true, sm: true },
-  { key: "years", label: "Years", num: true, sm: true },
-  { key: "age", label: "Owner", num: true },
-  { key: "ownership", label: "Ownership", sm: true, nosort: true },
-  { key: "status", label: "My status" },
-];
-// More you can switch on (Columns menu), placed before "My status".
-const EXTRA_COLS: Col[] = [
   { key: "profit", label: "Operating profit", num: true, sm: true },
-  { key: "ebitda", label: "EBITDA", num: true, sm: true, nosort: true },
+  { key: "ebitda", label: "EBITDA", num: true, sm: true },
   { key: "net_assets", label: "Net assets", num: true, sm: true },
   { key: "cash", label: "Cash", num: true, sm: true },
-  { key: "debt", label: "Bank debt", num: true, sm: true, nosort: true },
-  { key: "industry", label: "Industry", sm: true, nosort: true },
-  { key: "region", label: "Region", sm: true, nosort: true },
-  { key: "website", label: "Website", sm: true, nosort: true },
+  { key: "debt", label: "Bank debt", num: true, sm: true },
+  { key: "age", label: "Owner", num: true },
+  { key: "ownership", label: "Ownership", sm: true },
+  { key: "region", label: "Region", sm: true },
+  { key: "website", label: "Website", sm: true },
   { key: "changed", label: "Last change", sm: true },
-  { key: "next", label: "Next action", sm: true, nosort: true },
+  { key: "next", label: "Next action", sm: true },
+  { key: "status", label: "My status" },
 ];
-const allCols = (mode: Mode) => {
-  const base = mode === "directory" ? DIR_COLS : COLS;
-  const extras = EXTRA_COLS.filter((x) => !base.some((b) => b.key === x.key));
-  const i = base.findIndex((c) => c.key === "status");
-  return [...base.slice(0, i), ...extras, ...base.slice(i)];
+const DEFAULT_COLS: Record<Mode, string[]> = {
+  directory: ["name", "industry", "years", "staff", "revenue", "age", "score", "status"],
+  targets: ["score", "name", "staff", "revenue", "value", "years", "age", "ownership", "status"],
 };
-const defaultCols = (mode: Mode) => (mode === "directory" ? DIR_COLS : COLS).map((c) => c.key);
+const LABELS: Record<Mode, Record<string, string>> = { directory: { score: "Best fit", age: "Owners" }, targets: {} };
+// The list's usual columns in their usual order, then every other one before "My status".
+const allCols = (mode: Mode): Col[] => {
+  const byKey = Object.fromEntries(ALL_COLS.map((c) => [c.key, { ...c, label: LABELS[mode][c.key] ?? c.label }]));
+  const first = DEFAULT_COLS[mode].filter((k) => k !== "status").map((k) => byKey[k]);
+  const rest = ALL_COLS.filter((c) => !DEFAULT_COLS[mode].includes(c.key)).map((c) => byKey[c.key]);
+  return [...first, ...rest, byKey["status"]];
+};
+const defaultCols = (mode: Mode) => DEFAULT_COLS[mode];
 
 // The ways in. Each is just a preset of URL parameters; filters are kept
 // when you switch view.
