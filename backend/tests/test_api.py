@@ -2277,8 +2277,13 @@ def test_balances_are_never_negative_and_thousand_drops_are_flagged(loaded):
     # Stored before the fix: a negative cash balance, and a saved one (left alone).
     _upsert(c, a, date(2024, 1, 31), {"cash": -3_535_820, "turnover": 9_000_000}, "api:x", balance_date=date(2024, 1, 31))
     _upsert(c, b, date(2024, 1, 31), {"cash": -100}, "manual", balance_date=date(2024, 1, 31))
+    # From a scanned PDF: cleared and the PDF sent back to the reader, not just flipped.
+    _upsert(c, a, date(2023, 1, 31), {"cash": -105_768}, "pdf:ocr", balance_date=date(2023, 1, 31))
+    c.execute("""insert into pdf_read (company_number, made_up, status, tries, version) values (%s, '2023-01-31', 'done', 1, 7)
+                 on conflict (company_number, made_up) do update set status = 'done'""", (a,))
     r = fix_negative_balances(c)
-    assert r["years"] == 1
+    assert r["years"] == 2 and r["pdf_cleared"] == 1 and r["pdf_requeued"] == 1
+    assert c.execute("select cash from financial_period where company_number = %s and period_end = '2023-01-31'", (a,)).fetchone()["cash"] is None
     assert c.execute("select cash from financial_period where company_number = %s", (a,)).fetchone()["cash"] == 3_535_820
     assert c.execute("select cash from financial_period where company_number = %s", (b,)).fetchone()["cash"] == -100
     # Debtors read as £1,696 between £1.26m and £0.87m: flagged for checking.
@@ -2288,3 +2293,31 @@ def test_balances_are_never_negative_and_thousand_drops_are_flagged(loaded):
     assert any("debtors £1696" in w for w in flagged.get((a, 2023), []))
     assert (a, 2022) not in flagged and (a, 2024) not in flagged
     c.rollback()
+
+
+
+def test_pdf_reader_cash_from_balance_sheet_and_current_assets_check():
+    from acquireos.pdfaccounts import extract
+
+    pugh = ("Turnover 9,123,456 8,900,000\nCurrent assets\nStocks 10,000 12,000\nDebtors 14 873,053 1,696 806\n"
+            "Cash at bank and in hand 3,535,820 2,727,519\nTotal current assets 4,418,873 4,436,325\n"
+            "Net assets 3,590,000 3,290,000\nNet increase/(decrease) in cash and cash equivalents 808,301 (105,768)\n"
+            "Cash and cash equivalents at end of year 3,535,820 2,727,519")
+    e = extract(pugh)
+    assert e["figures"]["cash"] == [3_535_820, 2_727_519]
+    assert e["figures"]["debtors"] == [873_053, 1_696_806]
+    # The cash flow statement first, with a fall in brackets: still the balance sheet's cash.
+    cf = ("Turnover 5,000,000 4,000,000\nNet increase/(decrease) in cash and cash equivalents (105,768) 50,000\n"
+          "Cash and cash equivalents at end of year 2,727,519 2,833,287\nCash at bank and in hand 2,727,519 2,833,287")
+    assert extract(cf)["figures"]["cash"] == [2_727_519, 2_833_287]
+    # Current-year debtors split by OCR: repaired from current assets, the fragment not kept as last year's.
+    bad = ("Turnover 9,000,000 8,000,000\nDebtors 14 1,696 806 873,053\nCash at bank and in hand 2,727,519 2,833,287\n"
+           "Total current assets 4,424,325 3,700,000")
+    assert extract(bad)["figures"]["debtors"] == [1_696_806, None]
+    # Impossible values dropped, not saved.
+    e = extract("Turnover 9,000,000 8,000,000\nDebtors 500 400\nNet assets 2,000,000,000 1,900,000,000")
+    assert "debtors" not in e["figures"] and "net_assets" not in e["figures"]
+    # An ordinary company is untouched.
+    ok = extract("Turnover 900,000 800,000\nDebtors 120,000 110,000\nCash at bank and in hand 50,000 40,000\n"
+                 "Total current assets 170,000 150,000")
+    assert ok["figures"]["debtors"] == [120_000, 110_000] and ok["figures"]["cash"] == [50_000, 40_000]

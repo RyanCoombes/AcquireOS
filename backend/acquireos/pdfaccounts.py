@@ -27,7 +27,7 @@ FIELDS = ("turnover", "gross_profit", "operating_profit", "profit_loss", "net_as
 
 # Labels at the start of a line (lower-cased, punctuation simplified).
 # Bump when reading improves: years that couldn't be read are tried again.
-VERSION = 7  # 6: keeps the full text and each figure's line, for checking; 7: staff written as a sentence or a table by role
+VERSION = 8  # 6: keeps the full text and each figure's line, for checking; 7: staff written as a sentence or a table by role; 8: cash from the balance sheet only, current-assets cross-check
 
 _PL = r"(profit|loss|\(loss\)\s*/\s*profit|profit\s*/\s*\(loss\)|\(profit\)\s*/\s*loss|loss\s*/\s*\(profit\))"
 LABELS: list[tuple[str, re.Pattern]] = [
@@ -39,7 +39,12 @@ LABELS: list[tuple[str, re.Pattern]] = [
                                r"total comprehensive (income|\(loss\)|loss|income\s*/\s*\(loss\)) for the (financial )?(year|period))")),
     ("net_assets", re.compile(r"^(total )?net (assets|liabilities|\(liabilities\)\s*/\s*assets|assets\s*/\s*\(liabilities\))\b")),
     ("equity", re.compile(r"^(total equity|(total )?capital and reserves|(total )?(shareholders|members)'?\s*(funds|\(deficit\)\s*/\s*funds|funds\s*/\s*\(deficit\)|deficit))\b")),
-    ("cash", re.compile(r"^(cash at bank( and in hand)?|cash and cash equivalents|cash in hand|cash)\b(?!\s*flow)")),
+    # Cash from the balance sheet only: never cash flow lines ("cash and cash equivalents at the
+    # end of the year", "net (decrease) in cash"), where brackets mean a fall, not a balance.
+    ("cash", re.compile(r"^(cash at bank( and (in|on) hand)?|cash and cash equivalents|cash in hand|cash)\b"
+                        r"(?!.*\b(flows?|at (the )?(beginning|start|end)|increase|decrease|movement|generated|used|"
+                        r"paid|received|outflow|inflow|equivalents comprise)\b)")),
+    ("current_assets", re.compile(r"^(total )?current assets\b")),
     ("debtors", re.compile(r"^(debtors|trade and other receivables)\b")),
     ("creditors_within", re.compile(r"^creditors:?\s*(amounts )?falling due within one year\b")),
     ("creditors_after", re.compile(r"^creditors:?\s*(amounts )?falling due after (more than )?one year\b")),
@@ -185,6 +190,8 @@ def extract(text: str) -> dict:
             prior = vals[1] * scale if len(vals) > 1 else None
             if field in ("operating_profit", "profit_loss", "gross_profit") and low.startswith("loss") and cur > 0:
                 cur, prior = -cur, (-prior if prior and prior > 0 else prior)
+            if field in ("cash", "debtors", "stock", "current_assets"):  # balances: never negative
+                cur, prior = abs(cur), (abs(prior) if prior is not None else None)
             found[field] = [cur, prior]
             src[field] = " ".join(raw_lines[i].split())
             break
@@ -249,6 +256,36 @@ def extract(text: str) -> dict:
     for f in ("creditors_within", "creditors_after", "stock"):  # sizes: shown in brackets on balance sheets
         if f in found:
             found[f] = [abs(v) if v is not None else None for v in found[f]]
+    # Cross-check against current assets (debtors + cash + stock, give or take other
+    # small items): debtors read a thousand times too small ("1,696 806" OCR'd for
+    # 1,696,806) are put right from the total when it adds up exactly that way.
+    def col(f, k):
+        v = found.get(f)
+        return v[k] if v and len(v) > k else None
+    for k in (0, 1):  # the year and the year before
+        ca, db = col("current_assets", k), col("debtors", k)
+        if not ca or not db:
+            continue
+        rest = ca - (col("cash", k) or 0) - (col("stock", k) or 0)
+        if rest > 0 and 990 <= rest / db <= 1010:
+            found["debtors"][k] = rest
+            dropped.append(f"{'prior-year ' if k else ''}debtors read as £{int(db):,}, corrected to £{int(rest):,} from current assets")
+            if k == 0 and col("debtors", 1) is not None and col("debtors", 1) < 1000:
+                found["debtors"][1] = None  # the rest of the split figure ("806"), not last year's debtors
+        elif db > ca * 1.02:
+            dropped.append(f"{'prior-year ' if k else ''}debtors (more than total current assets)")
+            found["debtors"][k] = None
+    if "debtors" in found and found["debtors"][0] is None:
+        del found["debtors"]
+    found.pop("current_assets", None)  # a check only, not stored
+    # Impossible beside turnover: debtors under 0.1% of it, net assets over 100 times it.
+    if t and t >= 100_000:
+        if "debtors" in found and found["debtors"][0] is not None and 0 < found["debtors"][0] < t * 0.001:
+            dropped.append("debtors (under 0.1% of turnover: a misread)")
+            del found["debtors"]
+        if "net_assets" in found and found["net_assets"][0] is not None and abs(found["net_assets"][0]) > t * 100:
+            dropped.append("net assets (over 100 times turnover: a misread)")
+            del found["net_assets"]
     # A tiny figure beside a real turnover is a note number or a misread (e.g. "8"
     # gross profit on £34m): drop it rather than save it.
     if t and t >= 100_000:

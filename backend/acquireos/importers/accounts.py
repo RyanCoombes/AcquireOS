@@ -1028,11 +1028,24 @@ def fix_negative_balances(conn) -> dict:
     from .. import scoring
     from .companies import refresh_estimates
 
+    # Read from a scanned PDF: the number itself may be from the wrong line (a cash flow
+    # figure), so clear it and read that year's PDF again with the fixed reader (fills gaps).
+    pdf_rows = conn.execute("""
+        update financial_period set cash = case when cash < 0 then null else cash end,
+               debtors = case when debtors < 0 then null else debtors end,
+               stock = case when stock < 0 then null else stock end
+        where (cash < 0 or debtors < 0 or stock < 0) and source in ('pdf:text', 'pdf:ocr')
+        returning company_number, period_end""").fetchall()
+    requeued = conn.execute("""delete from pdf_read r using (select unnest(%s::text[]) n, unnest(%s::date[]) p) x
+                               where r.company_number = x.n and abs(r.made_up - x.p) <= 45 and r.status = 'done'""",
+                            ([r["company_number"] for r in pdf_rows], [r["period_end"] for r in pdf_rows])).rowcount
+    # From electronic accounts: the right number with the wrong sign (the net debt note's).
     rows = conn.execute("""
         update financial_period set cash = abs(cash), debtors = abs(debtors), stock = abs(stock)
         where (cash < 0 or debtors < 0 or stock < 0)
-          and coalesce(source, '') not in ('manual', 'pdf:claude') and coalesce(source, '') not like 'manual%%'
+          and coalesce(source, '') not in ('manual', 'pdf:claude', 'pdf:text', 'pdf:ocr') and coalesce(source, '') not like 'manual%%'
         returning company_number""").fetchall()
+    rows = list(rows) + list(pdf_rows)
     nums = sorted({r["company_number"] for r in rows})
     if nums:
         conn.execute("drop table if exists neg_fix")
@@ -1045,4 +1058,4 @@ def fix_negative_balances(conn) -> dict:
                 "select distinct company_number from score where company_number = any(%s)", (nums,))]:
             scoring.rescore(conn, company_number=n)
         conn.commit()
-    return {"years": len(rows), "companies": len(nums)}
+    return {"years": len(rows), "companies": len(nums), "pdf_cleared": len(pdf_rows), "pdf_requeued": requeued}

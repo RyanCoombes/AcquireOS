@@ -528,12 +528,14 @@ def _negative_balance_catch_up(c):
     from . import chsync
     from .importers.accounts import fix_negative_balances
 
-    if chsync.get_setting(c, "negative_balances_fixed", None):
+    done = chsync.get_setting(c, "negative_balances_fixed", None)
+    if isinstance(done, dict) and int(done.get("v", 1)) >= 2:  # 2: scanned-PDF years cleared and re-read, not flipped
         return
     r = fix_negative_balances(c)
-    chsync.set_setting(c, "negative_balances_fixed", {**r, "v": 1})
+    chsync.set_setting(c, "negative_balances_fixed", {**r, "v": 2})
     c.commit()
-    log(f"Negative cash, debtors or stock made positive: {r['years']} years in {r['companies']} companies")
+    log(f"Negative cash, debtors or stock: {r['years']} years in {r['companies']} companies put right "
+        f"({r['pdf_cleared']} from scanned PDFs cleared, {r['pdf_requeued']} sent back to the reader)")
 
 
 def _ownership_catch_up():
