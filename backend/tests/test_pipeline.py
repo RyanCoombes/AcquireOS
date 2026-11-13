@@ -412,3 +412,60 @@ def test_unresolved_holdcos_are_listed_for_look_up(c, tmp_path):
     c.execute("insert into user_company (user_id, company_number, status) values (1, '01000003', 'researching') on conflict (user_id, company_number) do update set status = 'researching'")
     rows = gaps.holdcos_to_look_up(c)
     assert [(r["holdco"], r["target"]) for r in rows] == [("09222222", "01000003")]
+
+
+def test_sale_signals_parent_sale_and_acquisition_pattern(c, tmp_path):
+    """BCC IT: sold one level up (its holding company got a new corporate owner as
+    the founder left), and the acquisition pattern (directors abroad + new charge,
+    year-end change or new articles); neither from foreign directors alone."""
+    import json as _json
+    from datetime import date, timedelta
+
+    from acquireos import ownership, scoring
+    from acquireos.importers import companies, psc
+
+    companies.run(c, FIX / "ranked_sample.csv")
+    for num, name in [("07273556", "MELYN LTD"), ("09888888", "LYRA TECHNOLOGY GROUP UK LTD")]:
+        c.execute("insert into company (company_number, name, status) values (%s, %s, 'Active') on conflict do nothing", (num, name))
+    big = ["ownership-of-shares-75-to-100-percent"]
+    recent = (date.today() - timedelta(days=200)).isoformat()
+    recs = [
+        ("01000001", {"kind": "corporate-entity-person-with-significant-control", "name": "MELYN LTD", "natures_of_control": big,
+                      "notified_on": "2016-04-06", "identification": {"registration_number": "07273556", "country_registered": "Wales"}}),
+        ("07273556", {"kind": "individual-person-with-significant-control", "name": "Mr Hywel Example",
+                      "date_of_birth": {"year": 1975, "month": 1}, "natures_of_control": big, "notified_on": "2016-04-06", "ceased_on": recent}),
+        ("07273556", {"kind": "corporate-entity-person-with-significant-control", "name": "LYRA TECHNOLOGY GROUP UK LTD",
+                      "natures_of_control": big, "notified_on": recent,
+                      "identification": {"registration_number": "09888888", "country_registered": "England"}}),
+    ]
+    f = tmp_path / "psc.jsonl"
+    f.write_text("\n".join(_json.dumps({"company_number": n_, "data": d}) for n_, d in recs))
+    psc.run(c, [f])
+    ownership.rebuild(c, links=False)
+    c.execute("select ao_refresh_company_signals()")
+    sig = {r["company_number"]: r for r in c.execute("select * from company_signal")}
+    assert "recently_sold" in sig["01000001"]["signals"]                       # sold one level up
+    assert "LYRA" in sig["01000001"]["sold_to"] and "Melyn" in sig["01000001"]["sold_to"]
+
+    # The acquisition pattern on a company with no owner-record change.
+    d = (date.today() - timedelta(days=100)).isoformat()
+    c.execute("""insert into officer (company_number, officer_key, name, role, appointed_on, residence) values
+                 ('01000002', 'a1', 'SMITH, John', 'director', %(d)s, 'United States'),
+                 ('01000002', 'a2', 'DOE, Jane', 'director', %(d)s, 'United States')""", {"d": d})
+    c.execute("insert into charge (company_number, charge_id, status, created_on) values ('01000002', 'c1', 'outstanding', %s)", (d,))
+    # Foreign directors alone (no charge, no year-end change, no articles): not enough.
+    c.execute("""insert into officer (company_number, officer_key, name, role, appointed_on, residence) values
+                 ('01000006', 'b1', 'ROE, Ann', 'director', %(d)s, 'Ireland'),
+                 ('01000006', 'b2', 'POE, Ed', 'director', %(d)s, 'France')""", {"d": d})
+    # One UK director and a charge: not enough either.
+    c.execute("""insert into officer (company_number, officer_key, name, role, appointed_on, residence) values
+                 ('SC123456', 'c1', 'BLOGGS, Joe', 'director', %(d)s, 'Scotland')""", {"d": d})
+    c.execute("insert into charge (company_number, charge_id, status, created_on) values ('SC123456', 'c2', 'outstanding', %s)", (d,))
+    c.execute("select ao_refresh_company_signals()")
+    sig = {r["company_number"]: r["signals"] for r in c.execute("select * from company_signal")}
+    assert "likely_acquired" in sig.get("01000002", [])
+    assert "likely_acquired" not in sig.get("01000006", []) and "likely_acquired" not in sig.get("SC123456", [])
+    # It leaves the company out of a buy box, like a recent sale.
+    scoring.rescore(c)
+    ex = c.execute("select exclusion from score where company_number = '01000002' and excluded").fetchone()
+    assert ex and "Signs of a recent sale" in ex["exclusion"]

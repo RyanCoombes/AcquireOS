@@ -153,7 +153,7 @@ export default function BuyBox() {
               <Hint text="E.g. leave out 61200 (wireless telecoms) unless the company also has a 62 (software) or 63 (data) code: drops mobile operators, keeps communications software firms." /></div>
             <div className="bb-f"><label>Owned by</label><div>{xchecks(Object.entries(OWNERSHIP), ["exclude", "ownership"])}</div></div>
             <div className="bb-f"><label>Accounts filed as</label><div>{xchecks((meta.data?.account_sizes ?? []).map((x) => [x.value, x.label] as [string, string]), ["exclude", "accounts_types"])}</div></div>
-            <div className="bb-f"><label>Already dealt with</label><div>{toggle(["exclude", "recently_sold"], "Sold in the last 3 years", true)}
+            <div className="bb-f"><label>Already dealt with</label><div>{toggle(["exclude", "recently_sold"], "Sold in the last 3 years, or signs of a sale", true)}
               {toggle(["exclude", "possible_buyer"], "Buying others", false)}</div></div>
             <div className="bb-f"><label>Registered address</label><div>{xchecks(Object.entries(meta.data?.address_flags ?? {}), ["exclude", "address_flags"])}</div></div>
             {(meta.data?.regions ?? []).length > 0 && <div className="bb-f"><label>Registered in</label><div>{xchecks(meta.data!.regions.map((r) => [r, r]), ["exclude", "regions"])}</div></div>}

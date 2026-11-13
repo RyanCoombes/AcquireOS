@@ -192,7 +192,7 @@ ACCOUNT_TYPES = {
 
 UNKNOWN_SHARE = 0.5
 # Bump when the scoring rules change, so every company is scored again.
-SCORING_VERSION = 5  # 5: ownership from a researched holding company; 3: EBITDA adds back filed D&A; 4: an old own margin no longer caps the value range
+SCORING_VERSION = 6  # 6: signs of a sale exclude like recently sold; 5: ownership from a researched holding company; 3: EBITDA adds back filed D&A; 4: an old own margin no longer caps the value range
 
 
 def score_company(c: dict, criteria: dict, today: date | None = None, scope=None,
@@ -283,6 +283,9 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
             exclusion = f"Accounts filed as {ACCOUNT_TYPES[key][0].lower()}"
     if not exclusion and ex.get("recently_sold", True) and "recently_sold" in signals and not c.get("research_ownership") == "owner_held":
         exclusion = "Recently sold: a company became the owner as the previous owners left"
+    if not exclusion and ex.get("recently_sold", True) and "likely_acquired" in signals and not c.get("research_ownership") == "owner_held":
+        exclusion = ("Signs of a recent sale: directors from abroad appointed, with a new loan charge, "
+                     "year-end change or new articles (here or at its holding company)")
     if not exclusion and ex.get("possible_buyer") and "possible_buyer" in signals:
         exclusion = "Possible buyer: has taken over other companies recently"
     if not exclusion and t and t in ex.get("ownership", []) and t != c.get("ownership_type"):
