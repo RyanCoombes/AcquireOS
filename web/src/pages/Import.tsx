@@ -174,6 +174,7 @@ export default function Import() {
       <WebsiteBatch />
       <LogoBatch />
       <AccountsGaps />
+      <HoldcoLookUp />
 
       <section>
         <h2>History</h2>
@@ -928,6 +929,41 @@ function AccountsGaps() {
               </tr>))}</tbody>
           </table>
           {d.total > d.examples.length && <div className="faint small">and {int(d.total - d.examples.length)} more</div>}
+        </details>
+      </>)}
+      {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
+    </section>
+  );
+}
+
+
+function HoldcoLookUp() {
+  const [msg, setMsg] = useState<string | null>(null);
+  const h = useAsync(() => api.holdcos(), []);
+  const d = h.data;
+  return (
+    <section>
+      <div className="sechead"><h2>Holding companies to look up</h2><span className="faint small">Behind your targets and pipeline</span></div>
+      <p className="small" style={{ marginTop: 0 }}>
+        Targets owned through a holding company whose own owners aren't on record here show as "unknown", not "group-owned".
+        Looking the holding companies up at Companies House (owners, shareholder list, directors) usually shows who really owns them.
+        Parents are matched by registration number only, never by name.
+      </p>
+      {d && (d.total === 0 ? <div className="faint small">None to look up.</div> : <>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button className="btn primary" onClick={async () => {
+            setMsg(null);
+            try { await api.lookUpHoldcos(); setMsg("Started. Progress shows at the top; owners are reclassified at the end."); }
+            catch (e: any) { setMsg(e.message); }
+          }}>Look up {int(Math.min(d.total, 200))} holding {d.total === 1 ? "company" : "companies"}</button>
+          <span className="faint small">Up to 200 a run. Needs your Companies House key.</span>
+        </div>
+        <details style={{ marginTop: 10 }}>
+          <summary className="small">Show them</summary>
+          <table className="small" style={{ marginTop: 6 }}><tbody>
+            {d.examples.map((r) => <tr key={r.holdco}><td>{r.holdco_name} <span className="faint">{r.holdco}</span></td>
+              <td>owns <Link to={`/c/${r.target}`}>{r.target}</Link></td></tr>)}
+          </tbody></table>
         </details>
       </>)}
       {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
