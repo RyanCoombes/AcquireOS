@@ -523,6 +523,19 @@ def _false_prior_catch_up(c):
     log(f"Moved year ends: removed {r['removed']} made-up years in {r['companies']} companies")
 
 
+def _negative_balance_catch_up(c):
+    """Once after the update: cash, debtors and stock stored as negatives made positive (every company)."""
+    from . import chsync
+    from .importers.accounts import fix_negative_balances
+
+    if chsync.get_setting(c, "negative_balances_fixed", None):
+        return
+    r = fix_negative_balances(c)
+    chsync.set_setting(c, "negative_balances_fixed", {**r, "v": 1})
+    c.commit()
+    log(f"Negative cash, debtors or stock made positive: {r['years']} years in {r['companies']} companies")
+
+
 def _ownership_catch_up():
     import time
 
@@ -537,6 +550,7 @@ def _ownership_catch_up():
                 _staff_year_catch_up(c)
                 _all_boxes_catch_up(c)
                 _false_prior_catch_up(c)
+                _negative_balance_catch_up(c)
             done = int(chsync.get_setting(c, "ownership_version", 1) or 1)
             if done >= ownership.OWNERSHIP_VERSION or c.execute("select count(*) as n from company").fetchone()["n"] == 0:
                 return

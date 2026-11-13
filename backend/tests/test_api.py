@@ -2253,3 +2253,38 @@ def test_pdf_staff_sentence_saves_both_years_and_blank_pdf_years_are_requeued(lo
     assert r["pdf_staff_requeued"] == 1
     assert not c.execute("select 1 from pdf_read where company_number = %s and made_up = '2025-03-31'", (n,)).fetchone()
     c.rollback()
+
+
+def test_balances_are_never_negative_and_thousand_drops_are_flagged(loaded):
+    from datetime import date
+
+    from acquireos import pdfaccounts
+    from acquireos.importers.accounts import _upsert, fix_negative_balances, parse
+
+    # The net debt note tags cash as a negative with the balance sheet's tag: stored positive.
+    ctx = ('<xbrli:context id="d0"><xbrli:entity><xbrli:identifier>01</xbrli:identifier></xbrli:entity>'
+           '<xbrli:period><xbrli:instant>2024-01-31</xbrli:instant></xbrli:period></xbrli:context>')
+    doc = (f'<html><ix:header>{ctx}</ix:header>'
+           '<ix:nonFraction name="core:CashBankOnHand" contextRef="d0" sign="-">3,535,820</ix:nonFraction>'
+           '<ix:nonFraction name="core:Debtors" contextRef="d0">869,000</ix:nonFraction></html>')
+    v = parse(doc)[date(2024, 1, 31)]
+    assert v["cash"] == 3_535_820 and v["debtors"] == 869_000
+
+    c = loaded
+    a, b = [x["company_number"] for x in c.execute("select company_number from company order by company_number limit 2")]
+    for n in (a, b):
+        c.execute("delete from financial_period where company_number = %s", (n,))
+    # Stored before the fix: a negative cash balance, and a saved one (left alone).
+    _upsert(c, a, date(2024, 1, 31), {"cash": -3_535_820, "turnover": 9_000_000}, "api:x", balance_date=date(2024, 1, 31))
+    _upsert(c, b, date(2024, 1, 31), {"cash": -100}, "manual", balance_date=date(2024, 1, 31))
+    r = fix_negative_balances(c)
+    assert r["years"] == 1
+    assert c.execute("select cash from financial_period where company_number = %s", (a,)).fetchone()["cash"] == 3_535_820
+    assert c.execute("select cash from financial_period where company_number = %s", (b,)).fetchone()["cash"] == -100
+    # Debtors read as £1,696 between £1.26m and £0.87m: flagged for checking.
+    for y, d in ((2022, 1_260_000), (2023, 1_696), (2024, 869_000)):
+        _upsert(c, a, date(y, 1, 31), {"debtors": d, "turnover": 9_000_000}, "api:x", balance_date=date(y, 1, 31))
+    flagged = {(x["company_number"], x["period_end"].year): x["why"] for x in pdfaccounts.suspicious(c)}
+    assert any("debtors £1696" in w for w in flagged.get((a, 2023), []))
+    assert (a, 2022) not in flagged and (a, 2024) not in flagged
+    c.rollback()

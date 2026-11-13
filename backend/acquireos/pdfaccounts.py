@@ -650,9 +650,12 @@ def _rescore(nums: list[str]) -> None:
 
 
 SUSPICIOUS_SQL = f"""
-with mine as (select distinct company_number from financial_period fp where {_READER}),
+with mine as (select distinct company_number from financial_period fp where {_READER} or fp.source like 'api:%%'),
 f as (
-    select fp.*, lag(fp.turnover) over w as prev_t, lead(fp.turnover) over w as next_t, lag(fp.employees) over w as prev_e
+    select fp.*, lag(fp.turnover) over w as prev_t, lead(fp.turnover) over w as next_t, lag(fp.employees) over w as prev_e,
+           lag(fp.debtors) over w as prev_d, lead(fp.debtors) over w as next_d,
+           lag(fp.cash) over w as prev_c, lead(fp.cash) over w as next_c,
+           lag(fp.net_assets) over w as prev_n, lead(fp.net_assets) over w as next_n
     from financial_period fp join mine using (company_number)
     where not fp.period_inferred
     window w as (partition by fp.company_number order by fp.period_end)
@@ -671,6 +674,18 @@ flagged as (
                        or abs(f.net_assets) between 0.01 and 99 or abs(f.cash) between 0.01 and 99)
                   then 'a figure under £100 beside turnover of ' || case when f.turnover >= 1000000
                        then '£' || round(f.turnover / 1000000, 2) || 'm' else '£' || round(f.turnover / 1000) || 'k' end end,
+             -- A figure a thousand times smaller than the year before and after: thousands
+             -- dropped in reading ("1,696 806" read as 1,696 instead of 1,696,806).
+             case when f.debtors > 0 and f.prev_d >= 100000 and coalesce(f.next_d, f.prev_d) >= 100000
+                       and 300 * f.debtors < f.prev_d and 300 * f.debtors < coalesce(f.next_d, f.prev_d)
+                  then 'debtors £' || round(f.debtors) || ', about a thousand times less than the years either side' end,
+             case when f.cash > 0 and f.prev_c >= 100000 and coalesce(f.next_c, f.prev_c) >= 100000
+                       and 300 * f.cash < f.prev_c and 300 * f.cash < coalesce(f.next_c, f.prev_c)
+                  then 'cash £' || round(f.cash) || ', about a thousand times less than the years either side' end,
+             case when abs(f.net_assets) > 0 and abs(f.prev_n) >= 100000 and abs(coalesce(f.next_n, f.prev_n)) >= 100000
+                       and 300 * abs(f.net_assets) < abs(f.prev_n) and 300 * abs(f.net_assets) < abs(coalesce(f.next_n, f.prev_n))
+                  then 'net assets £' || round(f.net_assets) || ', about a thousand times less than the years either side' end,
+             case when f.cash < 0 then 'negative cash balance' end,
              case when f.employees >= 20 and f.prev_e > 0 and f.employees > 10 * f.prev_e
                   then 'staff ' || f.employees || ', ten times the year before (' || f.prev_e || ')' end,
              case when f.turnover > 0 and f.employees > 0 and f.turnover / f.employees > 5000000
@@ -679,7 +694,7 @@ flagged as (
                   then 'under £5k turnover per employee' end
            ], null) as why
     from f
-    where f.source like 'pdf:%%' and f.source <> 'pdf:claude'
+    where ((f.source like 'pdf:%%' and f.source <> 'pdf:claude') or f.source like 'api:%%')
       and not exists (select 1 from figure_check k where k.company_number = f.company_number and k.period_end = f.period_end)
 )
 select x.*, c.name from flagged x join company c using (company_number)

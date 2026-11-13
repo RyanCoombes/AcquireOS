@@ -79,8 +79,12 @@ CONCEPTS: dict[str, list[str]] = {
     "share_capital": ["CalledUpShareCapital", "CalledUpShareCapitalPaid", "ShareCapital"],
 }
 # Figures that are a size, never negative whatever the sign in the filing.
+# Figures that can't be negative. Cash, debtors and stock are balances: some software
+# tags cash as a negative in the net debt note (cash reduces net debt) with the same
+# tag as the balance sheet, which once stored a company's £3.5m cash as -£3.5m.
 POSITIVE = {"depreciation", "amortisation", "depreciation_amortisation", "interest_payable", "creditors_within",
-            "creditors_after", "bank_loans", "bank_overdrafts", "stock", "trade_debtors", "trade_creditors"}
+            "creditors_after", "bank_loans", "bank_overdrafts", "stock", "trade_debtors", "trade_creditors",
+            "cash", "debtors"}
 # Tagged once with a maturity breakdown: Creditors[WithinOneYear] and so on.
 # A total with no breakdown wins; otherwise within + after are added up.
 _SPLIT = {"Creditors": {"WithinOneYear": "creditors_within", "AfterOneYear": "creditors_after"},
@@ -1015,3 +1019,30 @@ def _zip_members(z: zipfile.ZipFile):
                 yield from _zip_members(inner)
         elif low.endswith((".html", ".xhtml", ".xml")):
             yield info.filename, (lambda i=info: z.read(i))
+
+
+def fix_negative_balances(conn) -> dict:
+    """Cash, debtors and stock stored as negative numbers (a sign copied from the
+    net debt note): made positive, every company, except figures saved by you or
+    Claude. Their latest figures are refreshed and buy-box companies rescored."""
+    from .. import scoring
+    from .companies import refresh_estimates
+
+    rows = conn.execute("""
+        update financial_period set cash = abs(cash), debtors = abs(debtors), stock = abs(stock)
+        where (cash < 0 or debtors < 0 or stock < 0)
+          and coalesce(source, '') not in ('manual', 'pdf:claude') and coalesce(source, '') not like 'manual%%'
+        returning company_number""").fetchall()
+    nums = sorted({r["company_number"] for r in rows})
+    if nums:
+        conn.execute("drop table if exists neg_fix")
+        conn.execute("create temp table neg_fix (company_number text)")
+        conn.execute("insert into neg_fix select unnest(%s::text[])", (nums,))
+        refresh_estimates(conn, from_table="neg_fix")
+        scoring.refresh_latest(conn, from_table="neg_fix")
+        conn.commit()
+        for n in [r["company_number"] for r in conn.execute(
+                "select distinct company_number from score where company_number = any(%s)", (nums,))]:
+            scoring.rescore(conn, company_number=n)
+        conn.commit()
+    return {"years": len(rows), "companies": len(nums)}
