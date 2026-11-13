@@ -80,7 +80,7 @@ def rebuild(conn, today: date | None = None, progress=None, lo: float = 0.85, hi
 
 
 def _build_walk(conn):
-    conn.execute("drop table if exists own_edges; drop table if exists own_walk")
+    conn.execute("drop table if exists own_edges; drop table if exists own_walk; drop table if exists corp_reg")
     # Who owns what: a company's own PSC records, or for parents outside the
     # company table, the PSCs stored in parent_psc.
     conn.execute("""
@@ -94,24 +94,40 @@ def _build_walk(conn):
               and cp.role = 'psc' and cp.ceased_on is null)""")
     conn.execute("create index on own_edges (owned)")
     conn.execute("analyze own_edges")
+    # Each corporate owner's company number as the register writes it. Owner records
+    # write it every which way ("7273556", "Company No. SC123456"); UK ones are tidied,
+    # foreign ones left alone (so a foreign number can't match a UK company). Only the
+    # number links a parent: never its name. Two companies can share a name (a UK
+    # "Melyn Ltd" and an overseas "Melyn Limited"), and a name match could hand a
+    # company someone else's owner and age.
+    conn.execute("""
+        create temp table corp_reg as
+        select p.id as person_id,
+               case when coalesce(p.country_registered, '') = '' or p.country_registered ~* %(uk_re)s
+                    then ao_reg_number(p.registration_number) else upper(trim(p.registration_number)) end as reg
+        from person p where p.kind <> 'individual'
+          and exists (select 1 from own_edges e where e.person_id = p.id)""", {"uk_re": UK_PLACE_SQL})
+    conn.execute("create index on corp_reg (person_id)")
+    conn.execute("analyze corp_reg")
     conn.execute("""
         create temp table own_walk as
         with recursive walk (root, person_id, depth, path, natures) as (
             select e.owned, e.person_id, 0, array[e.owned], e.natures
             from own_edges e join company c on c.company_number = e.owned
             union all
-            select w.root, e2.person_id, w.depth + 1, w.path || p.registration_number, e2.natures
+            select w.root, e2.person_id, w.depth + 1, w.path || r.reg, e2.natures
             from walk w
-            join person p on p.id = w.person_id and p.kind <> 'individual' and p.registration_number is not null
-            join own_edges e2 on e2.owned = p.registration_number
-            where w.depth < 5 and not (p.registration_number = any (w.path))
+            join corp_reg r on r.person_id = w.person_id and r.reg is not null
+            join own_edges e2 on e2.owned = r.reg
+            where w.depth < 5 and not (r.reg = any (w.path))
         )
         select w.root, w.person_id, w.depth, w.path, w.natures, p.kind, p.name, p.birth_year, p.birth_month,
-               p.registration_number, p.country_registered, p.legal_form,
-               (p.kind <> 'individual' and (p.registration_number is null or not exists (
-                    select 1 from own_edges e where e.owned = p.registration_number)
-                or p.registration_number = any (w.path) or w.depth >= 5)) as dead_end
-        from walk w join person p on p.id = w.person_id""")
+               coalesce(r.reg, p.registration_number) as registration_number, p.country_registered, p.legal_form,
+               (p.kind <> 'individual' and (r.reg is null or not exists (
+                    select 1 from own_edges e where e.owned = r.reg)
+                or r.reg = any (w.path) or w.depth >= 5)) as dead_end
+        from walk w join person p on p.id = w.person_id
+        left join corp_reg r on r.person_id = w.person_id""")
     conn.execute("create index on own_walk (root)")
     conn.execute("analyze own_walk")
 
@@ -121,15 +137,24 @@ def _build_walk(conn):
 _HOLDER = ("(natures is null or cardinality(natures) = 0 or exists (select 1 from unnest(natures) nn "
            "where nn ~ '(ownership-of-shares|voting-rights)' and nn !~ 'as-trust'))")
 _TRUSTEE = "exists (select 1 from unnest(natures) nn where nn ~ 'as-trust')"
-OWNERSHIP_VERSION = 3  # 2: people with control only aren't owners; 3: nor are trustees, anywhere up the chain
+OWNERSHIP_VERSION = 4  # 2: people with control only aren't owners; 3: nor are trustees, anywhere up the chain; 4: an untraced one-company holding company isn't a group
 
 
 def _ownership_from_walk(conn, today):
 
     # A majority stake: more than 50% of shares or votes.
     majority = "exists (select 1 from unnest(natures) nn where nn ~ '(50-to-75|75-to-100)')"
-    conn.execute("drop table if exists own_new")
+    conn.execute("drop table if exists own_new; drop table if exists corp_subs")
     holder, trustee = _HOLDER, _TRUSTEE
+    # How many companies each corporate owner holds: a holding company with one or
+    # two subsidiaries is usually a family's or founder's vehicle, not a group.
+    conn.execute("""
+        create temp table corp_subs as
+        select coalesce(r.reg, upper(p.name)) as k, count(distinct e.owned) as subs
+        from own_edges e join person p on p.id = e.person_id and p.kind <> 'individual'
+        left join corp_reg r on r.person_id = e.person_id
+        group by 1""")
+    conn.execute("create index on corp_subs (k)")
     conn.execute(rf"""
         create temp table own_new as
         with agg as (
@@ -148,10 +173,17 @@ def _ownership_from_walk(conn, today):
               -- Weaker words (often a family holding company: "J Smith Investments Ltd")
               -- only count when no individual owner can be traced.
               bool_or(kind <> 'individual' and name ~* '\m(CAPITAL|EQUITY|INVESTMENTS?|INVESTORS?)\M') as investor_weak,
+              -- A foreign parent only when it's a real group (a corporation, or several UK
+              -- subsidiaries) and its owners can't be traced; a traced or one-company
+              -- overseas vehicle (e.g. an Isle of Man "Limited" held by a founder) isn't.
               bool_or(kind = 'corporate' and coalesce(country_registered, '') <> ''
-                      and country_registered !~* %(uk_re)s) as foreign_parent,
+                      and country_registered !~* %(uk_re)s and dead_end and grouplike) as foreign_parent,
+              bool_or(kind = 'corporate' and coalesce(country_registered, '') <> ''
+                      and country_registered !~* %(uk_re)s and dead_end) as foreign_any,
               bool_or(depth = 0 and kind <> 'individual' and registration_number is not null) as via_holdco,
-              bool_or(kind = 'corporate' and dead_end) as unresolved_corporate,
+              bool_or(kind = 'corporate' and dead_end and grouplike) as unresolved_group,
+              bool_or(kind = 'corporate' and dead_end and not grouplike) as unresolved_holdco,
+              (array_agg(name order by depth) filter (where kind = 'corporate' and dead_end and not grouplike))[1] as holdco_name,
               -- Owners are people holding shares or votes. Someone listed only for
               -- "significant influence or control" (or appointing directors) isn't
               -- evidenced as an owner: not counted, and their age isn't used.
@@ -162,9 +194,30 @@ def _ownership_from_walk(conn, today):
               min(birth_year) filter (where kind = 'individual' and {holder}) as oldest,
               (jsonb_agg(jsonb_build_object('name', name, 'birth_year', birth_year, 'birth_month', birth_month,
                     'person_id', person_id, 'via', to_jsonb(path[2:]), 'control_only', not {holder})) filter (where kind = 'individual')) as people,
-              (jsonb_agg(jsonb_build_object('name', name, 'kind', kind, 'via', to_jsonb(path[2:]), 'unresolved', true))
+              (jsonb_agg(jsonb_build_object('name', name, 'kind', kind, 'via', to_jsonb(path[2:]), 'unresolved', true,
+                                            'reg', registration_number, 'country', country_registered))
                     filter (where kind <> 'individual' and dead_end)) as dead
-            from own_walk group by root
+            from (select w.*, (
+                    coalesce(w.legal_form, '') ~* '(public limited|\mplc\M|incorporated|corporation|\mInc\M|GmbH|\mAG\M|\mS\.?A\.?\M|\mB\.?V\.?\M|\mN\.?V\.?\M|S\.p\.A|\mS\.?A\.?S\.?\M)'
+                    or w.name ~* '\m(PLC|INC|INCORPORATED|CORP|CORPORATION|GMBH|AG|SA|BV|NV|SPA|SAS|AB|ASA|OYJ|LLC)\.?$'
+                    or coalesce((select cs.subs from corp_subs cs where cs.k = coalesce(w.registration_number, upper(w.name))), 0) >= 3
+                  ) as grouplike from own_walk w) own_walk
+            group by root
+        ), sh as (
+            -- A holding company whose owner records lead nowhere, but whose shareholders
+            -- are known (from its confirmation statement): its shareholders who are
+            -- people own the company, with an age where one is also a director there.
+            select w.root, count(distinct s.name) as n,
+                   min((select min(o.birth_year) from officer o where o.company_number = s.company_number
+                        and lower(split_part(o.name, ',', 1)) = lower(regexp_replace(s.name, '^.*\s', ''))
+                        and lower(split_part(trim(split_part(o.name, ',', 2)), ' ', 1)) = lower(split_part(s.name, ' ', 1)))) as oldest,
+                   jsonb_agg(distinct jsonb_build_object('name', s.name, 'via', to_jsonb(array[w.registration_number]),
+                             'from', 'shareholders')) as people
+            from own_walk w join shareholder s on s.company_number = w.registration_number
+            where w.kind = 'corporate' and w.dead_end
+              and s.as_at = (select max(as_at) from shareholder s2 where s2.company_number = s.company_number)
+              and s.name !~* '(LIMITED|\mLTD\M|\mPLC\M|\mLLP\M|TRUST|HOLDINGS?|GROUP|NOMINEES?|COMPANY|\mINC\M|CAPITAL|INVEST|PARTNERS)'
+            group by w.root
         ), direct as (
             select company_number as root,
                    bool_or(ceased_on is null) as has_active,
@@ -179,14 +232,19 @@ def _ownership_from_walk(conn, today):
                    coalesce(a.investor_strong, false) or (coalesce(a.investor_weak, false) and coalesce(a.individuals, 0) = 0) as investor,
                    coalesce(a.ebt, false) and not coalesce(a.eot, false) as ebt,
                    coalesce(a.foreign_parent, false) as foreign_parent,
+                   coalesce(a.foreign_any, false) as foreign_any,
                    coalesce(a.via_holdco, false) as via_holdco,
-                   coalesce(a.unresolved_corporate, false) as unresolved_corporate,
-                   coalesce(a.individuals, 0) as individuals, coalesce(a.control_only, 0) as control_only,
-                   coalesce(a.indirect, false) as indirect,
-                   a.oldest, coalesce(d.recent, false) as recent, coalesce(d.has_active, false) as has_active,
-                   coalesce(a.people, '[]'::jsonb) || coalesce(a.dead, '[]'::jsonb) as owners
+                   coalesce(a.unresolved_group, false) as unresolved_group,
+                   coalesce(a.unresolved_holdco, false) and coalesce(sh.n, 0) = 0 as unresolved_holdco,
+                   a.holdco_name,
+                   coalesce(a.individuals, 0) + coalesce(sh.n, 0) as individuals, coalesce(a.control_only, 0) as control_only,
+                   coalesce(a.indirect, false) or coalesce(sh.n, 0) > 0 as indirect,
+                   coalesce(sh.n, 0) > 0 as from_shareholders,
+                   least(a.oldest, sh.oldest) as oldest, coalesce(d.recent, false) as recent, coalesce(d.has_active, false) as has_active,
+                   coalesce(a.people, '[]'::jsonb) || coalesce(sh.people, '[]'::jsonb) || coalesce(a.dead, '[]'::jsonb) as owners
             from company c
             left join agg a on a.root = c.company_number
+            left join sh on sh.root = c.company_number
             left join direct d on d.root = c.company_number
         ), typed as (
             select *, case
@@ -194,7 +252,7 @@ def _ownership_from_walk(conn, today):
                 when investor then 'investor_backed'
                 when foreign_parent then 'foreign_owned'
                 when trust and individuals = 0 then 'trust'
-                when unresolved_corporate and individuals = 0 then 'group_owned'
+                when unresolved_group and individuals = 0 then 'group_owned'
                 when individuals > 4 and indirect then 'group_owned'
                 when individuals > 0 then 'owner_held'
                 else 'unknown' end as otype
@@ -202,16 +260,22 @@ def _ownership_from_walk(conn, today):
         )
         select company_number, otype as ownership_type,
                array_remove(array[
-                   case when eot then 'eot' end, case when foreign_parent then 'foreign_parent' end,
+                   case when eot then 'eot' end, case when foreign_any and individuals = 0 then 'foreign_parent' end,
                    case when investor then 'investor' end, case when recent then 'recent_change' end,
                    case when not has_active then 'no_psc_data' end, case when trust then 'trust' end,
                    case when via_holdco then 'via_holdco' end, case when ebt then 'ebt' end,
-                   case when control_only > 0 then 'control_only' end], null)::text[] as flags,
+                   case when control_only > 0 then 'control_only' end,
+                   case when unresolved_holdco and individuals = 0 then 'holdco_unresolved' end,
+                   case when from_shareholders then 'owners_from_shareholders' end], null)::text[] as flags,
                individuals as owner_count, oldest as oldest_birth_year, owners as ultimate_owners,
                case otype
                    when 'owner_held' then individuals || ' individual owner(s), held '
-                        || case when via_holdco then 'through a holding company' else 'directly' end || '.'
-                   when 'unknown' then case when control_only > 0
+                        || case when via_holdco then 'through a holding company' else 'directly' end
+                        || case when from_shareholders then ' (from the holding company''s shareholder list)' else '' end || '.'
+                   when 'unknown' then case
+                        when unresolved_holdco then 'Owned through a holding company (' || coalesce(holdco_name, 'not named')
+                             || ') whose owners aren''t on record here yet. Not treated as a group: look it up or research it.'
+                        when control_only > 0
                         then 'Listed only as having significant influence or control, not as holding shares or votes: no owner is evidenced (often widely held).'
                         else 'No active owner records found in the PSC data imported so far.' end
                    else 'Classed as ' || lower(case otype when 'group_owned' then 'Group-owned'
@@ -275,18 +339,21 @@ def rebuild_links(conn, walk_ready: bool = False, step=None, progress=None):
     # on the name does the lookup; no scan of every company name).
     conn.execute("""
         with named as (
-            select distinct w.root, w.name from own_walk w
+            select distinct w.root, w.name, coalesce(w.country_registered, '') as country from own_walk w
             where w.depth = 0 and w.kind = 'corporate' and w.registration_number is null
         ), hits as (
+            -- A UK (or unstated) parent never matches an overseas entity of the same name, nor
+            -- an overseas parent a UK company: a "Melyn Ltd" isn't the overseas "Melyn Limited".
             select nm.root, nm.name, c.company_number, count(*) over (partition by nm.root, nm.name) as n
             from named nm join company c on ao_company_name_exact(c.name) = ao_company_name_exact(nm.name)
-            where c.status = 'active' and c.company_number <> nm.root
+            where lower(c.status) = 'active' and c.company_number <> nm.root
+              and ((c.company_number like 'OE%%') = (nm.country <> '' and nm.country !~* %(uk_re)s))
         )
         insert into company_link (a, b, b_name, kind, via, confidence, evidence)
         select h.root, h.company_number, h.name, 'owned_by', '', 'likely',
                'Parent name matches one active company on the register; no registration number filed'
         from hits h where h.n = 1
-        on conflict do nothing""")
+        on conflict do nothing""", {"uk_re": UK_PLACE_SQL})
     step("Linking companies that share an owner")
     # Each individual owner and the companies they own. Owners of 2-25
     # companies only: more than that is a nominee or formation agent, not a

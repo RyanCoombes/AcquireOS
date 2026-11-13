@@ -1796,6 +1796,28 @@ def accounts_gaps(scope: str = "targets"):
         return gaps.summary(c, scope)
 
 
+@app.get("/api/holdcos")
+def holdcos():
+    """Holding companies behind your targets whose owners aren't on record yet."""
+    from . import gaps
+    with db.conn() as c:
+        rows = gaps.holdcos_to_look_up(c)
+    return {"total": len(rows), "examples": rows[:25]}
+
+
+@app.post("/api/holdcos/look-up")
+def holdcos_look_up():
+    from . import chapi, jobs
+    if not chapi.enabled():
+        raise HTTPException(400, "Add your Companies House API key (CH_API_KEY in the stack) to look up holding companies")
+    with db.conn() as c:
+        cur = jobs.current(c)
+        if cur and cur["status"] == "running":
+            raise HTTPException(409, "A job is running: try again when it has finished")
+    _run_detached(["look-up-holdcos"], after=clear_cache)
+    return {"started": True}
+
+
 @app.post("/api/accounts-gaps/fill")
 def accounts_gaps_fill():
     """Check those not looked at since their newer accounts were filed, as a background job."""

@@ -106,3 +106,50 @@ def fill(conn, progress=None, limit: int = 300) -> dict:
             errors += 1
     left = len([r for r in find(conn, "targets") if r["reason"] == "not_checked"])
     return {"checked": len(todo), "years_added_from_data": added, "errors": errors, "still_to_check": left}
+
+
+HOLDCO_SQL = """
+-- Holding companies (on the UK register) behind your targets whose owners aren't
+-- on record here: looking them up fetches their owner records, shareholder list
+-- and directors, which usually shows who really owns the target.
+select distinct on (hc.company_number) hc.company_number as holdco, hc.name as holdco_name, o.company_number as target
+from company_ownership o
+cross join lateral jsonb_array_elements(o.ultimate_owners) u
+join company hc on hc.company_number = u->>'reg'
+left join ch_fetch f on f.company_number = hc.company_number
+where 'holdco_unresolved' = any(o.flags) and coalesce((u->>'unresolved')::boolean, false)
+  and (exists (select 1 from company_best cb where cb.company_number = o.company_number)
+       or exists (select 1 from user_company uc where uc.company_number = o.company_number and uc.user_id = 1
+                  and uc.status not in ('new', 'rejected', 'passed')))
+  and (f.fetched_at is null or f.fetched_at < now() - interval '90 days')
+order by hc.company_number
+"""
+
+
+def holdcos_to_look_up(conn) -> list[dict]:
+    return conn.execute(HOLDCO_SQL).fetchall()
+
+
+def look_up_holdcos(conn, progress=None, limit: int = 200) -> dict:
+    """Fetch each such holding company from Companies House, then reclassify owners."""
+    from . import chapi
+    from .fetch import reclassify_owners
+
+    if not chapi.enabled():
+        raise chapi.NoKey("Add your Companies House API key (CH_API_KEY in the stack) to look up holding companies")
+    todo = holdcos_to_look_up(conn)[:limit]
+    done = 0
+    for i, r in enumerate(todo):
+        if progress:
+            progress(0.9 * i / max(len(todo), 1), f"Looking up {i + 1:,} of {len(todo):,}: {r['holdco_name']}")
+        try:
+            chapi.fetch(conn, r["holdco"], people=False)
+            conn.commit()
+            done += 1
+        except Exception:
+            conn.rollback()
+    if done:
+        if progress:
+            progress(0.92, "Reclassifying owners with what was found")
+        reclassify_owners(conn)
+    return {"looked_up": done, "left": max(0, len(holdcos_to_look_up(conn)))}

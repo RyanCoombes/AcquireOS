@@ -65,6 +65,8 @@ export const FLAGS: Record<string, string> = {
   trust: "trust",
   investor: "investor",
   no_psc_data: "no owner data",
+  holdco_unresolved: "holding company owners not on record",
+  owners_from_shareholders: "owners from holding company shareholders",
   ch_default: "CH default address",
   formation_agent: "formation-agent address",
   mass_address: "shared address",

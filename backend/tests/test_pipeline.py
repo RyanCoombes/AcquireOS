@@ -60,7 +60,7 @@ def test_ownership(loaded):
     assert o["01000002"]["ownership_type"] == "owner_held"
     assert "via_holdco" in o["01000002"]["flags"]
     assert o["01000002"]["owner_count"] == 2
-    assert o["01000004"]["ownership_type"] == "foreign_owned"
+    assert o["01000004"]["ownership_type"] == "foreign_owned"  # a Delaware corporation: a real foreign group
     assert o["SC123456"]["ownership_type"] == "eot"
     assert "recent_change" in o["01000003"]["flags"]
     assert "recent_change" not in o["01000001"]["flags"]  # 2016-04-06 is the register start
@@ -232,7 +232,10 @@ def test_ownership_classification_edge_cases(c, tmp_path):
     assert o["01000001"]["ownership_type"] == "owner_held" and o["01000001"]["oldest_birth_year"] == 1960
     assert "via_holdco" in o["01000001"]["flags"]
     assert o["01000002"]["ownership_type"] == "owner_held" and "ebt" in o["01000002"]["flags"]
-    assert o["01000004"]["ownership_type"] == "foreign_owned"
+    # A one-company Irish parent (a DAC, its private limited company) whose owners aren't traced:
+    # not assumed to be a group (could be a founder's vehicle); flagged, not excluded.
+    assert o["01000004"]["ownership_type"] == "unknown"
+    assert {"foreign_parent", "holdco_unresolved"} <= set(o["01000004"]["flags"])
     # the Irish number is not turned into a UK one, so no link to 01000003
     assert not c.execute("select 1 from company_link where a = '01000004' and b = '01000003'").fetchone()
     assert c.execute("select registration_number from person where name = 'EMERALD HOLDINGS DAC'").fetchone()["registration_number"] is None
@@ -318,3 +321,94 @@ def test_old_regions_only_setting_becomes_an_exclusion(c):
     crit = c.execute("select criteria from buy_box where name = 'Old'").fetchone()["criteria"]
     assert "regions" not in crit and crit["exclude"]["regions"] == ["England", "Scotland"]
     assert crit["exclude"]["keywords"] == ["van"]
+
+
+def test_holding_company_patterns_issue_23(c, tmp_path):
+    """A company whose only shareholder is a holding company: owner-held when the
+    holding company's owners are people (traced through owner records, an overseas
+    entity's beneficial owners, or its shareholder list); unknown, not 'group',
+    when they can't be traced; group-owned only for a real group."""
+    import json as _json
+
+    from acquireos import ownership
+    from acquireos.importers import companies, psc
+
+    companies.run(c, FIX / "ranked_sample.csv")
+    for num, name in [("OE012345", "MELYN LIMITED"), ("07273556", "MELYN LTD"), ("09111111", "B2B IT SERVICES HOLDINGS LIMITED"),
+                      ("09222222", "ACQUIS HOLDING LIMITED"), ("09333333", "BIGCO GROUP LIMITED"),
+                      ("09444444", "SUB A LIMITED"), ("09555555", "SUB B LIMITED"), ("09666666", "SUB C LIMITED"),
+                      ("09777777", "FAMILY HOLDINGS LIMITED")]:
+        c.execute("insert into company (company_number, name, status) values (%s, %s, 'Active') on conflict do nothing", (num, name))
+    corp = "corporate-entity-person-with-significant-control"
+    ind = "individual-person-with-significant-control"
+    big = ["ownership-of-shares-75-to-100-percent"]
+    recs = [
+        # BCC IT (issue 24): owned by "Melyn Ltd", UK number written without its leading zero; Melyn Ltd is owned by
+        # Hywel (born 1975). An unrelated overseas entity "Melyn Limited" (OE012345) with an owner born 1948 must not be used.
+        ("01000001", {"kind": corp, "name": "MELYN LTD", "natures_of_control": big,
+                      "identification": {"registration_number": "7273556", "country_registered": "Wales"}}),
+        ("07273556", {"kind": ind, "name": "Mr Hywel Example", "date_of_birth": {"year": 1975, "month": 1}, "natures_of_control": big}),
+        ("OE012345", {"kind": "individual-beneficial-owner", "name": "Mr Dafydd Example", "date_of_birth": {"year": 1948, "month": 3},
+                      "natures_of_control": big}),
+        # An overseas parent with its own registry number and no UK owner records: not linked by name to the
+        # overseas entity of the same name; unknown and flagged, not excluded as a group.
+        ("01000005", {"kind": corp, "name": "Melyn Limited", "natures_of_control": big,
+                      "identification": {"registration_number": "012345C", "country_registered": "Isle of Man", "legal_form": "Limited"}}),
+        # B2B IT Services: its holding company has no owner records, but its shareholder list names a person who is a director.
+        ("01000002", {"kind": corp, "name": "B2B IT SERVICES HOLDINGS LIMITED", "natures_of_control": big,
+                      "identification": {"registration_number": "9111111", "country_registered": "England"}}),
+        # Acquis: holding company whose owners can't be traced at all: unknown, not a group.
+        ("01000003", {"kind": corp, "name": "ACQUIS HOLDING LIMITED", "natures_of_control": big,
+                      "identification": {"registration_number": "09222222", "country_registered": "England"}}),
+        # A real group: BIGCO GROUP owns three other companies too, owners untraced: group-owned.
+        ("01000004", {"kind": corp, "name": "BIGCO GROUP LIMITED", "natures_of_control": big,
+                      "identification": {"registration_number": "09333333", "country_registered": "England"}}),
+        ("09444444", {"kind": corp, "name": "BIGCO GROUP LIMITED", "natures_of_control": big,
+                      "identification": {"registration_number": "09333333", "country_registered": "England"}}),
+        ("09555555", {"kind": corp, "name": "BIGCO GROUP LIMITED", "natures_of_control": big,
+                      "identification": {"registration_number": "09333333", "country_registered": "England"}}),
+        ("09666666", {"kind": corp, "name": "BIGCO GROUP LIMITED", "natures_of_control": big,
+                      "identification": {"registration_number": "09333333", "country_registered": "England"}}),
+        # A messy number ("Reg no 9777777", no leading zero) still leads to the family holding company and its owner.
+        ("01000006", {"kind": corp, "name": "FAMILY HOLDINGS LIMITED", "natures_of_control": big,
+                      "identification": {"registration_number": "Reg no 9777777", "country_registered": "Wales"}}),
+        ("09777777", {"kind": ind, "name": "Mrs Ann Family", "date_of_birth": {"year": 1955, "month": 1}, "natures_of_control": big}),
+    ]
+    f = tmp_path / "psc.jsonl"
+    f.write_text("\n".join(_json.dumps({"company_number": n_, "data": d}) for n_, d in recs))
+    psc.run(c, [f])
+    c.execute("""insert into shareholder (company_number, name, shares, share_class, as_at) values
+                 ('09111111', 'Gareth Jones', 100, 'Ordinary', '2025-06-01'), ('09111111', 'Siân Jones', 100, 'Ordinary', '2025-06-01')""")
+    c.execute("""insert into officer (company_number, officer_key, name, role, birth_year) values
+                 ('09111111', 'k1', 'JONES, Gareth Wyn', 'director', 1965)""")
+    ownership.rebuild(c, links=False)
+    o = {r["company_number"]: r for r in c.execute("select * from company_ownership")}
+    assert o["01000001"]["ownership_type"] == "owner_held" and o["01000001"]["oldest_birth_year"] == 1975  # BCC IT, by number
+    assert o["01000005"]["ownership_type"] == "unknown" and o["01000005"]["oldest_birth_year"] is None     # no name match
+    assert {"foreign_parent", "holdco_unresolved"} <= set(o["01000005"]["flags"])
+    assert o["01000002"]["ownership_type"] == "owner_held" and o["01000002"]["owner_count"] == 2           # B2B
+    assert o["01000002"]["oldest_birth_year"] == 1965 and "owners_from_shareholders" in o["01000002"]["flags"]
+    assert o["01000003"]["ownership_type"] == "unknown" and "holdco_unresolved" in o["01000003"]["flags"]  # Acquis
+    assert "ACQUIS HOLDING LIMITED" in o["01000003"]["explanation"]
+    assert o["01000004"]["ownership_type"] == "group_owned"                                               # real group
+    assert o["01000006"]["ownership_type"] == "owner_held" and o["01000006"]["oldest_birth_year"] == 1955
+
+
+def test_unresolved_holdcos_are_listed_for_look_up(c, tmp_path):
+    import json as _json
+
+    from acquireos import gaps, ownership, scoring
+    from acquireos.importers import companies, psc
+
+    companies.run(c, FIX / "ranked_sample.csv")
+    c.execute("insert into company (company_number, name, status) values ('09222222', 'ACQUIS HOLDING LIMITED', 'Active')")
+    rec = {"kind": "corporate-entity-person-with-significant-control", "name": "ACQUIS HOLDING LIMITED",
+           "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
+           "identification": {"registration_number": "09222222", "country_registered": "England"}}
+    f = tmp_path / "psc.jsonl"
+    f.write_text(_json.dumps({"company_number": "01000003", "data": rec}))
+    psc.run(c, [f])
+    ownership.rebuild(c, links=False)
+    c.execute("insert into user_company (user_id, company_number, status) values (1, '01000003', 'researching') on conflict (user_id, company_number) do update set status = 'researching'")
+    rows = gaps.holdcos_to_look_up(c)
+    assert [(r["holdco"], r["target"]) for r in rows] == [("09222222", "01000003")]

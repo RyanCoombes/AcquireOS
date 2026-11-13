@@ -52,6 +52,7 @@ def main(argv=None):
     p.add_argument("--sheet")
 
     sub.add_parser("rebuild", help="Recompute ownership, links and scores")
+    sub.add_parser("look-up-holdcos", help="Look up holding companies whose owners aren't on record (used by the web app)")
     sub.add_parser("fill-accounts-gaps", help="Check companies whose newer accounts never arrived with Companies House (used by the web app)")
     sub.add_parser("find-logos", help="Look for every missing company logo on its website (used by the web app)")
     sub.add_parser("fix-staff-years", help="Clear staff counts that were really the year heading (used by the web app)")
@@ -71,6 +72,22 @@ def main(argv=None):
         import secrets
 
         print(secrets.token_urlsafe(32))
+        return
+    if a.cmd == "look-up-holdcos":
+        from . import db as _db, gaps as _gaps, jobs as _jobs
+
+        job = _jobs.Job("look-up-holdcos", ["Look up holding companies"])
+        job.stage("Look up holding companies")
+        try:
+            with _db.conn(dedicated=True) as c:
+                r = _gaps.look_up_holdcos(c, progress=lambda frac, msg: job.progress(frac, msg))
+            job.log(f"Looked up {r['looked_up']:,} holding companies; {r['left']:,} still unresolved")
+            job.finish(r)
+        except Exception as e:
+            job.finish({}, status="failed", error=str(e))
+            raise
+        finally:
+            _db.close_pool()
         return
     if a.cmd == "fill-accounts-gaps":
         from . import db as _db, gaps as _gaps, jobs as _jobs
