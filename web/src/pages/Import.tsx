@@ -398,6 +398,22 @@ function CatchUp() {
         {ex && <button className="btn quiet" style={{ marginLeft: "auto" }} onClick={async () => setEx(await api.chExtrasSet(!ex.paused))}>
           {ex.paused ? "Resume checks" : "Pause checks"}</button>}</div>
       <p className="faint small" style={{ marginTop: 0 }}>New figures and checks, filled in for data you already have.</p>
+      {acc?.cleanups && acc.cleanups.length > 0 && (
+        <div className="cleanups">
+          <div className="small"><b>Background clean-ups after the last update</b>
+            <Hint text="One-off fixes that run by themselves after an update, one after another, once no data load is running. Each runs once; the next update may add more." /></div>
+          <table className="small"><tbody>
+            {acc.cleanups.map((c) => (
+              <tr key={c.label}>
+                <td className="nowrap"><span className={`cu ${c.status}`}>{c.status === "done" ? "✓ Done" : c.status === "running" ? "Running now" : c.status === "failed" ? "Failed" : "Waiting"}</span></td>
+                <td><b>{c.label}</b>{c.detail ? <div className="faint">{c.detail}</div> : null}</td>
+                <td className="faint nowrap">{c.at ? (c.status === "running" ? `since ${dateTime(c.at)}` : dateTime(c.at)) : ""}</td>
+              </tr>
+            ))}
+          </tbody></table>
+          {acc.cleanups.every((c) => c.status === "done") && <div className="faint small">All done: the data is up to date with the latest fixes.</div>}
+        </div>
+      )}
       <div className="syncgrid">
         {acc && (
           <div>

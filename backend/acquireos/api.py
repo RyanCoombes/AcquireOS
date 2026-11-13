@@ -2015,7 +2015,10 @@ def catch_up():
 
         owners_current = int(chsync.get_setting(c, "ownership_version", 1) or 1) >= ownership.OWNERSHIP_VERSION
         staff_fix = chsync.get_setting(c, "staff_year_fix", None)
-    return {"accounts_months_old": r["old"], "accounts_months_current": r["current"], "accounts_months_total": r["total"],
+    from .fetch import cleanups
+    with db.conn() as c2:
+        clean = cleanups(c2)
+    return {"cleanups": clean, "accounts_months_old": r["old"], "accounts_months_current": r["current"], "accounts_months_total": r["total"],
             "loader_version": LOADER_VERSION, "owners_current": owners_current,
             "staff_fix": staff_fix if isinstance(staff_fix, dict) else ({"at": None} if staff_fix else None)}
 

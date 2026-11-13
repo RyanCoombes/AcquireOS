@@ -448,6 +448,7 @@ def reclassify_owners(c):
     log("Rescoring after reclassifying owners")
     scoring.rescore_all(c)
     chsync.set_setting(c, "ownership_version", ownership.OWNERSHIP_VERSION)
+    chsync.set_setting(c, "owners_reclassified_at", datetime.now().isoformat(timespec="minutes"))
     c.commit()
     log("Owners reclassified and rescored")
 
@@ -505,6 +506,7 @@ def _all_boxes_catch_up(c):
     log("Rescoring every buy box (scores used to update only the active one)")
     scoring.rescore_all(c)
     chsync.set_setting(c, "all_boxes_rescored", ALL_BOXES_VERSION)
+    chsync.set_setting(c, "all_boxes_rescored_at", datetime.now().isoformat(timespec="minutes"))
     c.commit()
     log("Every buy box rescored")
 
@@ -518,7 +520,7 @@ def _false_prior_catch_up(c):
     if chsync.get_setting(c, "false_prior_fixed", None):
         return
     r = pdfaccounts.fix_false_prior_years(c)
-    chsync.set_setting(c, "false_prior_fixed", {**r, "v": 1})
+    chsync.set_setting(c, "false_prior_fixed", {**r, "v": 1, "at": datetime.now().isoformat(timespec="minutes")})
     c.commit()
     log(f"Moved year ends: removed {r['removed']} made-up years in {r['companies']} companies")
 
@@ -532,7 +534,7 @@ def _negative_balance_catch_up(c):
     if isinstance(done, dict) and int(done.get("v", 1)) >= 2:  # 2: scanned-PDF years cleared and re-read, not flipped
         return
     r = fix_negative_balances(c)
-    chsync.set_setting(c, "negative_balances_fixed", {**r, "v": 2})
+    chsync.set_setting(c, "negative_balances_fixed", {**r, "v": 2, "at": datetime.now().isoformat(timespec="minutes")})
     c.commit()
     log(f"Negative cash, debtors or stock: {r['years']} years in {r['companies']} companies put right "
         f"({r['pdf_cleared']} from scanned PDFs cleared, {r['pdf_requeued']} sent back to the reader)")
@@ -546,21 +548,51 @@ def _ownership_catch_up():
     try:
         time.sleep(30)
         with db.conn(dedicated=True) as c:
-            if c.execute("select count(*) as n from company").fetchone()["n"]:
-                while chsync.busy(c):
-                    time.sleep(300)
-                _staff_year_catch_up(c)
-                _all_boxes_catch_up(c)
-                _false_prior_catch_up(c)
-                _negative_balance_catch_up(c)
-            done = int(chsync.get_setting(c, "ownership_version", 1) or 1)
-            if done >= ownership.OWNERSHIP_VERSION or c.execute("select count(*) as n from company").fetchone()["n"] == 0:
+            if not c.execute("select count(*) as n from company").fetchone()["n"]:
                 return
             while chsync.busy(c):
+                _cleanup_state(c, running="Waiting for a data load to finish")
                 time.sleep(300)
-            reclassify_owners(c)
+            # Each step on its own: one failing doesn't stop the rest. The Data page
+            # shows which is running, and when each finished (or why it failed).
+            _cleanup_step(c, "Checking staff counts", _staff_year_catch_up)
+            _cleanup_step(c, "Rescoring every buy box", _all_boxes_catch_up)
+            _cleanup_step(c, "Removing made-up years (moved year ends)", _false_prior_catch_up)
+            _cleanup_step(c, "Putting right negative cash, debtors and stock", _negative_balance_catch_up)
+            if int(chsync.get_setting(c, "ownership_version", 1) or 1) < ownership.OWNERSHIP_VERSION:
+                while chsync.busy(c):
+                    time.sleep(300)
+                _cleanup_step(c, "Reclassifying owners and rescoring", reclassify_owners)
+            _cleanup_state(c, running=None)
     except Exception as e:
-        log(f"Ownership update failed: {e}")
+        log(f"Background clean-up stopped: {e}")
+
+
+def _cleanup_state(c, running=..., failed: tuple[str, str] | None = None):
+    from datetime import datetime
+
+    from . import chsync
+
+    st = chsync.get_setting(c, "cleanup_state", None)
+    st = st if isinstance(st, dict) else {}
+    if running is not ...:
+        st["running"] = running
+        st["since"] = datetime.now().isoformat(timespec="minutes") if running else None
+    if failed:
+        st.setdefault("failed", {})[failed[0]] = {"error": failed[1][:300], "at": datetime.now().isoformat(timespec="minutes")}
+    chsync.set_setting(c, "cleanup_state", st)
+    c.commit()
+
+
+def _cleanup_step(c, label: str, fn):
+    try:
+        _cleanup_state(c, running=label)
+        fn(c)
+        c.commit()
+    except Exception as e:
+        c.rollback()
+        log(f"{label} failed: {e}")
+        _cleanup_state(c, failed=(label, str(e)))
 
 
 def scheduler():
@@ -627,3 +659,40 @@ def scheduler():
             except Exception as e:
                 log(f"Monthly refresh failed: {e}")
         time.sleep(300)
+
+
+def cleanups(c) -> list[dict]:
+    """The one-off clean-ups after an update: done (when, what changed), running, waiting or failed."""
+    from . import chsync, ownership
+
+    g = lambda k: chsync.get_setting(c, k, None)  # noqa: E731
+    st = g("cleanup_state") if isinstance(g("cleanup_state"), dict) else {}
+    staff, prior, neg = g("staff_year_fix"), g("false_prior_fixed"), g("negative_balances_fixed")
+    staff = staff if isinstance(staff, dict) else {}
+    prior = prior if isinstance(prior, dict) else {}
+    neg = neg if isinstance(neg, dict) else {}
+    last = staff.get("last") or {}
+    items = [
+        ("Checking staff counts", int(staff.get("v", 0)) >= 7, staff.get("at"),
+         f"{int(last.get('years') or 0):,} misread counts cleared ({int(last.get('outliers') or 0):,} outliers), "
+         f"{int(last.get('blank_filled') or 0):,} missing counts filled, "
+         f"{int(last.get('pdf_staff_requeued') or 0):,} PDF years sent back to the reader" if staff else ""),
+        ("Rescoring every buy box", int(g("all_boxes_rescored") or 0) >= ALL_BOXES_VERSION, g("all_boxes_rescored_at"), ""),
+        ("Removing made-up years (moved year ends)", bool(prior), prior.get("at"),
+         f"{int(prior.get('removed') or 0):,} removed in {int(prior.get('companies') or 0):,} companies" if prior else ""),
+        ("Putting right negative cash, debtors and stock", int(neg.get("v", 0)) >= 2, neg.get("at"),
+         f"{int(neg.get('years') or 0):,} years in {int(neg.get('companies') or 0):,} companies; "
+         f"{int(neg.get('pdf_requeued') or 0):,} scanned-PDF years sent back to the reader" if neg else ""),
+        ("Reclassifying owners and rescoring", int(g("ownership_version") or 1) >= ownership.OWNERSHIP_VERSION,
+         g("owners_reclassified_at"), ""),
+    ]
+    out = []
+    for label, done, at, detail in items:
+        failed = (st.get("failed") or {}).get(label)
+        status = ("running" if st.get("running") == label else "done" if done
+                  else "failed" if failed else "waiting")
+        out.append({"label": label, "status": status, "at": at if done else (st.get("since") if status == "running" else None),
+                    "detail": detail if done else (failed or {}).get("error", "") if status == "failed" else ""})
+    if st.get("running") and not any(o["status"] == "running" for o in out):
+        out.insert(0, {"label": st["running"], "status": "running", "at": st.get("since"), "detail": ""})
+    return out

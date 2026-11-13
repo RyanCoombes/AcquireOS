@@ -1616,3 +1616,13 @@ td.c-name .cn-body { min-width: 0; flex: 1; }
 .todo-undo .linkish { color: #7fe0c9; font-weight: 700; }
 @media (max-width: 900px) { .home-top { grid-template-columns: 1fr; } .kpis.slim { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .todo-snz { display: none; } }
+
+/* Data page: background clean-ups */
+.cleanups { margin: 6px 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfc; }
+.cleanups table { margin-top: 6px; }
+.cleanups td { padding: 5px 8px; vertical-align: top; }
+.cu { font-size: 11.5px; font-weight: 700; border-radius: 99px; padding: 2px 8px; }
+.cu.done { background: #e6f6ec; color: #1e7a46; }
+.cu.running { background: #eef3ff; color: #2f62d8; }
+.cu.waiting { background: #f0f1f4; color: var(--ink-2); }
+.cu.failed { background: #fdecea; color: #c0392b; }

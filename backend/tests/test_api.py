@@ -2321,3 +2321,33 @@ def test_pdf_reader_cash_from_balance_sheet_and_current_assets_check():
     ok = extract("Turnover 900,000 800,000\nDebtors 120,000 110,000\nCash at bank and in hand 50,000 40,000\n"
                  "Total current assets 170,000 150,000")
     assert ok["figures"]["debtors"] == [120_000, 110_000] and ok["figures"]["cash"] == [50_000, 40_000]
+
+
+def test_background_cleanups_report_status_and_one_failure_doesnt_stop_the_rest(loaded, monkeypatch):
+    from acquireos import chsync, fetch
+    from acquireos.api import app
+
+    c = loaded
+    for k in ("staff_year_fix", "all_boxes_rescored", "false_prior_fixed", "negative_balances_fixed", "cleanup_state",
+              "owners_reclassified_at", "all_boxes_rescored_at"):
+        c.execute("delete from app_setting where key = %s", (k,))
+    c.commit()
+    with TestClient(app) as cl:
+        cu = {x["label"]: x for x in cl.get("/api/catch-up").json()["cleanups"]}
+        assert cu["Removing made-up years (moved year ends)"]["status"] == "waiting"
+    # Run the steps directly: the made-up years step fails; the others still run.
+    monkeypatch.setattr(fetch, "_false_prior_catch_up", lambda conn: (_ for _ in ()).throw(RuntimeError("disk full")))
+    calls = []
+    monkeypatch.setattr(fetch, "_staff_year_catch_up", lambda conn: calls.append("staff"))
+    monkeypatch.setattr(fetch, "_all_boxes_catch_up", lambda conn: calls.append("boxes"))
+    fetch._cleanup_step(c, "Checking staff counts", fetch._staff_year_catch_up)
+    fetch._cleanup_step(c, "Removing made-up years (moved year ends)", fetch._false_prior_catch_up)
+    fetch._cleanup_step(c, "Putting right negative cash, debtors and stock", fetch._negative_balance_catch_up)
+    fetch._cleanup_state(c, running=None)
+    with TestClient(app) as cl:
+        cu = {x["label"]: x for x in cl.get("/api/catch-up").json()["cleanups"]}
+        assert cu["Removing made-up years (moved year ends)"]["status"] == "failed"
+        assert "disk full" in cu["Removing made-up years (moved year ends)"]["detail"]
+        assert cu["Putting right negative cash, debtors and stock"]["status"] == "done"
+        assert "years in" in cu["Putting right negative cash, debtors and stock"]["detail"]
+    assert calls == ["staff"]

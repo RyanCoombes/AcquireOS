@@ -291,7 +291,7 @@ export const api = {
       { method: "POST", body: JSON.stringify({ url: url ?? null, save }) }),
   chCheck: (n: string) => req<NonNullable<CompanyDetail["ch"]> & { changed: boolean; changes: number }>(
     `/api/companies/${encodeURIComponent(n)}/ch-check`, { method: "POST" }),
-  catchUp: () => req<{ accounts_months_old: number; accounts_months_current: number; accounts_months_total: number; loader_version: number; owners_current?: boolean;
+  catchUp: () => req<{ cleanups?: { label: string; status: "done" | "running" | "waiting" | "failed"; at: string | null; detail: string }[]; accounts_months_old: number; accounts_months_current: number; accounts_months_total: number; loader_version: number; owners_current?: boolean;
     staff_fix?: { at: string | null; years?: number; outliers?: number; blank_filled?: number; pdf_staff_requeued?: number; companies?: number; pdf_years_requeued?: number; data_years_reread?: number; data_years_no_link?: number; large_corrected?: number } | null }>("/api/catch-up"),
   fixStaffYears: () => req<{ started: boolean }>("/api/staff-years/fix", { method: "POST" }),
   reclassifyOwners: () => req<{ started: boolean }>("/api/ownership/reclassify", { method: "POST" }),
