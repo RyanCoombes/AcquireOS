@@ -421,6 +421,7 @@ function CatchUp() {
                   {acc.staff_fix.pdf_years_requeued ? `, ${int(acc.staff_fix.pdf_years_requeued)} PDF years queued to read again` : ""}
                   {acc.staff_fix.data_years_reread ? `, ${int(acc.staff_fix.data_years_reread)} filled from the filing` : ""}
                   {acc.staff_fix.blank_filled ? `, ${int(acc.staff_fix.blank_filled)} missing counts filled` : ""}
+                  {acc.staff_fix.pdf_staff_requeued ? `, ${int(acc.staff_fix.pdf_staff_requeued)} PDF years with no staff sent back to the reader` : ""}
                   {acc.staff_fix.large_corrected ? `, ${int(acc.staff_fix.large_corrected)} large companies corrected` : ""}.{" "}
                   <button className="linkish small" onClick={async () => {
                     try { await api.fixStaffYears(); setMsg("Checking staff counts again: progress shows above."); refresh(); }

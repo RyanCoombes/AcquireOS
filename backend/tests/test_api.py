@@ -2184,3 +2184,72 @@ def test_accounts_gaps_found_explained_and_filled(loaded, monkeypatch):
     after = {x["company_number"]: x["reason"] for x in gaps.find(c)}
     assert pugh not in after                                   # filled
     assert after.get(never) == "no_document"                   # checked now; nothing readable to fetch
+
+
+def test_staff_read_from_sentences_tables_and_group_accounts():
+    from datetime import date
+
+    from acquireos.importers.accounts import parse
+    from acquireos.pdfaccounts import extract
+
+    cases = [
+        ("4. Employees\nThe average monthly number of employees, including directors, during the year was 84 (2024 - 50).", 84, 50),
+        ("The average number of persons, including directors, employed by the company during the year was 84 (2024: 50).", 84, 50),
+        ("The average number of em-\nployees during the year was 23 (2023 - 19)", 23, 19),
+        ("Average number of employees\n2025 2024\nNumber Number\nAdministration 10 8\nProduction 74 42\nTotal 84 50", 84, 50),
+        ("The company employed an average of 31 people (2024: 28).", 31, 28),
+        ("The average number of employees, including directors, during the year was as follows:\n2025 2024\nManagement 4 4\nStaff 34 29\n38 33", 38, 33),
+        ("The average number of employees during the year was nil (2024: nil).", 0, None),
+        ("Average number of employees 12 11", 12, None),
+        ("The average number of employees during the year was 7 (2024: 6). Note 5 Tangible assets 12 345", 7, 6),
+    ]
+    for text, cur, prior in cases:
+        e = extract(text)
+        assert (e["employees"], e["employees_prior"]) == (cur, prior), text
+
+    def ctx(cid, mem=()):
+        seg = ("<xbrli:segment>" + "".join(f'<xbrldi:explicitMember dimension="{a}">{m}</xbrldi:explicitMember>' for a, m in mem)
+               + "</xbrli:segment>") if mem else ""
+        return (f'<xbrli:context id="{cid}"><xbrli:entity><xbrli:identifier>01</xbrli:identifier>{seg}</xbrli:entity>'
+                '<xbrli:period><xbrli:startDate>2024-04-01</xbrli:startDate><xbrli:endDate>2025-03-31</xbrli:endDate></xbrli:period></xbrli:context>')
+    f = lambda cid, v: f'<ix:nonFraction name="core:AverageNumberEmployeesDuringPeriod" contextRef="{cid}">{v}</ix:nonFraction>'
+    G = ("bus:GroupCompanyDataDimension", "bus:ConsolidatedGroupCompanyAccountsMember")
+    P = ("bus:GroupCompanyDataDimension", "bus:CompanyMember")
+    C = "core:EmployeeCategoriesDimension"
+    xb = [
+        ([ctx("g", [G]), ctx("p", [P])], [f("g", 84), f("p", 80)], 84),          # group's figure, not the parent's, never added
+        ([ctx("p", [P])], [f("p", 80)], 80),                                      # parent only
+        ([ctx("a", [G, (C, "core:Admin")]), ctx("b", [G, (C, "core:Prod")]),
+          ctx("c", [P, (C, "core:Admin")]), ctx("d", [P, (C, "core:Prod")])],
+         [f("a", 10), f("b", 74), f("c", 9), f("d", 70)], 84),                    # group's categories added up
+        ([ctx("d0"), ctx("g", [G])], [f("d0", 90), f("g", 84)], 90),              # a plain total wins
+    ]
+    for cs, fs, want in xb:
+        doc = "<html><ix:header>" + "".join(cs) + "</ix:header>" + "".join(fs) + "</html>"
+        assert parse(doc)[date(2025, 3, 31)]["employees"] == want
+
+
+def test_pdf_staff_sentence_saves_both_years_and_blank_pdf_years_are_requeued(loaded, monkeypatch):
+    from datetime import date
+
+    from acquireos.importers.accounts import _upsert, fix_year_staff
+
+    c = loaded
+    n = c.execute("select company_number from company_best order by company_number limit 1").fetchone()["company_number"]
+    c.execute("delete from financial_period where company_number = %s", (n,))
+    c.execute("delete from filing where company_number = %s", (n,))
+    text = ("Turnover 9,860,000 4,860,000\n4. Employees\nThe average monthly number of employees, including directors, "
+            "during the year was 84 (2024 - 50).\n")
+    _read_pdf_accounts(c, monkeypatch, n, "2025-03-31", text)
+    p = _periods(c, n)
+    assert p[date(2025, 3, 31)]["employees"] == 84 and p[date(2024, 3, 31)]["employees"] == 50
+    # A year read before this fix (staff missed): the clean-up sends its PDF back to the reader.
+    c.execute("update financial_period set employees = null where company_number = %s", (n,))
+    c.execute("""insert into pdf_read (company_number, made_up, status, tries, version) values (%s, '2025-03-31', 'done', 1, 6)
+                 on conflict (company_number, made_up) do update set status = 'done', version = 6""", (n,))
+    from acquireos import scoring
+    scoring.refresh_latest(c, [n])
+    r = fix_year_staff(c)
+    assert r["pdf_staff_requeued"] == 1
+    assert not c.execute("select 1 from pdf_read where company_number = %s and made_up = '2025-03-31'", (n,)).fetchone()
+    c.rollback()

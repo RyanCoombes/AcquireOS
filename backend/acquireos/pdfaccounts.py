@@ -27,7 +27,7 @@ FIELDS = ("turnover", "gross_profit", "operating_profit", "profit_loss", "net_as
 
 # Labels at the start of a line (lower-cased, punctuation simplified).
 # Bump when reading improves: years that couldn't be read are tried again.
-VERSION = 6  # 6: keeps the full text and each figure's line, for checking
+VERSION = 7  # 6: keeps the full text and each figure's line, for checking; 7: staff written as a sentence or a table by role
 
 _PL = r"(profit|loss|\(loss\)\s*/\s*profit|profit\s*/\s*\(loss\)|\(profit\)\s*/\s*loss|loss\s*/\s*\(profit\))"
 LABELS: list[tuple[str, re.Pattern]] = [
@@ -47,8 +47,27 @@ LABELS: list[tuple[str, re.Pattern]] = [
 ]
 _NUM = re.compile(r"\(?-?£?\s?\d[\d,]*(?:\.\d+)?\)?|(?<![\w.])-(?![\w.])")
 _NOTE = re.compile(r"^\d{1,2}$")  # a plain one- or two-digit number: usually a note reference
-_EMPLOYEES = re.compile(r"average (?:monthly )?number of (?:persons employed|employees|staff|people employed)"
-                        r"[^0-9]{0,200}?((?:\d{1,5}\b[^0-9]{0,24}){1,6})")
+# The staff note, in its many wordings: "average (monthly) number of employees",
+# "... of persons, including directors, employed", "average headcount", "number of
+# staff employed", "the company employed an average of 84 people".
+_EMP_LABEL = (r"(?:average (?:monthly |weekly )?(?:head ?count|number of (?:full[- ]time equivalent )?"
+              r"(?:persons|people|employees|staff|members of staff)(?:[^.0-9]{0,60}?\bemployed)?)"
+              r"|employed an average of)")
+_EMPLOYEES = re.compile(_EMP_LABEL + r"[^0-9]{0,200}?((?:\d{1,5}\b[^0-9]{0,24}){1,6})")
+# "was 84 (2024 - 50)", "84 (2024: 50)": the prior year's figure in brackets after it.
+_EMP_PRIOR = re.compile(r"^\D{0,40}?(\d{1,5})[^\d(]{0,20}\(\s*(?:19|20)\d\d\s*[-–—:]?\s*(\d{1,5}|nil)\s*\)")
+
+
+class _Anchor:
+    """A stand-in for a regex match at a position (the staff label with no number near it)."""
+    def __init__(self, pos: int):
+        self.pos = pos
+
+    def start(self, g: int = 0) -> int:
+        return self.pos
+
+    def group(self, g: int = 0) -> str:
+        return ""
 
 
 def _staff_from(numbers: str) -> int | None:
@@ -170,8 +189,25 @@ def extract(text: str) -> dict:
             src[field] = " ".join(raw_lines[i].split())
             break
     flat = " ".join(text.lower().split())
+    flat = re.sub(r"([a-z])- ([a-z])", r"\1\2", flat)  # words split across lines by OCR: "em- ployees"
     m = _EMPLOYEES.search(flat)
     employees = _staff_from(m.group(1)) if m else None
+    if m is None:
+        lab = re.search(_EMP_LABEL, flat)
+        if lab:  # label with a table below it: only the "total" row can be trusted
+            m = re.match(r"(.)", flat[lab.start():])  # a stand-in match anchored at the label
+            m = _Anchor(lab.start())
+    employees_prior = None
+    if m:
+        pm = _EMP_PRIOR.search(flat[m.start(1) - 1 if m.start(1) else 0:])
+        if pm and int(pm.group(1)) == employees:
+            employees_prior = 0 if pm.group(2) == "nil" else int(pm.group(2))
+        # A staff table split by role: take its total, not the first row.
+        tm = re.search(r"\btotal\b[^0-9]{0,30}(\d{1,5})(?:[^0-9]{1,24}(\d{1,5}))?", flat[m.start(0): m.start(0) + 500])
+        if tm and (employees is None or int(tm.group(1)) > employees) and not (1990 <= int(tm.group(1)) <= 2035):
+            employees = int(tm.group(1))
+            if tm.group(2) and not (1990 <= int(tm.group(2)) <= 2035):
+                employees_prior = int(tm.group(2))
     # "No employees… (2020: Nil)", "the average number of employees was nil": none, not 2020.
     if employees is None and re.search(r"(average (?:monthly )?number of (?:persons employed|employees|staff)[^.]{0,80}?\b(?:nil|none)\b"
                                        r"|\bno employees\b|\bhad no (?:employees|staff)\b)", flat):
@@ -226,7 +262,31 @@ def extract(text: str) -> dict:
             del found[f]
     if "net_assets" in found and "net_assets" not in src and "equity" in src:
         src["net_assets"] = src["equity"]
-    return {"figures": found, "employees": employees, "dropped": dropped, "thousands": doc_scale == 1000.0,
+    # A staff table by role with an unlabelled total row ("Management 4 4 / Staff 34 29 / 38 33"):
+    # the total is the numbers-only row after the roles that the roles add up to.
+    if m is not None:
+        lines = [" ".join(x.split()) for x in text.lower().splitlines()]
+        start = next((i for i, x in enumerate(lines) if re.search(_EMP_LABEL, re.sub(r"([a-z])- ([a-z])", r"\1\2", x))), None)
+        if start is not None:
+            roles, total = [], None
+            for x in lines[start + 1: start + 14]:
+                nums = [int(n) for n in re.findall(r"\b\d{1,5}\b", x) if not 1990 <= int(n) <= 2035]
+                words = re.sub(r"[\d\s.,:()-]", "", x)
+                if nums and len(words) >= 3 and "total" not in x:
+                    roles.append(nums)
+                elif nums and not words and len(roles) >= 2:
+                    total = nums
+                    break
+            if total and roles:
+                cur = sum(r[0] for r in roles)
+                if abs(total[0] - cur) <= max(1, cur // 20):
+                    employees = total[0]
+                    prv = [r[1] for r in roles if len(r) > 1]
+                    if len(total) > 1 and len(prv) == len(roles) and abs(total[1] - sum(prv)) <= max(1, sum(prv) // 20):
+                        employees_prior = total[1]
+    if employees_prior is not None and implausible_staff(employees_prior, (found.get("turnover") or [None, None])[1]):
+        employees_prior = None
+    return {"figures": found, "employees": employees, "employees_prior": employees_prior, "dropped": dropped, "thousands": doc_scale == 1000.0,
             "lines": {k: v for k, v in src.items() if k in found or k == "employees"}}
 
 
@@ -369,6 +429,8 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
                     if cur:
                         _upsert(conn, num, mu, cur, f"pdf:{method}", balance_date=mu)
                         prior = {k: v[1] for k, v in ex["figures"].items() if v[1] is not None}
+                        if ex.get("employees_prior") is not None:
+                            prior["employees"] = ex["employees_prior"]
                         pe = prior_period_end(conn, num, mu)
                         prior = {k: v for k, v in prior.items() if k not in held(pe)}
                         if prior:

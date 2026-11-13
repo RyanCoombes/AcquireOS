@@ -89,7 +89,7 @@ _SPLIT = {"Creditors": {"WithinOneYear": "creditors_within", "AfterOneYear": "cr
 # Text kept as well as figures.
 TEXT_CONCEPTS = {"principal_activity": ["DescriptionPrincipalActivities", "PrincipalActivities", "DescriptionPrincipalActivity"]}
 # Bumped when new figures are read, so months read earlier can be read again.
-LOADER_VERSION = 5  # 4: a year's own accounts win over later comparatives; 5: staff given only by category added up
+LOADER_VERSION = 6  # 4: a year's own accounts win over later comparatives; 5: staff given only by category added up; 6: group accounts' staff
 _LOCAL_TO_FIELD = {local: (field, rank) for field, names in CONCEPTS.items() for rank, local in enumerate(names)}
 _WANTED_LOCALS = set(_LOCAL_TO_FIELD) | set(_SPLIT)
 
@@ -224,9 +224,17 @@ def _context(raw: bytes, low: bytes, cid: str):
 _DIM_MEMBER_B = re.compile(rb'<(?:\w+:)?explicitMember\b[^>]*\bdimension="[\w.-]*:?(\w+)"[^>]*>\s*[\w.-]*:?(\w+)\s*<', re.I)
 
 
+_CONSOLIDATED = re.compile(r"consolidat|^group", re.I)
+_COMPANY_ONLY = re.compile(r"^(company|parent|entity|individual|separate)|companyonly|parententity", re.I)
+_GROUP_AXIS = re.compile(r"group|consolidat|entit", re.I)
+
+
 def _breakdown_context(raw: bytes, low: bytes, cid: str):
-    """(period end, axis, member) for a context broken down by exactly one
-    member (e.g. staff by category), else None."""
+    """(period end, axis, member, part) for a staff fact in a dimensioned context,
+    else None. Group accounts tag figures for the group and for the parent company
+    separately: the group's are used (part "group"), the parent's kept as a fallback
+    (part "company"), and what's left is a breakdown by category (part "total" when
+    nothing is left: the group's own total)."""
     needle = b'id="' + cid.encode() + b'"'
     i = raw.find(needle)
     while i != -1:
@@ -234,14 +242,26 @@ def _breakdown_context(raw: bytes, low: bytes, cid: str):
         if b"context" in low[lt:i].split(b" ", 1)[0]:
             close = low.find(b"context>", i)
             body = raw[i:close] if close != -1 else raw[i:i + 4000]
-            members = _DIM_MEMBER_B.findall(body)
+            members = [(a.decode(), m.decode()) for a, m in _DIM_MEMBER_B.findall(body)]
             ends = _END_B.findall(body)
-            if len(members) != 1 or not ends:
+            if not members or not ends:
+                return None
+            part = "total"
+            rest = []
+            for axis, member in members:
+                if _GROUP_AXIS.search(axis) and _CONSOLIDATED.search(member):
+                    part = "group"
+                elif _GROUP_AXIS.search(axis) and _COMPANY_ONLY.search(member):
+                    part = "company"
+                else:
+                    rest.append((axis, member))
+            if len(rest) > 1:
                 return None
             try:
-                return date.fromisoformat(ends[-1].decode()), members[0][0].decode(), members[0][1].decode()
+                d = date.fromisoformat(ends[-1].decode())
             except ValueError:
                 return None
+            return (d, rest[0][0], rest[0][1], part) if rest else (d, None, None, part)
         i = raw.find(needle, i + len(needle))
     return None
 
@@ -254,7 +274,8 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
     low = raw.lower()
     facts = _facts_fast(raw, low)
     split: dict[date, dict[str, dict[tuple[str, str], float]]] = {}
-    emp_split: dict[date, dict[str, dict[str, float]]] = {}  # period -> axis -> member -> staff
+    emp_split: dict[date, dict[tuple, dict[str, float]]] = {}  # period -> (group/company/total, axis) -> member -> staff
+    emp_total: dict[date, dict[str, float]] = {}  # period -> group/company -> staff, in group accounts
     if facts:
         contexts: dict[str, tuple] = {}
 
@@ -274,7 +295,11 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
                     v = _number(_TAG_B.sub(b"", val_b).decode("utf-8", "replace"),
                                 {k: x for k, x in attrs.items() if k != "scale"}) if b else None
                     if v is not None and v >= 0:
-                        emp_split.setdefault(b[0], {}).setdefault(b[1], {})[b[2]] = v
+                        d2, axis, member, part = b
+                        if axis is None:  # the group's (or parent's) own total
+                            emp_total.setdefault(d2, {})[part] = v
+                        else:
+                            emp_split.setdefault(d2, {}).setdefault((part, axis), {})[member] = v
                 continue
             if member:
                 field = _SPLIT.get(local, {}).get(member)
@@ -300,11 +325,24 @@ def parse(content: str | bytes) -> dict[date, dict[str, float]]:
                 slot[field] = (rank, v)
         # Staff by category, where there is no plain total: add up one breakdown
         # (the one with most categories; never two breakdowns added together).
-        for d, axes in emp_split.items():
+        # In group accounts: the group's total, else the group's categories added up,
+        # else the parent company's (never the two added together).
+        for d in set(emp_split) | set(emp_total):
             slot = found.setdefault(d, {})
-            parts = max(axes.values(), key=len)
-            if "employees" not in slot and len(parts) >= 2:
-                slot["employees"] = (98, sum(parts.values()))
+            if "employees" in slot:
+                continue
+            tot = emp_total.get(d, {})
+            for part in ("group", "total", "company"):
+                if part in tot and part != "total":
+                    slot["employees"] = (97, tot[part])
+                    break
+                axes = [v for (p, _), v in emp_split.get(d, {}).items() if p == part and len(v) >= 2]
+                if axes:
+                    slot["employees"] = (98, sum(max(axes, key=len).values()))
+                    break
+                if part == "total" and "total" in tot:
+                    slot["employees"] = (97, tot["total"])
+                    break
         # Maturity breakdowns, where there is no plain total.
         for d, fields in split.items():
             slot = found.setdefault(d, {})
@@ -646,7 +684,7 @@ def fix_year_staff(conn, progress=None) -> dict:
                               and exists (select 1 from score s where s.company_number = l.company_number and not s.excluded)
                               and not exists (select 1 from staff_blank_tried t
                                               where t.company_number = l.company_number and t.period_end = l.period_end)
-                            order by l.turnover desc nulls last limit %s""", (BLANK_STAFF_LIMIT,)).fetchall()
+                            order by greatest(coalesce(l.turnover, 0), 2 * coalesce(l.net_assets, 0)) desc limit %s""", (BLANK_STAFF_LIMIT,)).fetchall()
     if blank:
         conn.execute("""insert into staff_blank_tried (company_number, period_end)
                         select unnest(%s::text[]), unnest(%s::date[]) on conflict do nothing""",
@@ -656,12 +694,22 @@ def fix_year_staff(conn, progress=None) -> dict:
     def phase(lo, hi, what):
         return lambda i, n: say(lo + (hi - lo) * i / max(n, 1), f"{what}: {i:,} of {n:,} (from Companies House)")
     filled = _reread_staff(conn, blank, progress=phase(0.1, 0.45, "Reading missing staff counts")) if blank else {"data_years_reread": 0}
+    # Latest years read from a PDF with no staff figure, at companies in a buy box: read
+    # the PDF again (the reader now finds staff written as a sentence, e.g. "was 84
+    # (2024 - 50)"); it only fills gaps. Largest companies first in the PDF queue.
+    pdf_again = conn.execute("""delete from pdf_read r using (
+                                    select fp.company_number, fp.period_end from company_latest l
+                                    join financial_period fp using (company_number, period_end)
+                                    where l.employees is null and fp.employees is null and fp.source in ('pdf:text', 'pdf:ocr')
+                                      and exists (select 1 from score s where s.company_number = l.company_number)) x
+                                where r.company_number = x.company_number and abs(r.made_up - x.period_end) <= 45
+                                  and r.status = 'done' returning r.company_number""").rowcount
     reread = _reread_staff(conn, todo, progress=phase(0.45, 0.7, "Reading cleared years again"))
     checked = _reread_staff(conn, check, replace=True, progress=phase(0.7, 0.75, "Checking large companies"))
     conn.commit()
     nums = sorted(set(nums) | {r["company_number"] for r in blank})
     if not nums:
-        return {"years": 0, "companies": 0, "outliers": 0, "blank_filled": 0}
+        return {"years": 0, "companies": 0, "outliers": 0, "blank_filled": 0, "pdf_staff_requeued": pdf_again}
     say(0.76, f"Updating estimates for {len(nums):,} companies")
     conn.execute("drop table if exists staff_fix")
     conn.execute("create temp table staff_fix (company_number text)")
@@ -678,7 +726,7 @@ def fix_year_staff(conn, progress=None) -> dict:
             conn.commit()
         scoring.rescore(conn, company_number=n)
     conn.commit()
-    return {"years": len(rows), "companies": len({r["company_number"] for r in rows}), "outliers": len(out), "blank_tried": len(blank),
+    return {"years": len(rows), "companies": len({r["company_number"] for r in rows}), "outliers": len(out), "blank_tried": len(blank), "pdf_staff_requeued": pdf_again,
             "blank_filled": filled.get("data_years_reread", 0), "pdf_years_requeued": requeued,
             **reread, "large_checked": len(check), "large_corrected": checked.get("data_years_reread", 0)}
 
