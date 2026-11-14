@@ -218,7 +218,7 @@ def mark_figures_checked(company_number: str, period_end: str) -> str:
     "Save a company's full shareholder list, read from a confirmation statement (including a re-filed or scanned one), "
     "as at its made-up date (as_at, YYYY-MM-DD). holders: [{name, shares, share_class}] exactly as listed (every holder, "
     "not only those over 25%). source_url is the filing. Replaces an older list; refused if a newer one is already held. "
-    "Known investors among them (e.g. DBW, BGF, UK Steel Enterprise) are flagged on the company."))
+    "Known investors among them (e.g. DBW, BGF, UK Steel Enterprise) are flagged on the company, and it is rescored."))
 def save_shareholders(company_number: str, as_at: str, source_url: str, holders: list[dict]) -> str:
     from datetime import date as _date
 
@@ -247,7 +247,9 @@ def save_shareholders(company_number: str, as_at: str, source_url: str, holders:
         c.execute("select ao_refresh_company_signals()")
         flagged = c.execute("select 'investor_shareholder' = any(signals) as f from company_signal where company_number = %s",
                             (num,)).fetchone()
-    return (f"Saved {len(rows)} shareholders as at {as_at}."
+        from . import scoring
+        scoring.rescore_company_all_boxes(c, num)  # an investor among them changes the score
+    return (f"Saved {len(rows)} shareholders as at {as_at}; rescored."
             + (" A known investor is among them: flagged as 'Investor shareholder'." if flagged and flagged["f"] else ""))
 
 
