@@ -278,7 +278,10 @@ SWEEP_KEY = "shareholder_sweep"
 def sweep_state(conn) -> dict:
     from . import chsync
     st = chsync.get_setting(conn, SWEEP_KEY, None)
-    return st if isinstance(st, dict) else {"active": False}
+    if isinstance(st, dict):
+        return st
+    from . import chapi
+    return {"active": chapi.enabled()}  # on by default (with a Companies House key) until paused
 
 
 def set_sweep(conn, active: bool) -> dict:
