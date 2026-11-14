@@ -323,8 +323,8 @@ export const api = {
     req<{ ok: boolean }>(`/api/watch?kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(ref)}`, { method: "DELETE" }),
   websiteSummary: () => req<{ checked: number; confirmed: number; possible: number; none: number; last_at: string | null; with_website: number }>("/api/website-check"),
   accountsGaps: () => req<{ total: number; by_reason: Record<string, number>; examples: { company_number: string; name: string; last_accounts_date: string; latest_held: string | null; reason: string; why: string; score: number | null; in_pipeline: boolean }[] }>("/api/accounts-gaps"),
-  shareholdersToRead: () => req<{ total: number }>("/api/shareholders-to-read"),
-  readShareholders: () => req<{ started: boolean }>("/api/shareholders/read", { method: "POST" }),
+  shareholderSweep: () => req<SweepState>("/api/shareholders-sweep"),
+  setShareholderSweep: (active: boolean) => req<SweepState>("/api/shareholders-sweep", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active }) }),
   holdcos: () => req<{ total: number; examples: { holdco: string; holdco_name: string; target: string }[] }>("/api/holdcos"),
   lookUpHoldcos: () => req<{ started: boolean }>("/api/holdcos/look-up", { method: "POST" }),
   fillAccountsGaps: () => req<{ started: boolean }>("/api/accounts-gaps/fill", { method: "POST" }),
@@ -457,3 +457,6 @@ export type ChExtras = { directors_total: number; directors_checked: number; dis
   companies_total: number; companies_done: number; paused: boolean };
 
 export type AlertRules = { who: "tracked" | "watch" | "buy_box"; routine: boolean; kinds: string[] };
+
+export type SweepState = { active: boolean; finished?: boolean; checked?: number; found?: number; last_batch?: string;
+  left?: { pipeline: number; targets: number; all: number } };

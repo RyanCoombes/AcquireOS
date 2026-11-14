@@ -75,18 +75,11 @@ def main(argv=None):
         print(secrets.token_urlsafe(32))
         return
     if a.cmd == "read-shareholders":
-        from . import db as _db, gaps as _gaps, jobs as _jobs
+        from . import db as _db, gaps as _gaps
 
-        job = _jobs.Job("read-shareholders", ["Read shareholder lists"])
-        job.stage("Read shareholder lists")
         try:
             with _db.conn(dedicated=True) as c:
-                r = _gaps.read_all_shareholders(c, progress=lambda frac, msg: job.progress(frac, msg))
-            job.log(f"Checked {r['checked']:,} companies; {r['lists_found']:,} shareholder lists found; {r['left']:,} left")
-            job.finish(r)
-        except Exception as e:
-            job.finish({}, status="failed", error=str(e))
-            raise
+                _gaps.run_shareholder_batch(c)
         finally:
             _db.close_pool()
         return

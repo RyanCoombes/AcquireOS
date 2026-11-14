@@ -2395,7 +2395,7 @@ def test_shareholder_lists_refiled_scanned_investors_and_claude_saves(loaded, mo
                "Siân Crooks Ordinary 70 0\nTotal 1000")
     read = []
     monkeypatch.setattr(chapi, "_document", lambda link, **k: (read.append(link) or b"%PDF"))
-    monkeypatch.setattr(chapi, "statement_text", lambda pdf: "Statement of capital only" if read[-1] == "/doc/new" else scanned)
+    monkeypatch.setattr(chapi, "statement_text", lambda pdf, ocr=True: "Statement of capital only" if read[-1] == "/doc/new" else scanned)
     src = read_shareholders(c, n, filings)
     assert read == ["/doc/new", "/doc/refiled"] and src.startswith("RP04CS01")   # the no-updates one is never fetched
     rows = c.execute("select name, shares from shareholder where company_number = %s order by shares desc, name", (n,)).fetchall()
@@ -2416,3 +2416,49 @@ def test_shareholder_lists_refiled_scanned_investors_and_claude_saves(loaded, mo
     # Headings and totals aren't shareholders.
     assert parse_shareholders_table("Total number of shares 1000\nClass of share Ordinary 1000") == []
     gaps.shareholders_to_read(c)  # the job's list runs
+
+
+
+def test_shareholder_sweep_goes_pipeline_targets_then_everyone_in_batches(loaded, monkeypatch):
+    from acquireos import chapi, gaps, jobs
+
+    c = loaded
+    c.execute("delete from shareholder"); c.execute("delete from ch_fetch")
+    nums = [r["company_number"] for r in c.execute("select company_number from company order by company_number")]
+    pipe = nums[0]
+    c.execute("""insert into user_company (user_id, company_number, status) values (1, %s, 'contacted')
+                 on conflict (user_id, company_number) do update set status = 'contacted'""", (pipe,))
+    box = [r["company_number"] for r in c.execute("select company_number from company_best where company_number <> %s order by 1", (pipe,))]
+    other = [n for n in nums if n not in box and n != pipe]
+    for n in other:
+        c.execute("""insert into company_latest (company_number, employees) values (%s, 50)
+                     on conflict (company_number) do update set employees = 50""", (n,))
+    c.commit()
+    order, ocrs = [], {}
+    monkeypatch.setattr(chapi, "enabled", lambda: True)
+    def fake_fetch(conn, num, people=True):
+        order.append(num)
+        conn.execute("""insert into ch_fetch (company_number, fetched_at, shareholders_from) values (%s, now(), 'none found')
+                        on conflict (company_number) do update set shareholders_from = 'none found'""", (num,))
+        return {}
+    monkeypatch.setattr(chapi, "fetch", fake_fetch)
+    st = gaps.set_sweep(c, True)
+    assert st["active"]
+    # A batch of 2: the pipeline company first, then the best target.
+    r = gaps.read_shareholder_batch(c, batch=2)
+    assert order[0] == pipe and order[1] in box and r["checked"] == 2
+    # Then the rest: targets before every other company.
+    gaps.read_shareholder_batch(c, batch=100)
+    assert set(order[:1 + len(box)]) == {pipe, *box} and set(order[1 + len(box):]) >= set(other)
+    # Nothing left: a batch checks nothing and the sweep marks itself finished.
+    r = gaps.run_shareholder_batch(c)
+    assert r["checked"] == 0
+    assert gaps.sweep_state(c)["finished"] and not gaps.sweep_state(c)["active"]
+    # Stop on the job pauses the sweep.
+    gaps.set_sweep(c, True)
+    c.execute("delete from ch_fetch"); c.commit()
+    def stop(*a, **k):
+        raise jobs.Cancelled("Stopped by you")
+    monkeypatch.setattr(jobs.Job, "progress", stop)
+    gaps.run_shareholder_batch(c)
+    assert gaps.sweep_state(c)["active"] is False

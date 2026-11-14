@@ -216,10 +216,10 @@ def parse_shareholders_table(text: str) -> list[dict]:
     return out if len(out) >= 1 else []
 
 
-def statement_text(pdf: bytes) -> str:
-    """A statement's text: its text layer, or OCR when it's a scan."""
+def statement_text(pdf: bytes, ocr: bool = True) -> str:
+    """A statement's text: its text layer, or OCR when it's a scan (if ocr)."""
     text = _pdf_text(pdf)
-    if len(re.sub(r"\s", "", text)) >= 40:  # a scan has next to no text layer
+    if len(re.sub(r"\s", "", text)) >= 40 or not ocr:  # a scan has next to no text layer
         return text
     try:
         from .pdfaccounts import pdf_text
@@ -236,7 +236,7 @@ def _lists_shareholders(f: dict) -> bool:
             and "no-updates" not in (f.get("description") or ""))
 
 
-def read_shareholders(conn, num: str, filings: list[dict], limit: int = 8) -> str | None:
+def read_shareholders(conn, num: str, filings: list[dict], limit: int = 8, ocr: bool = True) -> str | None:
     """Read the newest statement that lists shareholders and store its list.
     filings: [{type, description, date/filed_on, made_up_date, document}]. Returns
     where the list came from, or None. A newer list already held (e.g. saved by
@@ -250,7 +250,7 @@ def read_shareholders(conn, num: str, filings: list[dict], limit: int = 8) -> st
         pdf = _document(f["document"])
         if not pdf:
             continue
-        text = statement_text(pdf)
+        text = statement_text(pdf, ocr=ocr)
         found = parse_shareholders(text) or parse_shareholders_table(text)
         if found:
             conn.execute("delete from shareholder where company_number = %s", (num,))

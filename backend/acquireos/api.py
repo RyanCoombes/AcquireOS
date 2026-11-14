@@ -1804,25 +1804,27 @@ def accounts_gaps(scope: str = "targets"):
         return gaps.summary(c, scope)
 
 
-@app.get("/api/shareholders-to-read")
-def shareholders_to_read():
+@app.get("/api/shareholders-sweep")
+def shareholders_sweep():
+    """The shareholder-list sweep: on or paused, totals so far, and what's left per stage."""
     from . import gaps
     with db.conn() as c:
-        rows = gaps.shareholders_to_read(c)
-    return {"total": len(rows)}
+        st = gaps.sweep_state(c)
+        return {**st, "left": gaps.shareholder_counts(c)}
 
 
-@app.post("/api/shareholders/read")
-def shareholders_read():
-    from . import chapi, jobs
-    if not chapi.enabled():
+class SweepIn(BaseModel):
+    active: bool
+
+
+@app.put("/api/shareholders-sweep")
+def shareholders_sweep_set(body: SweepIn):
+    """Switch the sweep on (batches start by themselves when nothing else runs) or pause it."""
+    from . import chapi, gaps
+    if body.active and not chapi.enabled():
         raise HTTPException(400, "Add your Companies House API key (CH_API_KEY in the stack) to read shareholder lists")
     with db.conn() as c:
-        cur = jobs.current(c)
-        if cur and cur["status"] == "running":
-            raise HTTPException(409, "A job is running: try again when it has finished")
-    _run_detached(["read-shareholders"], after=clear_cache)
-    return {"started": True}
+        return gaps.set_sweep(c, body.active)
 
 
 @app.get("/api/holdcos")

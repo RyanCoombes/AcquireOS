@@ -631,6 +631,9 @@ def scheduler():
 
         # Accounts only filed as PDF: read them in the background (text layer or OCR).
         threading.Thread(target=pdfaccounts.run_forever, daemon=True, name="pdf-accounts").start()
+    from . import gaps as _gaps
+    # Reading shareholder lists, batch after batch, while you have it switched on.
+    _th.Thread(target=_gaps.sweep_forever, daemon=True, name="shareholder-sweep").start()
     if os.environ.get("CH_STREAM", "on").lower() not in ("off", "0", "false", "no"):
         from . import chstream
 

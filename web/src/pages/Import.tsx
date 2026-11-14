@@ -991,24 +991,45 @@ function HoldcoLookUp() {
 
 function ShareholderLists() {
   const [msg, setMsg] = useState<string | null>(null);
-  const t = useAsync(() => api.shareholdersToRead(), []);
-  const n = t.data?.total ?? 0;
+  const t = useAsync(() => api.shareholderSweep(), []);
+  useEffect(() => { const x = setInterval(() => t.reload(), 30_000); return () => clearInterval(x); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const d = t.data;
+  const left = d?.left;
+  const toggle = async (on: boolean) => {
+    setMsg(null);
+    try { await api.setShareholderSweep(on); t.reload();
+      setMsg(on ? "On. The first batch starts within a few minutes, when nothing else is running; progress shows in the bar at the top." : "Paused. The batch in progress (if any) finishes first.");
+    } catch (e: any) { setMsg(e.message); }
+  };
   return (
     <section>
-      <div className="sechead"><h2>Shareholder lists</h2><span className="faint small">Your pipeline, and buy-box companies with 10+ staff</span></div>
+      <div className="sechead"><h2>Shareholder lists</h2><span className="faint small">Pipeline, then targets, then every other company</span></div>
       <p className="small" style={{ marginTop: 0 }}>
         The owners register only shows holdings over 25%, so a minority investor (the Development Bank of Wales, BGF, UK Steel
-        Enterprise…) can be missed. The full list is in the confirmation statements: this reads the newest one that has it,
-        including re-filed and scanned ones, and flags known investors.
+        Enterprise…) can be missed. This reads the full list from each company's newest confirmation statement that has one
+        (re-filed ones too), in batches of 500 that start by themselves whenever nothing else is running, and flags known
+        investors. Scanned statements are read with OCR for your pipeline and targets.
       </p>
-      {t.data && (n === 0 ? <div className="faint small">All up to date.</div> : (
+      {d && left && (
+        <div className="factline" style={{ borderTop: 0, marginBottom: 8 }}>
+          <div><b>{int(left.pipeline)}</b><span>Pipeline to read</span></div>
+          <div><b>{int(left.targets)}</b><span>Targets to read</span></div>
+          <div><b>{left.all >= 1000 ? `~${int(Math.round(left.all / 1000))}k` : int(left.all)}</b><span>Other companies (roughly)</span></div>
+          <div><b>{int(d.found ?? 0)}</b><span>Lists found so far</span></div>
+        </div>
+      )}
+      {d && (
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button className="btn primary" onClick={async () => {
-            setMsg(null);
-            try { await api.readShareholders(); setMsg("Started. Progress shows at the top."); } catch (e: any) { setMsg(e.message); }
-          }}>Read {int(Math.min(n, 300))} shareholder {n === 1 ? "list" : "lists"}</button>
-          <span className="faint small">{int(n)} to read; up to 300 a run, pipeline first. Needs your Companies House key.</span>
-        </div>))}
+          {d.active
+            ? <><span className="cu running">On</span><button className="btn" onClick={() => toggle(false)}>Pause</button></>
+            : <button className="btn primary" onClick={() => toggle(true)}>{d.checked ? "Carry on reading" : "Start reading shareholder lists"}</button>}
+          <span className="faint small">
+            {d.last_batch ? `Last batch ${dateTime(d.last_batch)}; ${int(d.checked ?? 0)} companies checked so far. ` : ""}
+            Every company in the UK would take months at Companies House's rate limit; pipeline and targets come first, so those finish quickly.
+            Needs your Companies House key.
+          </span>
+        </div>
+      )}
       {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
     </section>
   );
