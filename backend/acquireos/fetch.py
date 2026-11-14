@@ -540,6 +540,38 @@ def _negative_balance_catch_up(c):
         f"({r['pdf_cleared']} from scanned PDFs cleared, {r['pdf_requeued']} sent back to the reader)")
 
 
+def _director_address_catch_up(c):
+    """Once after the update: companies left out only for their registered region get their
+    directors re-read, so a director address elsewhere (registered in Aberdeen, run from
+    Swansea) can keep them in. One Companies House call each, largest first."""
+    from . import chapi, chsync, scoring
+
+    if chsync.get_setting(c, "director_addresses_read", None) or not chapi.enabled():
+        return
+    nums = [r["company_number"] for r in c.execute(
+        """select s.company_number from score s
+           join company_latest l on l.company_number = s.company_number
+           join company co on co.company_number = s.company_number
+           where s.excluded and s.exclusion like 'Region excluded%%' and lower(co.status) = 'active'
+             and not exists (select 1 from officer o where o.company_number = s.company_number and o.postcode is not null)
+           group by s.company_number, l.employees
+           order by l.employees desc nulls last limit 3000""")]
+    done = 0
+    for i, n in enumerate(nums):
+        if i % 50 == 0:
+            _cleanup_state(c, running=f"Reading director addresses ({i:,} of {len(nums):,})")
+        if chapi.read_officers(c, n)[0]:
+            done += 1
+        c.commit()
+    c.execute("select ao_refresh_company_signals()")
+    c.commit()
+    scoring.rescore_each(c, nums)
+    chsync.set_setting(c, "director_addresses_read", {"companies": len(nums), "read": done,
+                                                      "at": datetime.now().isoformat(timespec="minutes")})
+    c.commit()
+    log(f"Director addresses: re-read for {done} of {len(nums)} companies left out for their region")
+
+
 def _ownership_catch_up():
     import time
 
@@ -559,6 +591,7 @@ def _ownership_catch_up():
             _cleanup_step(c, "Rescoring every buy box", _all_boxes_catch_up)
             _cleanup_step(c, "Removing made-up years (moved year ends)", _false_prior_catch_up)
             _cleanup_step(c, "Putting right negative cash, debtors and stock", _negative_balance_catch_up)
+            _cleanup_step(c, "Reading director addresses", _director_address_catch_up)
             if int(chsync.get_setting(c, "ownership_version", 1) or 1) < ownership.OWNERSHIP_VERSION:
                 while chsync.busy(c):
                     time.sleep(300)
@@ -674,6 +707,8 @@ def cleanups(c) -> list[dict]:
     staff = staff if isinstance(staff, dict) else {}
     prior = prior if isinstance(prior, dict) else {}
     neg = neg if isinstance(neg, dict) else {}
+    dirs = g("director_addresses_read")
+    dirs = dirs if isinstance(dirs, dict) else {}
     last = staff.get("last") or {}
     items = [
         ("Checking staff counts", int(staff.get("v", 0)) >= 7, staff.get("at"),
@@ -688,14 +723,20 @@ def cleanups(c) -> list[dict]:
          f"{int(neg.get('pdf_requeued') or 0):,} scanned-PDF years sent back to the reader" if neg else ""),
         ("Reclassifying owners and rescoring", int(g("ownership_version") or 1) >= ownership.OWNERSHIP_VERSION,
          g("owners_reclassified_at"), ""),
+        ("Reading director addresses", bool(dirs), dirs.get("at"),
+         f"{int(dirs.get('read') or 0):,} of {int(dirs.get('companies') or 0):,} companies left out for their region re-read"
+         if dirs else ""),
     ]
     out = []
     for label, done, at, detail in items:
         failed = (st.get("failed") or {}).get(label)
-        status = ("running" if st.get("running") == label else "done" if done
+        running = st.get("running") or ""
+        status = ("running" if running == label or running.startswith(label + " (") else "done" if done
                   else "failed" if failed else "waiting")
         out.append({"label": label, "status": status, "at": at if done else (st.get("since") if status == "running" else None),
                     "detail": detail if done else (failed or {}).get("error", "") if status == "failed" else ""})
+        if status == "running" and running != label:
+            out[-1]["detail"] = running[len(label) + 2:-1]  # progress, e.g. "120 of 900"
     if st.get("running") and not any(o["status"] == "running" for o in out):
         out.insert(0, {"label": st["running"], "status": "running", "at": st.get("since"), "detail": ""})
     return out

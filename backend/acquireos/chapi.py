@@ -275,6 +275,30 @@ def _pdf_text(data: bytes) -> str:
         return ""
 
 
+def read_officers(conn, num: str) -> tuple[int, list[str]]:
+    """Replace a company's officers from the API (one call). Returns (rows, current director keys)."""
+    res = _get(f"/company/{num}/officers?items_per_page=100")
+    if res is None:
+        return 0, []
+    conn.execute("delete from officer where company_number = %s", (num,))
+    n, current = 0, []
+    for it in res.get("items") or []:
+        key = ((it.get("links") or {}).get("officer") or {}).get("appointments", "").strip("/").split("/")
+        okey = key[1] if len(key) >= 2 else it.get("name", "")
+        dob = it.get("date_of_birth") or {}
+        conn.execute(
+            """insert into officer (company_number, officer_key, name, role, appointed_on, resigned_on, birth_year,
+                                    birth_month, occupation, nationality, residence, postcode)
+               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict do nothing""",
+            (num, okey, it.get("name") or "?", it.get("officer_role"), _d(it.get("appointed_on")), _d(it.get("resigned_on")),
+             dob.get("year"), dob.get("month"), it.get("occupation"), it.get("nationality"), it.get("country_of_residence"),
+             ((it.get("address") or {}).get("postal_code") or "").strip().upper() or None))
+        n += 1
+        if not it.get("resigned_on") and "director" in (it.get("officer_role") or "") and len(key) >= 2:
+            current.append(okey)
+    return n, current
+
+
 def fetch(conn, company_number: str, people: bool = True) -> dict:
     """Fetch and store what the API adds for one company: its profile flags,
     charges, filing history, directors (and their other companies),
@@ -338,22 +362,8 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
             counts["filings"] += 1
 
     def get_officers():
-        res = _get(f"/company/{num}/officers?items_per_page=100") or {}
-        conn.execute("delete from officer where company_number = %s", (num,))
-        current = []
-        for it in res.get("items") or []:
-            key = ((it.get("links") or {}).get("officer") or {}).get("appointments", "").strip("/").split("/")
-            okey = key[1] if len(key) >= 2 else it.get("name", "")
-            dob = it.get("date_of_birth") or {}
-            conn.execute(
-                """insert into officer (company_number, officer_key, name, role, appointed_on, resigned_on, birth_year,
-                                        birth_month, occupation, nationality, residence)
-                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict do nothing""",
-                (num, okey, it.get("name") or "?", it.get("officer_role"), _d(it.get("appointed_on")), _d(it.get("resigned_on")),
-                 dob.get("year"), dob.get("month"), it.get("occupation"), it.get("nationality"), it.get("country_of_residence")))
-            counts["officers"] += 1
-            if not it.get("resigned_on") and "director" in (it.get("officer_role") or "") and len(key) >= 2:
-                current.append(okey)
+        n_, current = read_officers(conn, num)
+        counts["officers"] += n_
         if people:
             for okey in current[:6]:  # each current director's other companies
                 fetch_appointments(conn, okey)

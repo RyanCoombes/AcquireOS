@@ -192,7 +192,7 @@ ACCOUNT_TYPES = {
 
 UNKNOWN_SHARE = 0.5
 # Bump when the scoring rules change, so every company is scored again.
-SCORING_VERSION = 6  # 6: signs of a sale exclude like recently sold; 5: ownership from a researched holding company; 3: EBITDA adds back filed D&A; 4: an old own margin no longer caps the value range
+SCORING_VERSION = 7  # 7: presence elsewhere beats a left-out registered region; 6: signs of a sale exclude like recently sold; 5: ownership from a researched holding company; 3: EBITDA adds back filed D&A; 4: an old own margin no longer caps the value range
 
 
 def score_company(c: dict, criteria: dict, today: date | None = None, scope=None,
@@ -276,7 +276,20 @@ def score_company(c: dict, criteria: dict, today: date | None = None, scope=None
             exclusion = f"Industry left out: {', '.join(hits)}" + (f" (no {' or '.join(unless)} code)" if unless else "")
     out_regions = ex.get("regions") or []
     if not exclusion and region and region in out_regions:
-        exclusion = f"Region excluded: {region}" + (" (where it trades)" if c.get("trading_region") else "")
+        # Registered (or trading) in a left-out region, but with an office, directors or a
+        # regional funder in a region that isn't left out: it works there too (e.g. registered
+        # in Aberdeen, run from Swansea), so it stays in, with the reason shown.
+        elsewhere = sorted({sg.split(":", 1)[1] for sg in signals if sg.split(":", 1)[0] in ("office", "director", "funding")}
+                           - {region} - set(out_regions))
+        if not elsewhere:
+            exclusion = f"Region excluded: {region}" + (" (where it trades)" if c.get("trading_region") else "")
+        else:
+            words = {"office": "an office", "director": "directors (address or home)", "funding": "a regional funder"}
+            how = sorted({sg.split(":", 1)[0] for sg in signals if ":" in sg and sg.split(":", 1)[0] in words
+                          and sg.split(":", 1)[1] in elsewhere})
+            reasons.append({"key": "presence", "label": "Where it works", "points": 0.0, "max": 0, "status": STATUS_PART,
+                            "text": f"Registered in {region}, but has {' and '.join(words[h] for h in how)} in "
+                                    f"{' and '.join(elsewhere)}: kept in"})
     acc = (c.get("accounts_category") or "").lower()
     for key in ex.get("accounts_types") or []:
         if not exclusion and key in ACCOUNT_TYPES and acc in ACCOUNT_TYPES[key][1]:
@@ -508,7 +521,9 @@ def load_facts(conn, company_number: str | None = None, with_hash: bool = False)
     # One company: work its signals out live (exact after a fetch or research
     # save). Many: read the stored ones, refreshed at the start of each job.
     sql = FACTS_SQL.format(where=where, rwhere=rwhere,
-                           signals="ao_signals(c.company_number)" if company_number else "coalesce(sg.signals, '{}')")
+                           signals=("array(select distinct x from unnest(coalesce((select sg1.signals from company_signal sg1 "
+                                    "where sg1.company_number = c.company_number), '{}') || ao_signals(c.company_number)) x)")
+                           if company_number else "coalesce(sg.signals, '{}')")
     if with_hash:
         sql = f"select f.*, md5(f::text) as facts_hash from ({sql}) f"
     return [_fact(r) for r in conn.execute(sql, params).fetchall()]

@@ -311,6 +311,31 @@ def test_excluded_regions_are_left_out():
     assert england["excluded"] and "England" in england["exclusion"]
 
 
+def test_registered_in_left_out_region_but_run_from_elsewhere_stays_in():
+    # e.g. registered in Aberdeen, run from Swansea
+    crit = scoring.merged({"exclude": {"regions": ["Scotland"]}})
+    today = date(2026, 11, 4)
+    run_here = scoring.score_company({"name": "P", "region": "Scotland", "signals": ["director:Wales", "many_shareholders"]}, crit, today)
+    assert not run_here["excluded"]
+    assert any(r["key"] == "presence" and "Wales" in r["text"] for r in run_here["reasons"])
+    only_there = scoring.score_company({"name": "Q", "region": "Scotland", "signals": ["director:Scotland", "office:England"]},
+                                       scoring.merged({"exclude": {"regions": ["Scotland", "England"]}}), today)
+    assert only_there["excluded"] and "Scotland" in only_there["exclusion"]
+    plain = scoring.score_company({"name": "R", "region": "Scotland"}, crit, today)
+    assert plain["excluded"]
+
+
+def test_director_service_address_gives_a_place_signal(c):
+    c.execute("insert into company (company_number, name) values ('SC999001', 'PISYS EXAMPLE LTD') on conflict do nothing")
+    c.execute("""insert into officer (company_number, officer_key, name, role, appointed_on, postcode)
+                 values ('SC999001', 'pz', 'JONES, Ann', 'director', '2020-01-01', 'SA1 1AA')""")
+    c.execute("select ao_refresh_company_signals()")
+    sig = c.execute("select signals from company_signal where company_number = 'SC999001'").fetchone()
+    assert "director:Wales" in sig["signals"]
+    live = c.execute("select ao_signals('SC999001') s").fetchone()["s"]
+    assert "director:Wales" in live
+
+
 def test_old_regions_only_setting_becomes_an_exclusion(c):
     import json as _j
 
@@ -469,3 +494,26 @@ def test_sale_signals_parent_sale_and_acquisition_pattern(c, tmp_path):
     scoring.rescore(c)
     ex = c.execute("select exclusion from score where company_number = '01000002' and excluded").fetchone()
     assert ex and "Signs of a recent sale" in ex["exclusion"]
+
+
+def test_director_address_catch_up_keeps_in_a_company_run_from_wales(c, monkeypatch):
+    from acquireos import chapi, chsync, fetch
+    c.execute("insert into company (company_number, name, status) values ('SC999002', 'PISYS TWO LTD', 'Active') on conflict do nothing")
+    bb = c.execute("insert into buy_box (user_id, name, criteria) values (1, 'NoScot', %s) returning id",
+                   (json.dumps({"exclude": {"regions": ["Scotland"]}}),)).fetchone()["id"]
+    c.execute("insert into score (company_number, buy_box_id, score, coverage, excluded, exclusion) "
+              "values ('SC999002', %s, 0, 0, true, 'Region excluded: Scotland')", (bb,))
+    if not c.execute("select 1 from company_latest where company_number = 'SC999002'").fetchone():
+        c.execute("insert into company_latest (company_number) values ('SC999002')")
+    monkeypatch.setattr(chapi, "enabled", lambda: True)
+    monkeypatch.setattr(chapi, "_get", lambda path: {"items": [{"name": "JONES, Ann", "officer_role": "director",
+                                                               "address": {"postal_code": "sa1 1aa"}}]})
+    rescored = []
+    from acquireos import scoring as _sc
+    monkeypatch.setattr(_sc, "rescore_each", lambda conn, nums, progress=None: rescored.extend(nums))
+    fetch._cleanup_step(c, "Reading director addresses", fetch._director_address_catch_up)
+    fetch._cleanup_state(c, running=None)
+    assert c.execute("select postcode from officer where company_number = 'SC999002'").fetchone()["postcode"] == "SA1 1AA"
+    assert "SC999002" in rescored
+    assert chsync.get_setting(c, "director_addresses_read", None)["read"] >= 1
+    assert any(x["label"] == "Reading director addresses" and x["status"] == "done" for x in fetch.cleanups(c))
