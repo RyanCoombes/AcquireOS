@@ -52,6 +52,7 @@ def main(argv=None):
     p.add_argument("--sheet")
 
     sub.add_parser("rebuild", help="Recompute ownership, links and scores")
+    sub.add_parser("read-shareholders", help="Read shareholder lists for the pipeline and buy-box companies with 10+ staff (used by the web app)")
     sub.add_parser("look-up-holdcos", help="Look up holding companies whose owners aren't on record (used by the web app)")
     sub.add_parser("fill-accounts-gaps", help="Check companies whose newer accounts never arrived with Companies House (used by the web app)")
     sub.add_parser("find-logos", help="Look for every missing company logo on its website (used by the web app)")
@@ -72,6 +73,22 @@ def main(argv=None):
         import secrets
 
         print(secrets.token_urlsafe(32))
+        return
+    if a.cmd == "read-shareholders":
+        from . import db as _db, gaps as _gaps, jobs as _jobs
+
+        job = _jobs.Job("read-shareholders", ["Read shareholder lists"])
+        job.stage("Read shareholder lists")
+        try:
+            with _db.conn(dedicated=True) as c:
+                r = _gaps.read_all_shareholders(c, progress=lambda frac, msg: job.progress(frac, msg))
+            job.log(f"Checked {r['checked']:,} companies; {r['lists_found']:,} shareholder lists found; {r['left']:,} left")
+            job.finish(r)
+        except Exception as e:
+            job.finish({}, status="failed", error=str(e))
+            raise
+        finally:
+            _db.close_pool()
         return
     if a.cmd == "look-up-holdcos":
         from . import db as _db, gaps as _gaps, jobs as _jobs

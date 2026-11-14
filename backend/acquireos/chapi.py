@@ -190,6 +190,80 @@ def parse_shareholders(text: str) -> list[dict]:
     return out
 
 
+# Paper (scanned) confirmation statements: "Shareholder information" rows read by
+# OCR as "<name> <class> <number held> [<transferred>]", e.g. "Patrick Copping
+# Ordinary 420 0" or "Development Bank of Wales plc A Ordinary 210".
+_SH_ROW = re.compile(
+    r"^\s*(?P<name>[^\W\d_][\w'&.,()\- ]{3,80}?)\s+(?P<cls>(?:[A-Z]\s+)?(?:ordinary|preference|preferred|deferred|growth|"
+    r"redeemable|a|b|c)(?:\s+(?:ordinary|preference|shares?))?)\s+(?P<n>\d[\d,]*)\b", re.I | re.M)
+
+
+def parse_shareholders_table(text: str) -> list[dict]:
+    """Shareholders from a scanned statement's OCR text (see _SH_ROW). Only used
+    when the electronic layout isn't found; rows whose name has no letters or
+    looks like a heading are left out."""
+    out, seen = [], set()
+    for m in _SH_ROW.finditer(text):
+        name = " ".join(m.group("name").split()).strip(" .,")
+        if re.search(r"(?i)\b(shareholder|class|number|total|name|shares|statement|capital|aggregate)\b", name) or len(name) < 4:
+            continue
+        cls = " ".join(m.group("cls").split()).upper()
+        key = (name.upper(), cls)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": name, "shares": float(m.group("n").replace(",", "")), "share_class": cls})
+    return out if len(out) >= 1 else []
+
+
+def statement_text(pdf: bytes) -> str:
+    """A statement's text: its text layer, or OCR when it's a scan."""
+    text = _pdf_text(pdf)
+    if len(re.sub(r"\s", "", text)) >= 40:  # a scan has next to no text layer
+        return text
+    try:
+        from .pdfaccounts import pdf_text
+        return pdf_text(pdf, ocr_pages=8)[0]
+    except Exception:
+        return text
+
+
+# Statements that can list shareholders, including re-filed ones (second filings,
+# "RP04CS01"), newest first; a statement "with no updates" doesn't list them.
+def _lists_shareholders(f: dict) -> bool:
+    t = (f.get("type") or "").upper()
+    return ((t in ("CS01", "AR01", "IN01") or (t.startswith("RP04") and ("CS01" in t or "AR01" in t)) or t == "RP04")
+            and "no-updates" not in (f.get("description") or ""))
+
+
+def read_shareholders(conn, num: str, filings: list[dict], limit: int = 8) -> str | None:
+    """Read the newest statement that lists shareholders and store its list.
+    filings: [{type, description, date/filed_on, made_up_date, document}]. Returns
+    where the list came from, or None. A newer list already held (e.g. saved by
+    Claude) is never replaced by an older one."""
+    docs = [f for f in filings if _lists_shareholders(f) and f.get("document")][:limit]
+    held = conn.execute("select max(as_at) as d from shareholder where company_number = %s", (num,)).fetchone()["d"]
+    for f in docs:
+        as_at = _d(f.get("made_up_date") or f.get("date"))
+        if held and as_at and as_at < held:
+            return None  # what's held is newer than anything left to read
+        pdf = _document(f["document"])
+        if not pdf:
+            continue
+        text = statement_text(pdf)
+        found = parse_shareholders(text) or parse_shareholders_table(text)
+        if found:
+            conn.execute("delete from shareholder where company_number = %s", (num,))
+            for sh in found:
+                conn.execute(
+                    """insert into shareholder (company_number, name, shares, share_class, as_at, source)
+                       values (%s, %s, %s, %s, %s, %s) on conflict do nothing""",
+                    (num, sh["name"], sh["shares"], sh["share_class"], as_at, f.get("type")))
+            made_up = f.get("made_up_date")
+            return f"{f.get('type')} made up to {made_up}" if made_up else f"{f.get('type')} filed {f.get('date')}"
+    return None
+
+
 def _pdf_text(data: bytes) -> str:
     import io
 
@@ -357,24 +431,14 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
         # The newest filing that lists shareholders. Confirmation statements
         # "with no updates" don't list them, so skip those and look further
         # back (annual returns before 2016 always listed them), newest first.
-        docs = [f for f in filings_raw if (f.get("type") or "").upper() in ("CS01", "AR01", "IN01")
-                and (f.get("links") or {}).get("document_metadata")
-                and "no-updates" not in (f.get("description") or "")][:5]
-        for f in docs:
-            pdf = _document(f["links"]["document_metadata"])
-            found = parse_shareholders(_pdf_text(pdf)) if pdf else []
-            if found:
-                conn.execute("delete from shareholder where company_number = %s", (num,))
-                for sh in found:
-                    conn.execute(
-                        """insert into shareholder (company_number, name, shares, share_class, as_at, source)
-                           values (%s, %s, %s, %s, %s, %s) on conflict do nothing""",
-                        (num, sh["name"], sh["shares"], sh["share_class"],
-                         _d((f.get("description_values") or {}).get("made_up_date") or f.get("date")), f.get("type")))
-                counts["shareholders"] = len(found)
-                made_up = (f.get("description_values") or {}).get("made_up_date")
-                shareholders_from = f"{f.get('type')} made up to {made_up}" if made_up else f"{f.get('type')} filed {f.get('date')}"
-                return
+        src = read_shareholders(conn, num, [
+            {"type": f.get("type"), "description": f.get("description"), "date": f.get("date"),
+             "made_up_date": (f.get("description_values") or {}).get("made_up_date"),
+             "document": (f.get("links") or {}).get("document_metadata")} for f in filings_raw])
+        if src:
+            shareholders_from = src
+            counts["shareholders"] = conn.execute("select count(*) as n from shareholder where company_number = %s",
+                                                  (num,)).fetchone()["n"]
 
     before = _snapshot(conn, num)
     for name, fn in (("profile", get_profile), ("charges", get_charges), ("filings", get_filings),

@@ -215,6 +215,43 @@ def mark_figures_checked(company_number: str, period_end: str) -> str:
 
 
 @server.tool(description=(
+    "Save a company's full shareholder list, read from a confirmation statement (including a re-filed or scanned one), "
+    "as at its made-up date (as_at, YYYY-MM-DD). holders: [{name, shares, share_class}] exactly as listed (every holder, "
+    "not only those over 25%). source_url is the filing. Replaces an older list; refused if a newer one is already held. "
+    "Known investors among them (e.g. DBW, BGF, UK Steel Enterprise) are flagged on the company."))
+def save_shareholders(company_number: str, as_at: str, source_url: str, holders: list[dict]) -> str:
+    from datetime import date as _date
+
+    num = company_number.strip().upper()
+    when = _date.fromisoformat(as_at)
+    rows = [h for h in holders if (h.get("name") or "").strip()]
+    if not rows:
+        raise ValueError("Give at least one holder with a name")
+    if not source_url:
+        raise ValueError("source_url is required")
+    with db.conn() as c:
+        if not c.execute("select 1 from company where company_number = %s", (num,)).fetchone():
+            raise ValueError("Company not found")
+        held = c.execute("select max(as_at) as d from shareholder where company_number = %s", (num,)).fetchone()["d"]
+        if held and held > when:
+            return f"Not saved: a newer list (as at {held}) is already held."
+        c.execute("delete from shareholder where company_number = %s", (num,))
+        for h in rows:
+            c.execute("""insert into shareholder (company_number, name, shares, share_class, as_at, source)
+                         values (%s, %s, %s, %s, %s, %s) on conflict do nothing""",
+                      (num, " ".join(str(h["name"]).split()), h.get("shares"), (h.get("share_class") or "ORDINARY").upper(),
+                       when, f"claude: {source_url}"[:500]))
+        c.execute("""insert into ch_fetch (company_number, fetched_at, shareholders_from) values (%s, now(), %s)
+                     on conflict (company_number) do update set shareholders_from = excluded.shareholders_from""",
+                  (num, f"Read by Claude, as at {as_at}"))
+        c.execute("select ao_refresh_company_signals()")
+        flagged = c.execute("select 'investor_shareholder' = any(signals) as f from company_signal where company_number = %s",
+                            (num,)).fetchone()
+    return (f"Saved {len(rows)} shareholders as at {as_at}."
+            + (" A known investor is among them: flagged as 'Investor shareholder'." if flagged and flagged["f"] else ""))
+
+
+@server.tool(description=(
     "Save figures you read from a company's filed accounts (e.g. a PDF via read_accounts_pdf), for one year end "
     "(period_end YYYY-MM-DD). Give only figures printed in the accounts, in pounds; never estimates. source_url is "
     "the filing (its Companies House filing-history page). The company is rescored. Figures are marked as read "

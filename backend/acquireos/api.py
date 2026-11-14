@@ -347,7 +347,7 @@ def companies(
         if sold in ("hide", "only"):  # recently sold to another company (register or research)
             where.append(("" if sold == "only" else "not ") +
                          "exists (select 1 from company_signal sg where sg.company_number = c.company_number and 'recently_sold' = any(sg.signals))")
-        if signal in ("possible_buyer", "many_shareholders"):
+        if signal in ("possible_buyer", "many_shareholders", "investor_shareholder", "likely_acquired"):
             where.append("exists (select 1 from company_signal sg where sg.company_number = c.company_number and %(signal)s = any(sg.signals))")
             params["signal"] = signal
         if mine == "hide_closed":   # hide companies you have passed on or rejected
@@ -1802,6 +1802,27 @@ def accounts_gaps(scope: str = "targets"):
     from . import gaps
     with db.conn() as c:
         return gaps.summary(c, scope)
+
+
+@app.get("/api/shareholders-to-read")
+def shareholders_to_read():
+    from . import gaps
+    with db.conn() as c:
+        rows = gaps.shareholders_to_read(c)
+    return {"total": len(rows)}
+
+
+@app.post("/api/shareholders/read")
+def shareholders_read():
+    from . import chapi, jobs
+    if not chapi.enabled():
+        raise HTTPException(400, "Add your Companies House API key (CH_API_KEY in the stack) to read shareholder lists")
+    with db.conn() as c:
+        cur = jobs.current(c)
+        if cur and cur["status"] == "running":
+            raise HTTPException(409, "A job is running: try again when it has finished")
+    _run_detached(["read-shareholders"], after=clear_cache)
+    return {"started": True}
 
 
 @app.get("/api/holdcos")

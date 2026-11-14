@@ -2371,3 +2371,48 @@ def test_every_column_sorts_on_both_lists(loaded):
         vals = [float(x["value_high"]) for x in rows if x.get("value_high") is not None]
         assert vals and vals == sorted(vals, reverse=True)
         assert rows[0]["value_high"] is not None  # companies with a value come first
+
+
+def test_shareholder_lists_refiled_scanned_investors_and_claude_saves(loaded, monkeypatch):
+    from acquireos import chapi, gaps, mcp_server
+    from acquireos.chapi import parse_shareholders_table, read_shareholders
+
+    c = loaded
+    n = c.execute("select company_number from company order by company_number limit 1").fetchone()["company_number"]
+    c.execute("delete from shareholder where company_number = %s", (n,))
+    # Conversant: the newest statement (May 2026) only updated share capital (no list); the list is in a re-filed
+    # statement (RP04CS01, Sept 2025) that's a scan, read by OCR.
+    filings = [
+        {"type": "CS01", "description": "confirmation-statement-with-updates", "date": "2026-05-20",
+         "made_up_date": "2026-05-10", "document": "/doc/new"},
+        {"type": "RP04CS01", "description": "second-filing-of-confirmation-statement", "date": "2025-09-15",
+         "made_up_date": "2025-05-10", "document": "/doc/refiled"},
+        {"type": "CS01", "description": "confirmation-statement-with-no-updates", "date": "2024-05-20",
+         "made_up_date": "2024-05-10", "document": "/doc/old"},
+    ]
+    scanned = ("Shareholder information\nName Class of share Number of shares\nPatrick Copping Ordinary 420 0\n"
+               "Gareth Barber Ordinary 210\nDevelopment Bank of Wales plc Ordinary 210\nUK Steel Enterprise Limited Ordinary 90\n"
+               "Siân Crooks Ordinary 70 0\nTotal 1000")
+    read = []
+    monkeypatch.setattr(chapi, "_document", lambda link, **k: (read.append(link) or b"%PDF"))
+    monkeypatch.setattr(chapi, "statement_text", lambda pdf: "Statement of capital only" if read[-1] == "/doc/new" else scanned)
+    src = read_shareholders(c, n, filings)
+    assert read == ["/doc/new", "/doc/refiled"] and src.startswith("RP04CS01")   # the no-updates one is never fetched
+    rows = c.execute("select name, shares from shareholder where company_number = %s order by shares desc, name", (n,)).fetchall()
+    assert [r["name"] for r in rows][:2] == ["Patrick Copping", "Development Bank of Wales plc"] and len(rows) == 5
+    # Known investor flagged, though under 25%.
+    c.execute("select ao_refresh_company_signals()")
+    sig = c.execute("select signals from company_signal where company_number = %s", (n,)).fetchone()["signals"]
+    assert "investor_shareholder" in sig
+    # An older list never replaces a newer one held (e.g. one Claude saved).
+    c.commit()
+    out = mcp_server.save_shareholders(n, "2026-06-01", "https://find-and-update.company-information.service.gov.uk/x",
+                                       [{"name": "Patrick Copping", "shares": 420}, {"name": "BGF Investments LP", "shares": 300}])
+    assert "Saved 2 shareholders" in out and "Investor shareholder" in out
+    read.clear()
+    assert read_shareholders(c, n, filings) is None
+    assert c.execute("select count(*) as n from shareholder where company_number = %s", (n,)).fetchone()["n"] == 2
+    assert "Not saved" in mcp_server.save_shareholders(n, "2025-01-01", "https://x", [{"name": "Someone", "shares": 1}])
+    # Headings and totals aren't shareholders.
+    assert parse_shareholders_table("Total number of shares 1000\nClass of share Ordinary 1000") == []
+    gaps.shareholders_to_read(c)  # the job's list runs

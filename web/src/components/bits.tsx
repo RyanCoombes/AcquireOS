@@ -99,6 +99,7 @@ export const SIGNALS: Record<string, [string, string, string]> = {
   recently_sold: ["Recently sold", "red", "A company became the owner as the previous owners left, in the last 3 years"],
   possible_buyer: ["Possible buyer", "blue", "Has taken control of established companies in the last 3 years: may be buying, not selling"],
   likely_acquired: ["Signs of a sale", "red", "Directors living abroad appointed in the last 18 months, plus a new loan charge, a year-end change or new articles (here or at its holding company): usually a completed acquisition"],
+  investor_shareholder: ["Investor shareholder", "amber", "A known investor (e.g. the Development Bank of Wales, BGF, UK Steel Enterprise) is on the latest shareholder list, even below the 25% the owners register shows"],
   many_shareholders: ["Many shareholders", "amber", "10 or more shareholders on its latest statement: usually investor or employee-owned"],
 };
 

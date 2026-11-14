@@ -411,7 +411,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                   <Select label="Recently sold" k="sold" query={query} set={set}
                           options={[["hide", "Hide companies sold in the last 3 years"], ["only", "Only companies sold in the last 3 years"]]} />
                   <Select label="Other signals" k="signal" query={query} set={set}
-                          options={[["possible_buyer", "Possible buyers (taking over others)"], ["many_shareholders", "10 or more shareholders"]]} />
+                          options={[["possible_buyer", "Possible buyers (taking over others)"], ["many_shareholders", "10 or more shareholders"],
+                                   ["investor_shareholder", "An investor among the shareholders"], ["likely_acquired", "Signs of a sale"]]} />
                   <Select label="Ownership flag" k="flag" query={query} set={set} options={[
                     ["recent_change", "Recent ownership change"], ["via_holdco", "Owned via holdco"], ["foreign_parent", "Foreign parent"],
                     ["investor", "Investor"], ["trust", "Trust"], ["eot", "EOT"], ["ch_default", "CH default address"],

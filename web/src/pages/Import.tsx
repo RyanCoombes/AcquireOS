@@ -175,6 +175,7 @@ export default function Import() {
       <LogoBatch />
       <AccountsGaps />
       <HoldcoLookUp />
+      <ShareholderLists />
 
       <section>
         <h2>History</h2>
@@ -982,6 +983,32 @@ function HoldcoLookUp() {
           </tbody></table>
         </details>
       </>)}
+      {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
+    </section>
+  );
+}
+
+
+function ShareholderLists() {
+  const [msg, setMsg] = useState<string | null>(null);
+  const t = useAsync(() => api.shareholdersToRead(), []);
+  const n = t.data?.total ?? 0;
+  return (
+    <section>
+      <div className="sechead"><h2>Shareholder lists</h2><span className="faint small">Your pipeline, and buy-box companies with 10+ staff</span></div>
+      <p className="small" style={{ marginTop: 0 }}>
+        The owners register only shows holdings over 25%, so a minority investor (the Development Bank of Wales, BGF, UK Steel
+        Enterprise…) can be missed. The full list is in the confirmation statements: this reads the newest one that has it,
+        including re-filed and scanned ones, and flags known investors.
+      </p>
+      {t.data && (n === 0 ? <div className="faint small">All up to date.</div> : (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button className="btn primary" onClick={async () => {
+            setMsg(null);
+            try { await api.readShareholders(); setMsg("Started. Progress shows at the top."); } catch (e: any) { setMsg(e.message); }
+          }}>Read {int(Math.min(n, 300))} shareholder {n === 1 ? "list" : "lists"}</button>
+          <span className="faint small">{int(n)} to read; up to 300 a run, pipeline first. Needs your Companies House key.</span>
+        </div>))}
       {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
     </section>
   );
