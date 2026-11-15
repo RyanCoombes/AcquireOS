@@ -2,12 +2,12 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type Status } from "../api";
 import { ErrorLine, Score, StatusMark, Toast, useAsync, Logo } from "../components/bits";
-import { ageFrom, date, int, OWNERSHIP, range } from "../format";
+import { ageFrom, date, int, OWNERSHIP, range, WORK_MODEL } from "../format";
 
 type PFilter = { q: string; box: string; region: string; min_staff: string; max_staff: string; min_rev: string;
-  min_age: string; ownership: string; min_score: string; show: string; sort: string };
+  min_age: string; ownership: string; work: string; min_score: string; show: string; sort: string };
 const NO_FILTER: PFilter = { q: "", box: "", region: "", min_staff: "", max_staff: "", min_rev: "", min_age: "",
-  ownership: "", min_score: "", show: "", sort: "" };
+  ownership: "", work: "", min_score: "", show: "", sort: "" };
 const FKEY = "pipeline-filters";
 const loadF = (): PFilter => { try { return { ...NO_FILTER, ...JSON.parse(localStorage.getItem(FKEY) || "{}") }; } catch { return NO_FILTER; } };
 
@@ -36,7 +36,8 @@ export default function Pipeline() {
   const q = f.q.trim().toLowerCase();
   const rev = (r: (typeof all)[number]) => Number(r.revenue_high ?? r.revenue_low ?? NaN);
   const rows = all.filter((r) => {
-    if (q && !(`${r.name} ${r.company_number} ${r.next_action ?? ""}`.toLowerCase().includes(q))) return false;
+    if (q && !(`${r.name} ${r.company_number}`.toLowerCase().includes(q))) return false;
+    if (f.work === "not_known" ? ["remote", "hybrid", "on_site"].includes(r.work_model ?? "") : f.work && r.work_model !== f.work) return false;
     if (f.box && !(r.boxes ?? []).includes(f.box)) return false;
     if (f.region && (r.region ?? "") !== f.region) return false;
     const lo = num(f.min_staff), hi = num(f.max_staff);
@@ -104,35 +105,10 @@ export default function Pipeline() {
         </div>
       )}
       {all.length > 0 && (
-        <div className={`filterbar pfilters ${fOpen ? "open" : ""}`}>
-          <button className="btn m-only pf-toggle" onClick={() => setFOpen(!fOpen)} aria-expanded={fOpen}>
-            {fOpen ? "▾ Hide filters" : `▸ Filters${nSet ? ` (${nSet})` : ""}`}</button>
-          <input type="search" placeholder="Search name, number or action" value={f.q} onChange={upd("q")} aria-label="Search the pipeline" />
-          {boxes.length > 1 && (
-            <select value={f.box} onChange={upd("box")} aria-label="Buy box">
-              <option value="">Any buy box</option>{boxes.map((b) => <option key={b} value={b}>{b}</option>)}
-            </select>
-          )}
-          {regions.length > 1 && (
-            <select value={f.region} onChange={upd("region")} aria-label="Region">
-              <option value="">Any region</option>{regions.map((x) => <option key={x} value={x}>{x}</option>)}
-            </select>
-          )}
-          <span className="pf-range"><input inputMode="numeric" placeholder="Staff from" value={f.min_staff} onChange={upd("min_staff")} aria-label="Staff at least" />
-            <span className="faint">–</span><input inputMode="numeric" placeholder="to" value={f.max_staff} onChange={upd("max_staff")} aria-label="Staff at most" /></span>
-          <input inputMode="decimal" placeholder="Revenue £m+" value={f.min_rev} onChange={upd("min_rev")} aria-label="Revenue at least, £ millions" />
-          <input inputMode="numeric" placeholder="Owner aged" value={f.min_age} onChange={upd("min_age")} aria-label="Oldest owner aged at least" />
-          <select value={f.ownership} onChange={upd("ownership")} aria-label="Ownership">
-            <option value="">Any ownership</option>{owners.map((o) => <option key={o} value={o}>{OWNERSHIP[o] ?? o}</option>)}
-          </select>
-          <input inputMode="numeric" placeholder="Score from" value={f.min_score} onChange={upd("min_score")} aria-label="Score at least" />
-          <select value={f.show} onChange={upd("show")} aria-label="Show">
-            <option value="">All cards</option>
-            <option value="due">Action due</option>
-            <option value="no_action">No next action set</option>
-            <option value="stale">30+ days in stage</option>
-            <option value="investor">Investor among shareholders</option>
-          </select>
+        <div className="filterbar pfilters">
+          <input type="search" placeholder="Type a company name…" value={f.q} onChange={upd("q")} aria-label="Find a company in the pipeline" />
+          <button className={`btn ${fOpen ? "on" : ""}`} onClick={() => setFOpen(!fOpen)} aria-expanded={fOpen}>
+            {fOpen ? "▾ Filters" : `▸ Filters${nSet - (f.q ? 1 : 0) > 0 ? ` (${nSet - (f.q ? 1 : 0)})` : ""}`}</button>
           <select value={f.sort} onChange={upd("sort")} aria-label="Sort cards">
             <option value="">Sort: next action</option>
             <option value="score">Sort: score</option>
@@ -147,6 +123,40 @@ export default function Pipeline() {
             {nSet > 0 && <span className="faint small">{int(rows.length)} of {int(all.length)}</span>}
             {(nSet > 0 || f.sort) && <button className="btn quiet" onClick={() => setF(NO_FILTER)}>Clear</button>}
           </span>
+          {fOpen && (
+            <div className="pf-more">
+              {boxes.length > 1 && (
+                <select value={f.box} onChange={upd("box")} aria-label="Buy box">
+                  <option value="">Any buy box</option>{boxes.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+              )}
+              {regions.length > 1 && (
+                <select value={f.region} onChange={upd("region")} aria-label="Region">
+                  <option value="">Any region</option>{regions.map((x) => <option key={x} value={x}>{x}</option>)}
+                </select>
+              )}
+              <span className="pf-range"><input inputMode="numeric" placeholder="Staff from" value={f.min_staff} onChange={upd("min_staff")} aria-label="Staff at least" />
+                <span className="faint">–</span><input inputMode="numeric" placeholder="to" value={f.max_staff} onChange={upd("max_staff")} aria-label="Staff at most" /></span>
+              <input inputMode="decimal" placeholder="Revenue £m+" value={f.min_rev} onChange={upd("min_rev")} aria-label="Revenue at least, £ millions" />
+              <input inputMode="numeric" placeholder="Owner aged" value={f.min_age} onChange={upd("min_age")} aria-label="Oldest owner aged at least" />
+              <select value={f.ownership} onChange={upd("ownership")} aria-label="Ownership">
+                <option value="">Any ownership</option>{owners.map((o) => <option key={o} value={o}>{OWNERSHIP[o] ?? o}</option>)}
+              </select>
+              <select value={f.work} onChange={upd("work")} aria-label="Way of working">
+                <option value="">Any way of working</option>
+                {Object.entries(WORK_MODEL).filter(([v]) => v !== "unknown").map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                <option value="not_known">Not known yet</option>
+              </select>
+              <input inputMode="numeric" placeholder="Score from" value={f.min_score} onChange={upd("min_score")} aria-label="Score at least" />
+              <select value={f.show} onChange={upd("show")} aria-label="Show">
+                <option value="">All cards</option>
+                <option value="due">Action due</option>
+                <option value="no_action">No next action set</option>
+                <option value="stale">30+ days in stage</option>
+                <option value="investor">Investor among shareholders</option>
+              </select>
+            </div>
+          )}
         </div>
       )}
       <div className="phasebar">

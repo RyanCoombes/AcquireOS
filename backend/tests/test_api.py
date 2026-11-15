@@ -2462,3 +2462,19 @@ def test_shareholder_sweep_goes_pipeline_targets_then_everyone_in_batches(loaded
     monkeypatch.setattr(jobs.Job, "progress", stop)
     gaps.run_shareholder_batch(c)
     assert gaps.sweep_state(c)["active"] is False
+
+
+def test_work_model_saved_shown_and_filtered(loaded):
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        assert cl.post("/api/companies/01000001/enrichment", json={"source_url": "https://example.com/careers", "work_model": "office"}).status_code == 400
+        r = cl.post("/api/companies/01000001/enrichment", json={"source_url": "https://example.com/careers", "work_model": "hybrid"})
+        assert r.status_code == 200, r.text
+        assert cl.get("/api/companies/01000001").json()["enrichment"]["work_model"] == "hybrid"
+        rows = cl.get("/api/companies", params={"work_model": "hybrid"}).json()["rows"]
+        assert [x["company_number"] for x in rows] == ["01000001"] and rows[0]["work_model"] == "hybrid"
+        others = cl.get("/api/companies", params={"work_model": "not_known"}).json()["rows"]
+        assert "01000001" not in {x["company_number"] for x in others} and others
+        assert cl.get("/api/companies", params={"sort": "work"}).status_code == 200

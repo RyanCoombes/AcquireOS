@@ -90,7 +90,7 @@ const LABELS: Record<string, string> = {
   q: "Search", bb: "Buy box", mine: "Show", min_staff: "Staff ≥", max_staff: "Staff ≤", min_owner_age: "Owner aged ≥",
   ownership: "Ownership", region: "Region", status: "My status", min_score: "Score ≥", company_status: "Company status",
   sic: "Industry", min_years: "Years trading ≥", accounts_size: "Accounts", overdue: "Overdue", charges: "Charges",
-  business_type: "Business type", has_website: "Website", tier: "Tier", changed_days: "Changed in (days)",
+  business_type: "Business type", work_model: "Way of working", has_website: "Website", tier: "Tier", changed_days: "Changed in (days)",
   change_kind: "Change", flag: "Flag", sold: "Recently sold", signal: "Signal", revenue: "Revenue source",
   wales: "Wales", nation: "Presence in", presence: "How", min_revenue: "Revenue ≥", max_revenue: "Revenue ≤", min_profit: "Profit ≥", max_profit: "Profit ≤",
   min_net_assets: "Net assets ≥", min_cash: "Cash ≥", min_value: "Value ≥", max_value: "Value ≤",
@@ -99,6 +99,7 @@ const MONEY = new Set(["min_revenue", "max_revenue", "min_profit", "max_profit",
 const VALUE_LABELS: Record<string, string> = {
   hide_closed: "hide not suitable / not now", pipeline: "my pipeline", untouched: "not looked at", all: "everything",
   any: "any presence", registered: "registered there", office: "office there", funding: "public funding", director: "director lives there",
+  remote: "remote", hybrid: "hybrid", on_site: "on-site", not_known: "not known yet",
   filed: "filed", estimated: "estimate", none: "none", hide: "hide", only: "only", true: "yes", false: "no",
 };
 

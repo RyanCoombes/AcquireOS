@@ -217,6 +217,7 @@ SORTS = {
     "ebitda": "(l.operating_profit + coalesce(l.da, 0))", "debt": "l.bank_debt", "industry": "c.sic_codes[1]",
     "region": "c.region", "ownership": "o.ownership_type", "next": "uc.next_action_on",
     "website": "(select en2.website from enrichment en2 where en2.company_number = c.company_number)",
+    "work": "(select en2.work_model from enrichment en2 where en2.company_number = c.company_number)",
 }
 
 
@@ -231,7 +232,7 @@ def companies(
     flag: str | None = None, sort: str = "score", dir: str = "desc", limit: int = 100, offset: int = 0,
     company_status: str | None = None, sic: str | None = None, changed_days: int | None = None,
     change_kind: str | None = None, min_value: float | None = None, max_value: float | None = None,
-    min_years: int | None = None, format: str = "list", business_type: str | None = None,
+    min_years: int | None = None, format: str = "list", business_type: str | None = None, work_model: str | None = None,
     has_website: bool | None = None, bb: str = "all", in_box: bool | None = None,
     accounts_size: str | None = None, overdue: str | None = None, charges: str | None = None,
     numbers: str | None = None, count: bool = True, mine: str | None = None, sold: str | None = None,
@@ -320,6 +321,12 @@ def companies(
         if business_type:
             where.append("exists (select 1 from enrichment en where en.company_number = c.company_number and en.business_type = %(btype)s)")
             params["btype"] = business_type
+        if work_model == "not_known":
+            where.append("not exists (select 1 from enrichment en where en.company_number = c.company_number "
+                         "and en.work_model in ('remote', 'hybrid', 'on_site'))")
+        elif work_model:
+            where.append("exists (select 1 from enrichment en where en.company_number = c.company_number and en.work_model = %(wmodel)s)")
+            params["wmodel"] = work_model
         if has_website is not None:
             where.append(("" if has_website else "not ") + "exists (select 1 from enrichment en where en.company_number = c.company_number and en.website is not null)")
         if revenue in ("filed", "estimated"):  # where the revenue figure comes from
@@ -445,7 +452,7 @@ def companies(
                    s.score, s.coverage, not ({sx}) as excluded, s.exclusion, s.value_low, s.value_high, s.value_basis,
                    s.box_name, s.boxes,
                    coalesce(uc.status, 'new') as status, uc.rating, uc.next_action, uc.next_action_on,
-                   ch.last_change, ch.last_kinds, en.website, en.business_type, {_logo_sql("c.company_number")},
+                   ch.last_change, ch.last_kinds, en.website, en.business_type, en.work_model, {_logo_sql("c.company_number")},
                    ao_signals(c.company_number) as signals, ao_same_business(c.company_number) as same_business,
                    en.trading_region, sg.sold_on, sg.sold_to
             from page p join company c on c.company_number = p.company_number
@@ -1328,6 +1335,7 @@ class EnrichIn(BaseModel):
     business_type: str | None = None
     recurring_revenue: str | None = None
     field_service: str | None = None
+    work_model: str | None = None
     summary: str | None = None
     confidence: str = "high"
     source_label: str | None = None
@@ -1602,6 +1610,7 @@ def pipeline():
             f"""select uc.*, c.name, c.region, s.score, s.value_low, s.value_high, s.boxes,
                       l.employees, e.revenue_low, e.revenue_high, e.basis as revenue_basis,
                       o.ownership_type, o.oldest_birth_year, coalesce(sg.signals, '{{}}') as signals,
+                      (select en.work_model from enrichment en where en.company_number = uc.company_number) as work_model,
                       (select en.website from enrichment en where en.company_number = uc.company_number) as website,
                       {_logo_sql("uc.company_number")},
                       (select max(created_at) from stage_event e where e.company_number = uc.company_number

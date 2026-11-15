@@ -369,7 +369,8 @@ def audit_queue(check: str = "all", limit: int = 20, min_score: float = 0, pipel
 @server.tool(description=(
     "Save researched facts about a company. source_url is required: the page where you verified it "
     "('manual' only if the user told you). business_type: " + "|".join(enrich.BUSINESS_TYPES) +
-    ". recurring_revenue and field_service: yes|partly|no|unknown. confidence: high|medium|low. "
+    ". recurring_revenue and field_service: yes|partly|no|unknown. work_model: how staff work, remote|hybrid|on_site|unknown, "
+    "from the company's own website, careers page or job adverts (say which in source_url); unknown if they don't say. confidence: high|medium|low. "
     "summary: ONE or TWO plain sentences on what the business does and for whom (shown on the company's overview). "
     "Longer analysis is kept in full in the research history, but only its first sentences show, so put each finding "
     "in its proper field instead: facts for key points, links for news, locations for offices, ownership for who owns it. "
@@ -401,14 +402,16 @@ def save_enrichment(company_number: str, source_url: str, website: str | None = 
                     confidence: str = "medium", source_label: str | None = None,
                     locations: list[dict] | None = None, facts: list[dict] | None = None,
                     linkedin: str | None = None, phone: str | None = None, sources: list | None = None,
-                    ownership: str | None = None, ownership_note: str | None = None, links: list[dict] | None = None, deals: list[dict] | None = None) -> str:
+                    ownership: str | None = None, ownership_note: str | None = None, links: list[dict] | None = None, deals: list[dict] | None = None,
+                    work_model: str | None = None) -> str:
     with db.conn() as c:
         return _j(enrich.save_enrichment(c, company_number, source_url=source_url, website=website,
                                          business_type=business_type, recurring_revenue=recurring_revenue,
                                          field_service=field_service, summary=summary, confidence=confidence,
                                          source_label=source_label, locations=locations, facts=facts,
                                          linkedin=linkedin, phone=phone, sources=sources, ownership=ownership,
-                                         ownership_note=ownership_note, links=links, deals=deals, by="claude (mcp)"))
+                                         ownership_note=ownership_note, links=links, deals=deals, work_model=work_model,
+                                         by="claude (mcp)"))
 
 
 @server.tool(description="Record a problem in the data for the user to review, e.g. wrong SIC code, owner link "

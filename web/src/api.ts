@@ -47,6 +47,7 @@ export interface Row {
   sold_on?: string | null; sold_to?: string | null;
   ownership_type: string | null;
   oldest_birth_year: number | null;
+  work_model?: string | null;
   flags: string[] | null;
   score: string | null;
   coverage: string | null;
@@ -191,6 +192,7 @@ export interface CompanyDetail {
   sics: { code: string; description: string }[];
   enrichment: {
     website: string | null; business_type: string | null; recurring_revenue: string | null; field_service: string | null;
+    work_model?: string | null;
     summary: string | null; confidence: string | null; updated_at: string; updated_by: string | null;
     linkedin?: string | null; phone?: string | null;
     ownership?: string | null; ownership_note?: string | null; trading_postcode?: string | null; trading_region?: string | null;

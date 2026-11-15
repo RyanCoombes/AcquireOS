@@ -163,3 +163,5 @@ export function relDays(v: string | null | undefined): string {
   if (d < 31) return `${d} days ago`;
   return date(v);
 }
+
+export const WORK_MODEL: Record<string, string> = { remote: "Remote", hybrid: "Hybrid", on_site: "On-site", unknown: "Not stated" };

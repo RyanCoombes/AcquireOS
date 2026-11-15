@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
 import { useAsync } from "./bits";
 import MapView, { type MapLink, type MapPoint } from "./MapView";
-import { cap, date, dateTime } from "../format";
+import { cap, date, dateTime, WORK_MODEL } from "../format";
 
 export function Location({ data }: { data: CompanyDetail }) {
   const nav = useNavigate();
@@ -117,7 +117,7 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
   const [webMsg, setWebMsgState] = useState<string | null>(() => { const m = WEB_MSG[num] ?? null; delete WEB_MSG[num]; return m; });
   const setWebMsg = (m: string | null) => { setWebMsgState(m); if (m) WEB_MSG[num] = m; };
   const [f, setF] = useState({ website: e?.website ?? "", business_type: e?.business_type ?? "", recurring_revenue: e?.recurring_revenue ?? "",
-                               field_service: e?.field_service ?? "", summary: e?.summary ?? "", source_url: "",
+                               field_service: e?.field_service ?? "", work_model: e?.work_model ?? "", summary: e?.summary ?? "", source_url: "",
                                linkedin: e?.linkedin ?? "", phone: e?.phone ?? "",
                                ownership: e?.ownership ?? "", ownership_note: e?.ownership_note ?? "",
                                locations: (e?.locations ?? []).map((l) => [cap(l.kind), l.name ?? "", l.address ?? ""].join(" | ")).join("\n"),
@@ -168,6 +168,7 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
           <Src url={sourceFor("classification")} /></div>
         <div><span className="label">Recurring revenue</span>{tri(e?.recurring_revenue)}</div>
         <div><span className="label">Field-service work</span>{tri(e?.field_service)}</div>
+        <div><span className="label">Way of working</span>{e?.work_model ? WORK_MODEL[e.work_model] ?? e.work_model : <span className="faint">Not checked</span>}</div>
         {(e?.linkedin || e?.phone) && (
           <div><span className="label">Contact</span>
             {e?.linkedin && <a href={e.linkedin} target="_blank" rel="noreferrer">LinkedIn ↗</a>}
@@ -197,7 +198,7 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
         <form style={{ display: "grid", gap: 10, marginTop: 8 }} onSubmit={async (ev) => {
           ev.preventDefault(); setErr(null);
           const body: Record<string, unknown> = { source_url: f.source_url || "manual", confidence: "high" };
-          for (const k of ["website", "business_type", "recurring_revenue", "field_service", "summary", "linkedin", "phone", "ownership", "ownership_note"] as const) if (f[k]) body[k] = f[k];
+          for (const k of ["website", "business_type", "recurring_revenue", "field_service", "work_model", "summary", "linkedin", "phone", "ownership", "ownership_note"] as const) if (f[k]) body[k] = f[k];
           if (!f.ownership && e?.ownership) body.ownership = "unknown";  // back to what Companies House shows
           // One office per line: "Kind | Name | Address"; one fact per line: "Label: value".
           body.locations = f.locations.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
@@ -223,6 +224,9 @@ export function Enrichment({ data, num, onSaved, finder }: { data: CompanyDetail
               <label key={k} className="field"><span className="label">{k === "recurring_revenue" ? "Recurring revenue" : "Field service"}</span>
                 <select value={f[k]} onChange={(x) => setF({ ...f, [k]: x.target.value })}><option value="">—</option>{["yes", "partly", "no", "unknown"].map((v) => <option key={v}>{v}</option>)}</select></label>
             ))}
+            <label className="field"><span className="label">Way of working</span>
+              <select value={f.work_model} onChange={(x) => setF({ ...f, work_model: x.target.value })}><option value="">—</option>
+                {Object.entries(WORK_MODEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <label className="field"><span className="label">Ownership (from research)</span>

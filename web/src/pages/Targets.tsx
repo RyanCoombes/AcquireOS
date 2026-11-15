@@ -6,7 +6,7 @@ import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
 import { NOT_NOW, NOT_SUITABLE, pickNote, rememberList, RuleOutMenu } from "../components/RuleOut";
 import { PresenceFilter, ActiveChips, FilterGroup, MoneyRange, NumField, NumRange, Select } from "../components/Filters";
-import { ageFrom, cap, CHANGE_KIND, date, int, isBadStatus, money, OWNERSHIP, range, relDays, years } from "../format";
+import { ageFrom, cap, CHANGE_KIND, date, int, isBadStatus, money, OWNERSHIP, range, relDays, WORK_MODEL, years } from "../format";
 
 const PAGE = 100;
 type Mode = "directory" | "targets";
@@ -30,6 +30,7 @@ const ALL_COLS: Col[] = [
   { key: "ownership", label: "Ownership", sm: true },
   { key: "region", label: "Region", sm: true },
   { key: "website", label: "Website", sm: true },
+  { key: "work", label: "Way of working", sm: true },
   { key: "changed", label: "Last change", sm: true },
   { key: "next", label: "Next action", sm: true },
   { key: "status", label: "My status" },
@@ -65,9 +66,9 @@ const DEFAULTS: Record<Mode, Record<string, string>> = {
   directory: { sort: "name", dir: "asc" },
   targets: { sort: "score", dir: "desc", in_box: "true", mine: "hide_closed" },
 };
-const FILTER_KEYS = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "nation", "presence", "revenue", "sold", "signal", "mine", "accounts_size", "overdue", "charges", "bb", "business_type", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
+const FILTER_KEYS = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "nation", "presence", "revenue", "sold", "signal", "mine", "accounts_size", "overdue", "charges", "bb", "business_type", "work_model", "has_website", "q", "min_staff", "max_staff", "min_owner_age", "ownership", "region", "tier", "status", "min_score",
   "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
-const MORE_KEYS = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "nation", "presence", "revenue", "sold", "signal", "overdue", "charges", "business_type", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
+const MORE_KEYS = ["min_revenue", "max_revenue", "min_profit", "max_profit", "min_net_assets", "min_cash", "nation", "presence", "revenue", "sold", "signal", "overdue", "charges", "business_type", "work_model", "has_website", "company_status", "sic", "min_years", "min_value", "max_value", "changed_days", "change_kind", "flag"];
 
 export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   const base = mode === "directory" ? "/companies" : "/targets";
@@ -423,13 +424,15 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                   <PresenceFilter query={query} set={set} />
                 </FilterGroup>
                 <FilterGroup title="Company" icon="▤" query={query}
-                             keys={["overdue", "charges", "business_type", "has_website", "tier", ...(mode === "targets" ? ["company_status", "sic", "min_years"] : [])]}>
+                             keys={["overdue", "charges", "business_type", "work_model", "has_website", "tier", ...(mode === "targets" ? ["company_status", "sic", "min_years"] : [])]}>
                   {mode === "targets" && <>{companyStatus}{yearsTrading}</>}
                   {overdueSel}{chargesSel}
                   <Select label="Business type" k="business_type" query={query} set={set} options={[
                     ["software", "Software"], ["saas", "SaaS"], ["data", "Data"], ["msp", "Managed service provider"],
                     ["it_consultancy", "IT consultancy"], ["field_service", "Field service"], ["agency", "Agency"], ["reseller", "Reseller"], ["other", "Other"],
                   ]} />
+                  <Select label="Way of working" k="work_model" query={query} set={set} options={[
+                    ["remote", "Remote"], ["hybrid", "Hybrid"], ["on_site", "On-site"], ["not_known", "Not known yet"]]} />
                   <Select label="Website" k="has_website" query={query} set={set} options={[["true", "Found"], ["false", "Not found yet"]]} />
                   <Select label="Review tier" k="tier" query={query} set={set} options={(m?.tiers ?? []).map((t) => [t, t])} />
                   {mode === "targets" && industry}
@@ -623,6 +626,7 @@ function TargetRow({ r, cols, cursor, onOpen, showBox, mode, sics, dim, href, ti
     cash: moneyCell(r.cash),
     debt: moneyCell(r.bank_debt),
     region: <td className="hide-sm nowrap">{r.trading_region && r.trading_region !== r.region ? <>{r.trading_region}<div className="sub">registered {r.region}</div></> : r.region ?? "—"}</td>,
+    work: <td className="hide-sm nowrap">{r.work_model ? WORK_MODEL[r.work_model] ?? r.work_model : <span className="faint">—</span>}</td>,
     website: <td className="hide-sm">{r.website ? <a href={r.website} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{r.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}</a> : <span className="faint">—</span>}</td>,
     changed: <td className="hide-sm nowrap">{r.last_change ? relDays(r.last_change) : <span className="faint">—</span>}</td>,
     next: <td className="hide-sm">{r.next_action ? <>{r.next_action}{r.next_action_on ? <div className="sub">{date(r.next_action_on)}</div> : null}</> : <span className="faint">—</span>}</td>,

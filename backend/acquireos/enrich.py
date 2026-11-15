@@ -13,6 +13,7 @@ import re
 
 from . import scoring
 
+WORK_MODELS = ["remote", "hybrid", "on_site", "unknown"]
 BUSINESS_TYPES = ["software", "saas", "data", "msp", "it_consultancy", "field_service", "agency", "reseller", "other"]
 TRISTATE = ["yes", "partly", "no", "unknown"]
 CONFIDENCE = ["high", "medium", "low"]
@@ -125,7 +126,8 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
                     confidence: str = "medium", source_label: str | None = None, by: str = "claude",
                     locations: list | None = None, facts: list | None = None, linkedin: str | None = None,
                     phone: str | None = None, sources: list | None = None, ownership: str | None = None,
-                    ownership_note: str | None = None, links: list | None = None, deals: list | None = None) -> dict:
+                    ownership_note: str | None = None, links: list | None = None, deals: list | None = None,
+                    work_model: str | None = None) -> dict:
     num = company_number.strip().upper()
     # The overview shows a sentence or two on what it does; a longer write-up is
     # kept in full in the research history (below), not on the overview.
@@ -141,6 +143,8 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
     for name, v in (("recurring_revenue", recurring_revenue), ("field_service", field_service)):
         if v and v not in TRISTATE:
             raise EnrichError(f"{name} must be one of {TRISTATE}")
+    if work_model and work_model not in WORK_MODELS:
+        raise EnrichError(f"work_model must be one of {WORK_MODELS}")
     if confidence not in CONFIDENCE:
         raise EnrichError(f"confidence must be one of {CONFIDENCE}")
     if website and not re.match(r"^https?://", website):
@@ -163,7 +167,8 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
         raise EnrichError(f"ownership must be one of {list(TYPE_LABELS)}")
     fields = {"website": website, "business_type": business_type, "recurring_revenue": recurring_revenue,
               "field_service": field_service, "summary": summary, "linkedin": linkedin, "phone": phone,
-              "ownership": None if ownership == "unknown" else ownership, "ownership_note": ownership_note}
+              "ownership": None if ownership == "unknown" else ownership, "ownership_note": ownership_note,
+              "work_model": work_model}
     given = {k: v for k, v in fields.items() if v not in (None, "")}
     if ownership == "unknown":  # back to what Companies House shows
         given["ownership"], given["ownership_note"] = None, None
@@ -184,7 +189,7 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
         given["deals"] = json.dumps(dls)
     if not given and not extra_sources:
         raise EnrichError("Nothing to save: give at least one of website, business_type, recurring_revenue, "
-                          "field_service, summary, locations, facts, links, deals, linkedin, phone or sources")
+                          "field_service, work_model, summary, locations, facts, links, deals, linkedin, phone or sources")
     if not given:  # sources only
         for url, label in extra_sources:
             conn.execute("""insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)
@@ -204,10 +209,10 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
     )
     labels = {"website": "Website", "business_type": "Business type", "recurring_revenue": "Recurring revenue",
               "field_service": "Field-service work", "summary": "Summary", "linkedin": "LinkedIn", "phone": "Phone",
-              "ownership": "Ownership"}
+              "ownership": "Ownership", "work_model": "Way of working"}
     kinds = {"website": "website", "business_type": "classification", "recurring_revenue": "classification",
              "field_service": "classification", "summary": "summary", "linkedin": "contact", "phone": "contact",
-             "ownership": "ownership"}
+             "ownership": "ownership", "work_model": "classification"}
     if "ownership" in given and ownership_note:
         given_note = f"{TYPE_LABELS[given['ownership']]}: {ownership_note}"
     else:
