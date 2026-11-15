@@ -9,7 +9,7 @@ import Financials from "../components/Financials";
 import { nextInList, RuleOutChips, type RuleOutPick } from "../components/RuleOut";
 import { BT_LABEL, Enrichment, Location, shortSummary } from "../components/CompanyExtras";
 import { Charges, Filings, Fold, Head, OwnersDirectors, WebsiteFinder } from "../components/Profile";
-import { ageFrom, CHANGE_KIND, chUrl, date, describeChange, int, isBadStatus, LINK_KIND, money, OWNERSHIP, range, relDays, years } from "../format";
+import { ageFrom, CHANGE_KIND, chUrl, date, describeChange, int, isBadStatus, LINK_KIND, money, OWNERSHIP, range, relDays, WORK_MODEL, years } from "../format";
 
 
 export default function Company() {
@@ -261,6 +261,9 @@ export default function Company() {
               {c.region && <><dt>Region</dt><dd>{c.region}</dd></>}
               {(data.enrichment?.ownership || (own && own.ownership_type !== "unknown")) && <><dt>Ownership</dt><dd>
                 {data.enrichment?.ownership ? <>{OWNERSHIP[data.enrichment.ownership]} <span className="faint small">· from research</span></> : OWNERSHIP[own!.ownership_type]}</dd></>}
+              <dt>Way of working</dt><dd>{data.enrichment?.work_model && data.enrichment.work_model !== "unknown"
+                ? <>{WORK_MODEL[data.enrichment.work_model] ?? data.enrichment.work_model} <span className="faint small">· from research</span></>
+                : <span className="faint">{data.enrichment?.work_model === "unknown" ? "Not stated by the company" : "Not checked yet"}</span>}</dd>
               {c.last_accounts_date && <><dt>Last accounts</dt><dd>Made up to {date(c.last_accounts_date)}
                 {c.accounts_category ? <span className="faint"> · {accountsLabel(c.accounts_category)}</span> : null}</dd></>}
               {c.accounts_next_due && <><dt>Next accounts due</dt><dd className={overdue(c.accounts_next_due, c.status) ? "neg" : ""}>
