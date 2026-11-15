@@ -385,4 +385,9 @@ def brief(conn, company_number: str) -> dict:
                            "contact, privacy or terms page. Failing that, the registered address or postcode. The site "
                            "may be under a trading name, a previous name, the parent's name or a subsidiary's name. "
                            "Save only a site you have confirmed, with the page as the source."),
+        "also_check": ("Way of working: look at the careers or jobs page and recent job adverts (the company's own, "
+                       "LinkedIn, Indeed) for remote, hybrid or office-based roles, and save work_model with that page "
+                       "as the source. Mostly remote → remote; office some days → hybrid; office or on-site → on_site. "
+                       "If nothing says, save unknown."),
+        "work_model_queries": [f'"{short}" jobs remote OR hybrid OR "office based"', f'"{short}" careers'],
     }

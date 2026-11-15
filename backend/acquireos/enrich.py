@@ -24,6 +24,7 @@ AUDIT_CHECKS = {
     "ownership_unknown": "Owners not traced",
     "estimate_only": "No filed turnover; revenue is an estimate",
     "field_service_unknown": "Not yet checked for field-service work",
+    "work_model_unknown": "Way of working (remote, hybrid, on-site) not yet checked",
     "stale": "Enrichment older than 12 months",
     "address_flag": "Registered at a default, agent or shared address",
     "sic_mismatch": "Name suggests tech but SIC code does not (or the reverse)",
@@ -285,7 +286,7 @@ def audit_queue(conn, check: str = "all", limit: int = 20, min_score: float = 0,
         select c.company_number, c.name, c.sic_codes, c.nature_of_business, c.postcode, c.region,
                c.registered_address, c.address_flag, s.score, s.excluded,
                coalesce(uc.status, 'new') as my_status,
-               e.website, e.business_type, e.field_service, e.recurring_revenue, e.updated_at as enriched_at,
+               e.website, e.business_type, e.field_service, e.recurring_revenue, e.work_model, e.updated_at as enriched_at,
                est.basis as revenue_basis, o.ownership_type,
                (select count(*) from research r where r.company_number = c.company_number) as research_count
         from company c
@@ -316,6 +317,8 @@ def audit_queue(conn, check: str = "all", limit: int = 20, min_score: float = 0,
             problems.append("estimate_only")
         if not r["field_service"] or r["field_service"] == "unknown":
             problems.append("field_service_unknown")
+        if not r["work_model"]:  # "unknown" means checked and not stated
+            problems.append("work_model_unknown")
         if r["enriched_at"] is not None and (r["enriched_at"].timestamp() < __import__("time").time() - 365 * 864e2):
             problems.append("stale")
         if r["address_flag"]:

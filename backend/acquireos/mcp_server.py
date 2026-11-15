@@ -29,7 +29,8 @@ Ground rules:
 Finding websites and enriching: call research_brief (every name the company may trade under, its
 address, owners, parent and subsidiaries, and search queries), search the web with those queries, then
 check_website with the most likely site: it confirms the site by the company number or postcode on it
-and saves it. Then classify with save_enrichment. find_website tries likely domains by itself.
+and saves it. Then classify with save_enrichment, including work_model (remote, hybrid or on_site) whenever
+the careers page or job adverts say how staff work: save it as soon as you find it, with that page as source. find_website tries likely domains by itself.
 Directors, shareholders, charges, filings and investment signals: get_charges_and_investment.
 Start with dataset_overview, list_targets, search_companies or audit_queue."""
 
@@ -713,6 +714,7 @@ def audit_and_enrich(batch_size: int = 10, check: str = "all") -> str:
      company number or postcode is on it. If nothing confirms, do not save a website.
    - Decide business_type, whether revenue looks recurring (contracts, subscriptions, managed services,
      support plans) and whether it does field-service or van-based work (installations, engineers on site).
+   - Check the careers page and job adverts for how staff work (remote, hybrid or on-site): work_model.
    - Write a two or three sentence factual summary of what it sells and to whom.
    - save_enrichment with the page you used as source_url and an honest confidence.
    - If the data looks wrong (SIC code does not match what they do, registered office is an accountant,
