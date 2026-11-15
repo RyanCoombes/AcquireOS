@@ -1599,7 +1599,9 @@ def delete_search(sid: int):
 def pipeline():
     with db.conn() as c:
         rows = c.execute(
-            f"""select uc.*, c.name, c.region, s.score, s.value_low, s.value_high,
+            f"""select uc.*, c.name, c.region, s.score, s.value_low, s.value_high, s.boxes,
+                      l.employees, e.revenue_low, e.revenue_high, e.basis as revenue_basis,
+                      o.ownership_type, o.oldest_birth_year, coalesce(sg.signals, '{{}}') as signals,
                       (select en.website from enrichment en where en.company_number = uc.company_number) as website,
                       {_logo_sql("uc.company_number")},
                       (select max(created_at) from stage_event e where e.company_number = uc.company_number
@@ -1609,6 +1611,10 @@ def pipeline():
                       (select max(created_at) from user_note n where n.company_number = uc.company_number) as last_note
                from user_company uc join company c on c.company_number = uc.company_number
                left join company_best s on s.company_number = uc.company_number
+               left join company_latest l on l.company_number = uc.company_number
+               left join estimate e on e.company_number = uc.company_number
+               left join company_ownership o on o.company_number = uc.company_number
+               left join company_signal sg on sg.company_number = uc.company_number
                where uc.user_id = %s and uc.status <> 'new'
                order by uc.next_action_on nulls last, s.score desc nulls last""",
             (UID,),
