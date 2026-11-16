@@ -1,5 +1,5 @@
 export type Status = "new" | "watching" | "researching" | "approach" | "contacted" | "in_talks" | "nda" | "offer"
-  | "heads" | "diligence" | "spa" | "completion" | "handover" | "passed" | "rejected";
+  | "heads" | "diligence" | "spa" | "completion" | "handover" | "passed" | "rejected" | "future";
 
 export interface Stage { value: Status; label: string; phase: string; description: string; checklist: string[] }
 export interface Task { item_key: string; label: string; custom: boolean; done: boolean; done_at: string | null; note: string | null }
@@ -277,7 +277,10 @@ export const api = {
   addResearch: (n: string, body: Record<string, unknown>) =>
     req(`/api/companies/${encodeURIComponent(n)}/research`, { method: "POST", body: JSON.stringify(body) }),
   pipeline: () => req<{ statuses: Stage[]; phases: { value: string; label: string }[];
-    rows: (Row & { last_note: string | null; stage_entered_at: string | null; tasks_done: number; tasks_total: number; website?: string | null; boxes?: string[]; nation?: string | null; trust?: number | null })[] }>("/api/pipeline"),
+    rows: (Row & { last_note: string | null; stage_entered_at: string | null; tasks_done: number; tasks_total: number; website?: string | null; boxes?: string[]; nation?: string | null; trust?: number | null;
+             priority?: number | null; business_type?: string | null; box_name?: string | null; last_contact?: string | null })[] }>("/api/pipeline"),
+  pipelineOrder: (status: string, numbers: string[]) =>
+    req<{ ordered: number }>("/api/pipeline/order", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status, numbers }) }),
   setTask: (n: string, body: Record<string, unknown>) =>
     req<Deal>(`/api/companies/${encodeURIComponent(n)}/tasks`, { method: "POST", body: JSON.stringify(body) }),
   outreach: () => req<Outreach[]>("/api/outreach"),

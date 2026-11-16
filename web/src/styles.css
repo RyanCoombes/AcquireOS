@@ -259,6 +259,7 @@ td .sub { font-size: 12.5px; color: var(--ink-3); margin-top: 1px; }
 .status.handover { background: var(--teal); color: #fff; border-color: var(--teal); }
 .status.handover::before { background: #fff; }
 .status.passed, .status.rejected { color: var(--ink-3); }
+.status.future { background: #f3eefe; color: #7a4fd6; }
 .status.rejected::before { background: var(--line-2); }
 
 .flag { font-size: 12px; color: var(--amber); white-space: nowrap; }
@@ -1670,3 +1671,12 @@ td.c-name .cn-body { min-width: 0; flex: 1; }
 .trustpop .tp.ok i { color: #1e7a46; } .trustpop .tp.part i { color: #b7791f; }
 .trustpop .tp.miss i, .trustpop .tp.neg i { color: #b4232c; }
 .trust.mini { cursor: default; font-size: 11px; padding: 1px 7px; }
+.grpsep { display: flex; align-items: center; gap: 8px; margin: 10px 2px 6px; font-size: 11.5px; font-weight: 650; color: var(--ink3, #8a91a0); }
+.grpsep span { white-space: nowrap; }
+.grpsep em { font-style: normal; font-weight: 500; }
+.grpsep::before, .grpsep::after { content: ""; flex: 1; border-top: 1px dashed #c9ced6; }
+.grpsep::before { flex: 0 0 10px; }
+.card.quiet { box-shadow: inset 3px 0 0 #e0a43a; }
+.card .quietline { margin-top: 6px; font-size: 11.5px; font-weight: 600; color: #9a6517; }
+.card.drop-before { box-shadow: 0 -3px 0 0 var(--teal, #0e7c66); }
+.card.drop-after { box-shadow: 0 3px 0 0 var(--teal, #0e7c66); }

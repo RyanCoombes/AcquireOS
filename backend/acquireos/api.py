@@ -357,10 +357,10 @@ def companies(
         if signal in ("possible_buyer", "many_shareholders", "investor_shareholder", "likely_acquired"):
             where.append("exists (select 1 from company_signal sg where sg.company_number = c.company_number and %(signal)s = any(sg.signals))")
             params["signal"] = signal
-        if mine == "hide_closed":   # hide companies you have passed on or rejected
-            where.append("coalesce(uc.status, 'new') not in ('passed', 'rejected')")
+        if mine == "hide_closed":   # hide companies you have passed on, rejected or kept for the future
+            where.append("coalesce(uc.status, 'new') not in ('passed', 'rejected', 'future')")
         elif mine == "pipeline":    # only ones you are working on
-            where.append("coalesce(uc.status, 'new') not in ('new', 'passed', 'rejected')")
+            where.append("coalesce(uc.status, 'new') not in ('new', 'passed', 'rejected', 'future')")
         elif mine == "untouched":   # only ones you have not given a status yet
             where.append("coalesce(uc.status, 'new') = 'new'")
         if numbers:
@@ -977,6 +977,8 @@ def set_state(num: str, body: StateIn):
         before = c.execute("select status from user_company where user_id = %s and company_number = %s",
                            (UID, num)).fetchone()["status"]
         if body.status and body.status != before:
+            # A new stage: it joins the bottom of that stage's priority list.
+            c.execute("update user_company set priority = null where user_id = %s and company_number = %s", (UID, num))
             c.execute(
                 """insert into stage_event (user_id, company_number, from_status, to_status, note)
                    values (%s, %s, %s, %s, %s)""",
@@ -1147,7 +1149,7 @@ def _dashboard(which: str = "all"):
         live = c.execute(
             f"""select
                  (select ao_rowcount('company')) as companies,
-                 (select count(*) from user_company where user_id = %(uid)s and status not in ('new','rejected','passed')) as pipeline,
+                 (select count(*) from user_company where user_id = %(uid)s and status not in ('new','rejected','passed','future')) as pipeline,
                  (select count(*) from user_company where user_id = %(uid)s and status in ('contacted','in_talks','nda','offer','heads','diligence','spa','completion')) as talking,
                  (select count(distinct ch.company_number) from company_change ch join {d_sql} using (company_number)
                     where ch.detected_at > now() - interval '7 days') as changed_7d,
@@ -1156,11 +1158,11 @@ def _dashboard(which: str = "all"):
                  (select count(*) from company_change ch join {d_sql} using (company_number)
                     where ch.kind = 'status' and ch.detected_at > now() - interval '30 days') as status_30d,
                  (select sum((d.value_low + d.value_high) / 2) from {d_sql} join user_company uc using (company_number)
-                    where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed')) as pipeline_value,
+                    where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed','future')) as pipeline_value,
                  (select sum(d.value_low) from {d_sql} join user_company uc using (company_number)
-                    where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed')) as pipeline_value_low,
+                    where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed','future')) as pipeline_value_low,
                  (select sum(d.value_high) from {d_sql} join user_company uc using (company_number)
-                    where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed')) as pipeline_value_high""",
+                    where uc.user_id = %(uid)s and uc.status not in ('new','rejected','passed','future')) as pipeline_value_high""",
             p).fetchone()
         head = {**stored["head"], **dict(live)}
         top = c.execute(
@@ -1199,7 +1201,7 @@ def _dashboard(which: str = "all"):
                order by uc.next_action_on nulls last, c.name limit 100""", p).fetchall()
         no_next = c.execute(
             """select count(*) as n from user_company uc where uc.user_id = %(uid)s
-               and uc.status not in ('new', 'rejected', 'passed') and uc.next_action is null and uc.next_action_on is null""",
+               and uc.status not in ('new', 'rejected', 'passed', 'future') and uc.next_action is null and uc.next_action_on is null""",
             p).fetchone()["n"]
         funnel = c.execute("select status, count(*) as n from user_company where user_id = %(uid)s group by 1", p).fetchall()
         freshness = c.execute(
@@ -1608,7 +1610,8 @@ def delete_search(sid: int):
 def pipeline():
     with db.conn() as c:
         rows = c.execute(
-            f"""select uc.*, c.name, c.region, s.score, s.value_low, s.value_high, s.boxes,
+            f"""select uc.*, c.name, c.region, c.sic_codes, s.score, s.value_low, s.value_high, s.boxes, s.box_name,
+                      (select en.business_type from enrichment en where en.company_number = uc.company_number) as business_type,
                       l.employees, e.revenue_low, e.revenue_high, e.basis as revenue_basis,
                       o.ownership_type, o.oldest_birth_year, coalesce(sg.signals, '{{}}') as signals,
                       (select en.work_model from enrichment en where en.company_number = uc.company_number) as work_model,
@@ -1620,7 +1623,8 @@ def pipeline():
                          and e.user_id = uc.user_id and e.to_status = uc.status) as stage_entered_at,
                       (select count(*) filter (where done) from deal_task t where t.company_number = uc.company_number
                          and t.user_id = uc.user_id and t.stage = uc.status) as tasks_done,
-                      (select max(created_at) from user_note n where n.company_number = uc.company_number) as last_note
+                      (select max(created_at) from user_note n where n.company_number = uc.company_number) as last_note,
+                      (select max(o.happened_on) from outreach o where o.company_number = uc.company_number) as last_contact
                from user_company uc join company c on c.company_number = uc.company_number
                left join company_best s on s.company_number = uc.company_number
                left join company_latest l on l.company_number = uc.company_number
@@ -1628,7 +1632,7 @@ def pipeline():
                left join company_ownership o on o.company_number = uc.company_number
                left join company_signal sg on sg.company_number = uc.company_number
                where uc.user_id = %s and uc.status <> 'new'
-               order by uc.next_action_on nulls last, s.score desc nulls last""",
+               order by uc.priority nulls last, uc.next_action_on nulls last, s.score desc nulls last""",
             (UID,),
         ).fetchall()
         from . import logos as _logos
@@ -1637,6 +1641,26 @@ def pipeline():
         r["tasks_total"] = len(stages.CHECKLISTS.get(r["status"], []))
     return {"statuses": [x for x in stages.as_json() if x["value"] != "new"],
             "phases": [{"value": k, "label": v} for k, v in stages.PHASES], "rows": rows}
+
+
+class OrderIn(BaseModel):
+    status: str
+    numbers: list[str]
+
+
+@app.put("/api/pipeline/order")
+def pipeline_order(body: OrderIn):
+    """Your priority order for one stage: the companies in the order given (top first).
+    Any in the stage that aren't listed keep their place after these."""
+    if body.status not in STATUSES:
+        raise HTTPException(400, "Unknown status")
+    with db.conn() as c:
+        c.execute(
+            """update user_company uc set priority = o.ord
+               from unnest(%s::text[]) with ordinality as o(num, ord)
+               where uc.user_id = %s and uc.company_number = o.num and uc.status = %s""",
+            (body.numbers, UID, body.status))
+        return {"ordered": len(body.numbers)}
 
 
 @app.get("/api/reports")

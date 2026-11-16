@@ -23,7 +23,7 @@ export default function DealProgress({ data, num, setState }: {
   const done = tasks.filter((t) => t.done).length;
   const entered = (st: Status) => [...deal.history].reverse().find((h) => h.to_status === st)?.created_at ?? null;
   const inStage = days(deal.stage_entered_at);
-  const next = stages[idx + 1] && !["passed", "rejected"].includes(stages[idx + 1].value) ? stages[idx + 1] : null;
+  const next = stages[idx + 1] && !["passed", "rejected", "future"].includes(stages[idx + 1].value) ? stages[idx + 1] : null;
 
   const move = async (to: Status) => {
     if (to === status) return;

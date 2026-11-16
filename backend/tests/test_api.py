@@ -2478,3 +2478,28 @@ def test_work_model_saved_shown_and_filtered(loaded):
         others = cl.get("/api/companies", params={"work_model": "not_known"}).json()["rows"]
         assert "01000001" not in {x["company_number"] for x in others} and others
         assert cl.get("/api/companies", params={"sort": "work"}).status_code == 200
+
+
+def test_pipeline_priority_order_and_future(loaded):
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        nums = ["01000001", "01000002", "01000003"]
+        for n in nums:
+            assert cl.put(f"/api/companies/{n}/state", json={"status": "researching"}).status_code == 200
+        assert cl.put("/api/pipeline/order", json={"status": "researching", "numbers": ["01000003", "01000001", "01000002"]}).status_code == 200
+        p = cl.get("/api/pipeline").json()
+        order = [r["company_number"] for r in p["rows"] if r["status"] == "researching"]
+        assert order[:3] == ["01000003", "01000001", "01000002"]
+        # Moving to another stage puts it at the bottom of that stage's list.
+        cl.put("/api/companies/01000003/state", json={"status": "approach"})
+        row = next(r for r in cl.get("/api/pipeline").json()["rows"] if r["company_number"] == "01000003")
+        assert row["priority"] is None
+        # Future consideration: on the pipeline (its own tab), hidden from targets, not counted as pipeline.
+        cl.put("/api/companies/01000001/state", json={"status": "future"})
+        p = cl.get("/api/pipeline").json()
+        assert any(s["value"] == "future" and s["phase"] == "future" for s in p["statuses"])
+        assert any(r["company_number"] == "01000001" and r["status"] == "future" for r in p["rows"])
+        shown = {r["company_number"] for r in cl.get("/api/companies", params={"mine": "hide_closed"}).json()["rows"]}
+        assert "01000001" not in shown

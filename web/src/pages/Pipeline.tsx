@@ -5,9 +5,9 @@ import { ErrorLine, Score, StatusMark, Toast, useAsync, Logo, NationBadge, WorkI
 import { ageFrom, date, int, money, OWNERSHIP, range, WORK_MODEL } from "../format";
 
 type PFilter = { q: string; box: string; region: string; min_staff: string; max_staff: string; min_rev: string;
-  min_age: string; ownership: string; work: string; min_score: string; show: string; sort: string };
+  min_age: string; ownership: string; work: string; min_score: string; show: string; sort: string; group: string };
 const NO_FILTER: PFilter = { q: "", box: "", region: "", min_staff: "", max_staff: "", min_rev: "", min_age: "",
-  ownership: "", work: "", min_score: "", show: "", sort: "" };
+  ownership: "", work: "", min_score: "", show: "", sort: "", group: "" };
 const FKEY = "pipeline-filters";
 const loadF = (): PFilter => { try { return { ...NO_FILTER, ...JSON.parse(localStorage.getItem(FKEY) || "{}") }; } catch { return NO_FILTER; } };
 
@@ -32,6 +32,21 @@ const loadCard = (): [string, Place][] => {
   } catch { return CARD_DEFAULT; }
 };
 
+// Business type: Claude's (or yours) from research; otherwise a guess from the industry code.
+const TYPE_LABEL: Record<string, string> = { software: "Software", saas: "SaaS", data: "Data", msp: "MSP",
+  it_consultancy: "IT consultancy", field_service: "Field service", agency: "Agency", reseller: "Reseller", other: "Other" };
+const SIC_GUESS: [RegExp, string][] = [
+  [/^(62011|62012|58210|58290)/, "software"], [/^62030/, "msp"], [/^62020/, "it_consultancy"],
+  [/^(63110|63120|63990)/, "data"], [/^(46510|46520|47410|47420)/, "reseller"],
+  [/^(33|43210|43220|95110|95120)/, "field_service"], [/^(73110|73120)/, "agency"],
+];
+function typeOf(r: { business_type?: string | null; sic_codes?: string[] | null }): [string, boolean] {
+  if (r.business_type && r.business_type !== "other") return [r.business_type, false];
+  for (const code of r.sic_codes ?? []) for (const [re, t] of SIC_GUESS) if (re.test(code)) return [t, true];
+  return [r.business_type ?? "", false];
+}
+const QUIET_DAYS = 30;
+
 const daysSince = (v: string | null) => v ? Math.max(0, Math.floor((Date.now() - new Date(v).getTime()) / 864e5)) : null;
 
 export default function Pipeline() {
@@ -41,6 +56,7 @@ export default function Pipeline() {
   const [phase, setPhase] = useState<string>("all");
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  const [overCard, setOverCard] = useState<{ num: string; after: boolean } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [mStage, setMStage] = useState<string | null>(null);
   const today = new Date().toISOString().slice(0, 10);
@@ -59,6 +75,9 @@ export default function Pipeline() {
   const num = (v: string) => (v.trim() === "" ? null : Number(v));
   const q = f.q.trim().toLowerCase();
   const rev = (r: (typeof all)[number]) => Number(r.revenue_high ?? r.revenue_low ?? NaN);
+  // Days since anything happened: entering the stage, a note or a logged contact.
+  const quietFor = (r: (typeof all)[number]) => Math.min(...[r.stage_entered_at, r.last_note, r.last_contact]
+    .map((v) => daysSince(v ?? null)).filter((x): x is number => x !== null), 99999);
   const rows = all.filter((r) => {
     if (q && !(`${r.name} ${r.company_number}`.toLowerCase().includes(q))) return false;
     if (f.work === "not_known" ? ["remote", "hybrid", "on_site"].includes(r.work_model ?? "") : f.work && r.work_model !== f.work) return false;
@@ -76,7 +95,7 @@ export default function Pipeline() {
     if (ms !== null && !(Number(r.score ?? NaN) >= ms)) return false;
     if (f.show === "due" && !(r.next_action_on && r.next_action_on <= today)) return false;
     if (f.show === "no_action" && r.next_action) return false;
-    if (f.show === "stale" && !((daysSince(r.stage_entered_at) ?? 0) >= 30)) return false;
+    if (f.show === "stale" && !(quietFor(r) >= QUIET_DAYS)) return false;
     if (f.show === "investor" && !(r.signals ?? []).includes("investor_shareholder")) return false;
     return true;
   });
@@ -88,13 +107,15 @@ export default function Pipeline() {
     age: (a, b) => (a.oldest_birth_year ?? 9999) - (b.oldest_birth_year ?? 9999),
     stage: (a, b) => (daysSince(b.stage_entered_at) ?? -1) - (daysSince(a.stage_entered_at) ?? -1),
     name: (a, b) => a.name.localeCompare(b.name),
+    next: (a, b) => (a.next_action_on ?? "9999").localeCompare(b.next_action_on ?? "9999"),
   };
   if (by[f.sort]) rows.sort(by[f.sort]);
   const boxes = [...new Set(all.flatMap((r) => r.boxes ?? []))].sort();
   const regions = [...new Set(all.map((r) => r.region).filter(Boolean) as string[])].sort();
   const owners = [...new Set(all.map((r) => r.ownership_type ?? "unknown"))].sort();
-  const nSet = (Object.keys(NO_FILTER) as (keyof PFilter)[]).filter((k) => k !== "sort" && f[k]).length;
-  const cols = data.statuses.filter((s) => s.phase !== "closed" && (phase === "all" || s.phase === phase));
+  const nSet = (Object.keys(NO_FILTER) as (keyof PFilter)[]).filter((k) => k !== "sort" && k !== "group" && f[k]).length;
+  // "Future consideration" has its own tab and stays off the working board.
+  const cols = data.statuses.filter((s) => s.phase !== "closed" && (phase === "all" ? s.phase !== "future" : s.phase === phase));
   const closed = rows.filter((r) => ["passed", "rejected"].includes(r.status));
   const mStageOf = mStage && cols.some((c) => c.value === mStage) ? mStage
     : (cols.find((c) => rows.some((r) => r.status === c.value)) ?? cols[0])?.value;
@@ -110,8 +131,41 @@ export default function Pipeline() {
   };
   const drop = async (to: Status) => {
     const num = dragging;
-    setDragging(null); setOver(null);
+    setDragging(null); setOver(null); setOverCard(null);
     await move(num, to);
+  };
+  // Priority: the stage's companies in board order (filters ignored), with one moved.
+  const ranked = (status: string) => all.filter((r) => r.status === status).map((r) => r.company_number);
+  const placeAt = async (num: string, status: Status, target: string | null, after: boolean) => {
+    const row = all.find((r) => r.company_number === num);
+    if (!row) return;
+    const list = ranked(status).filter((x) => x !== num);
+    const i = target ? list.indexOf(target) : -1;
+    list.splice(i < 0 ? list.length : i + (after ? 1 : 0), 0, num);
+    try {
+      if (row.status !== status) await api.setState(num, { status, stage_note: "Moved on the pipeline board" });
+      await api.pipelineOrder(status, list);
+      if (row.status !== status) setToast(`${row.name} moved to ${data.statuses.find((s) => s.value === status)?.label}`);
+    } catch (e: any) { setToast(`Not moved: ${e.message}`); }
+    reload();
+  };
+  const nudge = async (num: string, how: "top" | "up" | "down") => {
+    const row = all.find((r) => r.company_number === num);
+    if (!row) return;
+    const list = ranked(row.status);
+    const i = list.indexOf(num);
+    if (how === "top") return placeAt(num, row.status, list[0] === num ? null : list[0], false);
+    const j = how === "up" ? i - 1 : i + 1;
+    if (j < 0 || j >= list.length) return;
+    return placeAt(num, row.status, list[j], how === "down");
+  };
+  const byPriority = f.sort === "";
+  const groupOf = (r: (typeof all)[number]): [string, string] => {
+    if (f.group === "type") { const [t] = typeOf(r); return t ? [t, TYPE_LABEL[t] ?? t] : ["~", "Not classified"]; }
+    if (f.group === "nation") return r.nation ? [r.nation, r.nation] : ["~", "Nation not known"];
+    if (f.group === "work") return r.work_model && r.work_model !== "unknown" ? [r.work_model, WORK_MODEL[r.work_model] ?? r.work_model] : ["~", "Way of working not known"];
+    if (f.group === "box") return r.box_name ? [r.box_name, r.box_name] : ["~", "Not in a buy box"];
+    return ["", ""];
   };
 
   return (
@@ -119,7 +173,7 @@ export default function Pipeline() {
       <div className="pagehead">
         <div>
           <h1>Pipeline</h1>
-          <div className="lede">From first look to handover. Drag a card or use Move to….</div>
+          <div className="lede">From first look to handover. Drag cards between stages, or up and down to set your priority.</div>
         </div>
       </div>
       {due.length > 0 && (
@@ -134,7 +188,8 @@ export default function Pipeline() {
           <button className={`btn ${fOpen ? "on" : ""}`} onClick={() => setFOpen(!fOpen)} aria-expanded={fOpen}>
             {fOpen ? "▾ Filters" : `▸ Filters${nSet - (f.q ? 1 : 0) > 0 ? ` (${nSet - (f.q ? 1 : 0)})` : ""}`}</button>
           <select value={f.sort} onChange={upd("sort")} aria-label="Sort cards">
-            <option value="">Sort: next action</option>
+            <option value="">Sort: my priority</option>
+            <option value="next">Sort: next action</option>
             <option value="score">Sort: score</option>
             <option value="value">Sort: value</option>
             <option value="revenue">Sort: revenue</option>
@@ -143,10 +198,17 @@ export default function Pipeline() {
             <option value="stage">Sort: longest in stage</option>
             <option value="name">Sort: name</option>
           </select>
+          <select value={f.group} onChange={upd("group")} aria-label="Group cards">
+            <option value="">No groups</option>
+            <option value="type">Group: business type</option>
+            <option value="nation">Group: nation</option>
+            <option value="work">Group: way of working</option>
+            <option value="box">Group: buy box</option>
+          </select>
           <button className={`btn quiet ${cfgOpen ? "on" : ""}`} onClick={() => setCfgOpen(!cfgOpen)} aria-expanded={cfgOpen}>Customise cards</button>
           <span className="band-actions">
             {nSet > 0 && <span className="faint small">{int(rows.length)} of {int(all.length)}</span>}
-            {(nSet > 0 || f.sort) && <button className="btn quiet" onClick={() => setF(NO_FILTER)}>Clear</button>}
+            {(nSet > 0 || f.sort || f.group) && <button className="btn quiet" onClick={() => setF(NO_FILTER)}>Clear</button>}
           </span>
           {fOpen && (
             <div className="pf-more">
@@ -177,7 +239,7 @@ export default function Pipeline() {
                 <option value="">All cards</option>
                 <option value="due">Action due</option>
                 <option value="no_action">No next action set</option>
-                <option value="stale">30+ days in stage</option>
+                <option value="stale">Gone quiet (30+ days)</option>
                 <option value="investor">Investor among shareholders</option>
               </select>
             </div>
@@ -235,18 +297,32 @@ export default function Pipeline() {
         <div className="board">
           {cols.map((s) => {
             const items = rows.filter((r) => r.status === s.value);
+            // Grouped: cards of each group together (in the chosen order), unknown last.
+            const groups = new Map<string, { label: string; rows: typeof items }>();
+            for (const r of items) { const [k, label] = groupOf(r); if (!groups.has(k)) groups.set(k, { label, rows: [] }); groups.get(k)!.rows.push(r); }
+            const ordered = f.group ? [...groups.entries()].sort((a, b) => a[0] === "~" ? 1 : b[0] === "~" ? -1 : a[1].label.localeCompare(b[1].label)) : [];
             return (
               <div key={s.value} className={`col ${over === s.value ? "over" : ""} ${mStageOf === s.value ? "" : "m-off"}`}
                    onDragOver={(e) => { e.preventDefault(); setOver(s.value); }} onDragLeave={() => setOver(null)}
                    onDrop={(e) => { e.preventDefault(); drop(s.value); }}>
                 <h3><span>{s.label}</span><span className="count">{items.length}</span></h3>
                 <div className="desc">{s.description}</div>
-                {items.map((r) => {
+                {(f.group ? ordered.flatMap(([k, g]) => [{ sep: k, label: g.label, n: g.rows.length, guessed: f.group === "type" ? g.rows.filter((r) => typeOf(r)[1]).length : 0 }, ...g.rows]) : items).map((r: any) => {
+                  if ("sep" in r) return <div key={`sep-${r.sep}`} className="grpsep" title={r.guessed ? `${r.guessed} of these not yet classified by research: guessed from the industry (SIC) code` : undefined}>
+                    <span>{r.label} · {r.n}{r.guessed ? <em> · {r.guessed} guessed</em> : null}</span></div>;
                   const d = daysSince(r.stage_entered_at);
+                  const quiet = s.phase !== "future" && quietFor(r) >= QUIET_DAYS ? quietFor(r) : null;
+                  const dropHere = overCard && overCard.num === r.company_number ? (overCard.after ? "drop-after" : "drop-before") : "";
                   const overdue = r.next_action_on && r.next_action_on <= today;
                   return (
-                    <div key={r.company_number} className={`card ${dragging === r.company_number ? "dragging" : ""}`} draggable
-                         onDragStart={() => setDragging(r.company_number)} onDragEnd={() => { setDragging(null); setOver(null); }}
+                    <div key={r.company_number} className={`card ${dragging === r.company_number ? "dragging" : ""} ${quiet ? "quiet" : ""} ${dropHere}`} draggable
+                         onDragStart={() => setDragging(r.company_number)} onDragEnd={() => { setDragging(null); setOver(null); setOverCard(null); }}
+                         onDragOver={byPriority ? (e) => { e.preventDefault(); e.stopPropagation(); setOver(s.value);
+                           const b = e.currentTarget.getBoundingClientRect(); const after = e.clientY > b.top + b.height / 2;
+                           if (!overCard || overCard.num !== r.company_number || overCard.after !== after) setOverCard({ num: r.company_number, after }); } : undefined}
+                         onDrop={byPriority ? (e) => { e.preventDefault(); e.stopPropagation(); const num = dragging; const oc = overCard;
+                           setDragging(null); setOver(null); setOverCard(null);
+                           if (num && num !== r.company_number) placeAt(num, s.value as Status, r.company_number, oc?.after ?? false); } : undefined}
                          onClick={() => nav(`/c/${r.company_number}`)}>
                       {r.website && <a className="card-web" href={r.website} target="_blank" rel="noreferrer" draggable={false}
                                        title={`Website: ${r.website.replace(/^https?:\/\/(www\.)?/, "")}`} aria-label={`${r.name} website`}
@@ -284,11 +360,18 @@ export default function Pipeline() {
                           {lowerKeys.includes("next") && bits.next}
                         </>;
                       })()}
+                      {quiet !== null && <div className="quietline" title="No note or logged contact since then">Quiet for {quiet} days</div>}
                       {/* Works without dragging: phones, keyboard */}
-                      <select className="movesel" value="" aria-label={`Move ${r.name} to another stage`}
-                              onClick={(e) => e.stopPropagation()} onChange={(e) => move(r.company_number, e.target.value as Status)}>
+                      <select className="movesel" value="" aria-label={`Move ${r.name} to another stage or up the priority list`}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => { const v = e.target.value; if (v.startsWith("~")) nudge(r.company_number, v.slice(1) as "top" | "up" | "down"); else move(r.company_number, v as Status); }}>
                         <option value="">Move to…</option>
-                        {data.statuses.filter((x) => x.value !== r.status).map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+                        {byPriority && <optgroup label="Priority">
+                          <option value="~top">⤒ Top of this stage</option><option value="~up">↑ Up one</option><option value="~down">↓ Down one</option>
+                        </optgroup>}
+                        <optgroup label="Stage">
+                          {data.statuses.filter((x) => x.value !== r.status).map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+                        </optgroup>
                       </select>
                     </div>
                   );

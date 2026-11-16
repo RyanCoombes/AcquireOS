@@ -432,7 +432,7 @@ function CallBar({ data, num, setState, onNote }: {
   const meta = useAsync(() => api.meta(), []);
   const stages = meta.data?.stages ?? [];
   const idx = stages.findIndex((x) => x.value === s.status);
-  const nextStage = stages[idx + 1] && !["passed", "rejected"].includes(stages[idx + 1].value) ? stages[idx + 1] : null;
+  const nextStage = stages[idx + 1] && !["passed", "rejected", "future"].includes(stages[idx + 1].value) ? stages[idx + 1] : null;
   const [pop, setPop] = useState<null | "rejected" | "passed">(null);
   const [more, setMore] = useState(false);
   const [note, setNote] = useState("");
@@ -463,19 +463,20 @@ function CallBar({ data, num, setState, onNote }: {
     if (!note.trim()) return;
     onNote(await api.addNote(num, note.trim())); setNote("");
   };
-  const closed = s.status === "rejected" || s.status === "passed";
+  const closed = s.status === "rejected" || s.status === "passed" || s.status === "future";
   return (
     <section className="callbar">
       <div className="cb-row">
         <b className="cb-title">Your call</b>
         {closed ? (
-          <span className="small">{s.status === "rejected" ? "✕ Ruled out" : "Not now"}: hidden from targets.{" "}
+          <span className="small">{s.status === "rejected" ? "✕ Ruled out" : s.status === "future" ? "Future consideration" : "Not now"}: hidden from targets{s.status === "future" ? ", still watched for changes" : ""}.{" "}
             <button className="linkish small" onClick={() => move("watching")}>Bring back</button>
             {listNext && <> · <Link to={`/c/${listNext}`}>Next in list →</Link></>}</span>
         ) : (
           <div className="cb-pops" ref={popRef}>
             <button className={`btn cb-x ${pop === "rejected" ? "on" : ""}`} onClick={() => setPop(pop === "rejected" ? null : "rejected")} aria-expanded={pop === "rejected"}>✕ Not suitable</button>
             <button className={`btn ${pop === "passed" ? "on" : ""}`} onClick={() => setPop(pop === "passed" ? null : "passed")} aria-expanded={pop === "passed"}>Not now</button>
+            <button className="btn" onClick={() => move("future")} title="You like it, but it isn't a target yet: kept safe on the pipeline's Future tab">Future consideration</button>
             {pop && (
               <div className="cb-pop">
                 <div className="label" style={{ marginBottom: 6 }}>{pop === "rejected" ? "Not suitable because…" : "Not now because…"}</div>
