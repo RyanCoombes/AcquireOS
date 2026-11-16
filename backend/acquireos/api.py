@@ -1611,6 +1611,7 @@ def pipeline():
                       l.employees, e.revenue_low, e.revenue_high, e.basis as revenue_basis,
                       o.ownership_type, o.oldest_birth_year, coalesce(sg.signals, '{{}}') as signals,
                       (select en.work_model from enrichment en where en.company_number = uc.company_number) as work_model,
+                      coalesce((select en.trading_region from enrichment en where en.company_number = uc.company_number), c.region) as nation,
                       (select en.website from enrichment en where en.company_number = uc.company_number) as website,
                       {_logo_sql("uc.company_number")},
                       (select max(created_at) from stage_event e where e.company_number = uc.company_number

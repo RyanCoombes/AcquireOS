@@ -257,3 +257,21 @@ export function WorkIcon({ m, label }: { m?: string | null; label?: boolean }) {
     </span>
   );
 }
+
+const NATION: Record<string, string> = { Wales: "WAL", England: "ENG", Scotland: "SCO", "Northern Ireland": "NI" };
+/** Small drawn flags (flag emoji for the home nations don't show on Windows). Wales is simplified;
+ *  Northern Ireland uses St Patrick's saltire, as it has no flag in official use. */
+function Flag({ n }: { n: string }) {
+  const box = { width: 18, height: 12, viewBox: "0 0 18 12", "aria-hidden": true as const };
+  if (n === "England") return <svg {...box}><rect width="18" height="12" fill="#fff" /><rect x="7.5" width="3" height="12" fill="#ce1124" /><rect y="4.5" width="18" height="3" fill="#ce1124" /></svg>;
+  if (n === "Scotland") return <svg {...box}><rect width="18" height="12" fill="#0065bd" /><path d="M0 0L18 12M18 0L0 12" stroke="#fff" strokeWidth="2.2" /></svg>;
+  if (n === "Northern Ireland") return <svg {...box}><rect width="18" height="12" fill="#fff" /><path d="M0 0L18 12M18 0L0 12" stroke="#c8102e" strokeWidth="1.8" /></svg>;
+  if (n === "Wales") return <svg {...box}><rect width="18" height="6" fill="#fff" /><rect y="6" width="18" height="6" fill="#00b140" />
+    <path d="M4 8.2 C5 5.5 7 4.6 8.6 5.2 L10 3.6 L10.6 5.4 C12 5 13.6 5.6 14.4 7 L12.6 7.2 C12.2 8.6 10.8 9.4 9 9.2 L7.6 10.6 L7.2 9 C6 9.2 4.8 8.9 4 8.2Z" fill="#d30731" /></svg>;
+  return null;
+}
+/** Which nation it trades in (head office from research, else the registered office), as a flag. */
+export function NationBadge({ n, label }: { n?: string | null; label?: boolean }) {
+  if (!n || !NATION[n]) return null;
+  return <span className="nation" title={`Nation: ${n}`} role="img" aria-label={n}><Flag n={n} />{label ? <span>{n}</span> : null}</span>;
+}

@@ -1641,3 +1641,17 @@ td.c-name .cn-body { min-width: 0; flex: 1; }
 .workicon.hybrid { color: #7a4fd6; background: #f3eefe; }
 .workicon.on_site { color: #b7791f; background: #fdf1dc; }
 .card .meta .meta-r { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+.nation { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; margin: 0 2px; font-size: 12px; font-weight: 600; }
+.nation svg { border-radius: 2px; box-shadow: 0 0 0 1px rgba(20, 24, 31, .15); flex: none; }
+.card .cbadges { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px 34px; }
+.card .cbadges .workicon, .card .cbadges .nation { margin: 0; }
+.card .cline { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: 12px; color: var(--ink2, #4a5261); margin-top: 6px; }
+.cardcfg { background: var(--panel, #fff); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; }
+.cardcfg table { width: auto; }
+.cardcfg td { padding: 3px 10px 3px 0; border: 0; font-size: 13px; }
+.cardcfg select { font-size: 13px; padding: 3px 6px; }
+.cardcfg .mv { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 0 6px; cursor: pointer; font-size: 12px; }
+.cardcfg .mv:disabled { opacity: .3; cursor: default; }
+.card .cline.cl { display: block; }
+.card .cl-wrap { display: block; }
+.card .cl-wrap .progressbar { display: block; margin-bottom: 4px; }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
-import { ErrorLine, Flags, Hint, Score, Signals, StatusMark, Toast, useAsync, WatchButton, LogoEditor, WorkIcon } from "../components/bits";
+import { ErrorLine, Flags, Hint, Score, Signals, StatusMark, Toast, useAsync, WatchButton, LogoEditor, NationBadge, WorkIcon } from "../components/bits";
 import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
 import MyScores from "../components/MyScores";
@@ -142,6 +142,7 @@ export default function Company() {
             <span className="mt">No. {c.company_number}</span>
             {c.incorporation_date && <span className="mt">Since {c.incorporation_date.slice(0, 4)} ({years(c.incorporation_date)} yrs)</span>}
             {data.sics[0] && <span className="mt">{data.sics[0].description}</span>}
+            <NationBadge n={data.enrichment?.trading_region || c.region} label />
             <WorkIcon m={data.enrichment?.work_model} label />
             {townOf(c.registered_address, c.postcode) && <span className="mt">{townOf(c.registered_address, c.postcode)}</span>}
             {data.enrichment?.website && <a className="mt" href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")} ↗</a>}

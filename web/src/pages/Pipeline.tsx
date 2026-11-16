@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type Status } from "../api";
-import { ErrorLine, Score, StatusMark, Toast, useAsync, Logo, WorkIcon } from "../components/bits";
-import { ageFrom, date, int, OWNERSHIP, range, WORK_MODEL } from "../format";
+import { ErrorLine, Score, StatusMark, Toast, useAsync, Logo, NationBadge, WorkIcon } from "../components/bits";
+import { ageFrom, date, int, money, OWNERSHIP, range, WORK_MODEL } from "../format";
 
 type PFilter = { q: string; box: string; region: string; min_staff: string; max_staff: string; min_rev: string;
   min_age: string; ownership: string; work: string; min_score: string; show: string; sort: string };
@@ -10,6 +10,27 @@ const NO_FILTER: PFilter = { q: "", box: "", region: "", min_staff: "", max_staf
   ownership: "", work: "", min_score: "", show: "", sort: "" };
 const FKEY = "pipeline-filters";
 const loadF = (): PFilter => { try { return { ...NO_FILTER, ...JSON.parse(localStorage.getItem(FKEY) || "{}") }; } catch { return NO_FILTER; } };
+
+// What each card shows, and where: beside the name (small badges), the main row, the lower lines, or hidden.
+type Place = "top" | "main" | "lower" | "off";
+const CARD_FIELDS: [string, string][] = [
+  ["nation", "Nation (flag)"], ["work", "Way of working"], ["score", "Score"], ["value", "Indicative value"],
+  ["revenue", "Revenue"], ["staff", "Staff"], ["owner", "Oldest owner's age"], ["ownership", "Ownership"],
+  ["rating", "Your rating"], ["checklist", "Checklist progress"], ["days", "Days in stage"], ["next", "Next action"],
+];
+const CARD_DEFAULT: [string, Place][] = [
+  ["nation", "top"], ["work", "top"], ["score", "main"], ["value", "main"], ["revenue", "off"], ["staff", "off"],
+  ["owner", "off"], ["ownership", "off"], ["rating", "lower"], ["checklist", "lower"], ["days", "lower"], ["next", "lower"],
+];
+const CKEY = "pipeline-card";
+const loadCard = (): [string, Place][] => {
+  try {
+    const v = JSON.parse(localStorage.getItem(CKEY) || "null");
+    if (!Array.isArray(v)) return CARD_DEFAULT;
+    const known = v.filter((x: any) => Array.isArray(x) && CARD_FIELDS.some(([k]) => k === x[0]));
+    return [...known, ...CARD_DEFAULT.filter(([k]) => !known.some((x: any) => x[0] === k))];  // fields added later
+  } catch { return CARD_DEFAULT; }
+};
 
 const daysSince = (v: string | null) => v ? Math.max(0, Math.floor((Date.now() - new Date(v).getTime()) / 864e5)) : null;
 
@@ -25,6 +46,9 @@ export default function Pipeline() {
   const today = new Date().toISOString().slice(0, 10);
   const [f, setF] = useState<PFilter>(loadF);
   const [fOpen, setFOpen] = useState(false);
+  const [card, setCardState] = useState<[string, Place][]>(loadCard);
+  const [cfgOpen, setCfgOpen] = useState(false);
+  const setCard = (v: [string, Place][]) => { setCardState(v); try { localStorage.setItem(CKEY, JSON.stringify(v)); } catch { /* private window */ } };
   useEffect(() => { try { localStorage.setItem(FKEY, JSON.stringify(f)); } catch { /* private window */ } }, [f]);
   const upd = (k: keyof PFilter) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
 
@@ -119,6 +143,7 @@ export default function Pipeline() {
             <option value="stage">Sort: longest in stage</option>
             <option value="name">Sort: name</option>
           </select>
+          <button className={`btn quiet ${cfgOpen ? "on" : ""}`} onClick={() => setCfgOpen(!cfgOpen)} aria-expanded={cfgOpen}>Customise cards</button>
           <span className="band-actions">
             {nSet > 0 && <span className="faint small">{int(rows.length)} of {int(all.length)}</span>}
             {(nSet > 0 || f.sort) && <button className="btn quiet" onClick={() => setF(NO_FILTER)}>Clear</button>}
@@ -157,6 +182,30 @@ export default function Pipeline() {
               </select>
             </div>
           )}
+        </div>
+      )}
+      {cfgOpen && (
+        <div className="cardcfg">
+          <div className="sechead"><b>What each card shows</b><span className="faint small">Remembered in this browser</span></div>
+          <table><tbody>
+            {card.map(([k, place], i) => (
+              <tr key={k}>
+                <td>{CARD_FIELDS.find((x) => x[0] === k)?.[1]}</td>
+                <td><select value={place} aria-label={`Where to show ${k}`}
+                            onChange={(e) => setCard(card.map((x) => x[0] === k ? [k, e.target.value as Place] : x))}>
+                  <option value="top">Beside the name</option><option value="main">Main row</option>
+                  <option value="lower">Lower lines</option><option value="off">Hidden</option></select></td>
+                <td><button className="mv" disabled={i === 0} aria-label="Move up"
+                            onClick={() => { const v = [...card]; [v[i - 1], v[i]] = [v[i], v[i - 1]]; setCard(v); }}>↑</button>{" "}
+                    <button className="mv" disabled={i === card.length - 1} aria-label="Move down"
+                            onClick={() => { const v = [...card]; [v[i + 1], v[i]] = [v[i], v[i + 1]]; setCard(v); }}>↓</button></td>
+              </tr>
+            ))}
+          </tbody></table>
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button className="btn quiet" onClick={() => setCard(CARD_DEFAULT)}>Back to the default</button>
+            <button className="btn" onClick={() => setCfgOpen(false)}>Done</button>
+          </div>
         </div>
       )}
       <div className="phasebar">
@@ -203,18 +252,36 @@ export default function Pipeline() {
                                        title={`Website: ${r.website.replace(/^https?:\/\/(www\.)?/, "")}`} aria-label={`${r.name} website`}
                                        onClick={(e) => e.stopPropagation()}>↗</a>}
                       <div className="name has-logo"><Logo num={r.company_number} name={r.name} website={r.website} v={r.logo_v} size={26} /><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div>
-                      <div className="meta">
-                        <Score value={r.score} />
-                        <span className="meta-r"><WorkIcon m={r.work_model} />{r.value_low ? range(r.value_low, r.value_high) : ""}</span>
-                      </div>
-                      {r.tasks_total > 0 && (
-                        <>
-                          <div className="progressbar"><i style={{ width: `${(100 * r.tasks_done) / r.tasks_total}%` }} /></div>
-                          <div className="meta"><span>{r.tasks_done}/{r.tasks_total} checklist</span><span>{d !== null ? `${d}d in stage` : ""}</span></div>
-                        </>
-                      )}
-                      {!r.tasks_total && d !== null && <div className="meta"><span>{d} days in stage</span>{r.rating ? <span>{r.rating}/5</span> : null}</div>}
-                      {r.next_action && <div className={`next ${overdue ? "overdue" : ""}`}>→ {r.next_action}{r.next_action_on ? ` · ${date(r.next_action_on)}` : ""}</div>}
+                      {(() => {
+                        const age = ageFrom(r.oldest_birth_year);
+                        const rv = r.revenue_high ?? r.revenue_low;
+                        const bits: Record<string, React.ReactNode> = {
+                          nation: <NationBadge n={r.nation} />,
+                          work: <WorkIcon m={r.work_model} />,
+                          score: <Score value={r.score} />,
+                          value: r.value_low ? <span className="nowrap">{range(r.value_low, r.value_high)}</span> : null,
+                          revenue: rv ? <span className="nowrap" title="Revenue (filed or estimate)">{r.revenue_basis === "filed" ? money(rv) : `~${money(rv)}`} rev</span> : null,
+                          staff: r.employees != null ? <span className="nowrap">{int(r.employees)} staff</span> : null,
+                          owner: age ? <span className="nowrap">Owner {age}</span> : null,
+                          ownership: r.ownership_type && r.ownership_type !== "unknown" ? <span>{OWNERSHIP[r.ownership_type] ?? r.ownership_type}</span> : null,
+                          rating: r.rating ? <span>{r.rating}/5</span> : null,
+                          checklist: r.tasks_total > 0 ? <span className="cl-wrap"><span className="progressbar"><i style={{ width: `${(100 * r.tasks_done) / r.tasks_total}%` }} /></span>
+                            <span>{r.tasks_done}/{r.tasks_total} checklist</span></span> : null,
+                          days: d !== null ? <span>{d}d in stage</span> : null,
+                          next: r.next_action ? <div className={`next ${overdue ? "overdue" : ""}`}>→ {r.next_action}{r.next_action_on ? ` · ${date(r.next_action_on)}` : ""}</div> : null,
+                        };
+                        const at = (pl: Place) => card.filter(([k, p]) => p === pl && bits[k]).map(([k]) => <Fragment key={k}>{bits[k]}</Fragment>);
+                        const top = at("top"), main = at("main");
+                        const lowerKeys = card.filter(([k, p]) => p === "lower" && bits[k]).map(([k]) => k);
+                        const inline = lowerKeys.filter((k) => k !== "next" && k !== "checklist");
+                        return <>
+                          {top.length > 0 && <div className="cbadges">{top}</div>}
+                          {main.length > 0 && <div className="meta">{main}</div>}
+                          {lowerKeys.includes("checklist") && <div className="cline cl">{bits.checklist}</div>}
+                          {inline.length > 0 && <div className="cline">{inline.map((k) => <Fragment key={k}>{bits[k]}</Fragment>)}</div>}
+                          {lowerKeys.includes("next") && bits.next}
+                        </>;
+                      })()}
                       {/* Works without dragging: phones, keyboard */}
                       <select className="movesel" value="" aria-label={`Move ${r.name} to another stage`}
                               onClick={(e) => e.stopPropagation()} onChange={(e) => move(r.company_number, e.target.value as Status)}>

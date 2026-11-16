@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Row } from "../api";
-import { ErrorLine, Flags, Logo, Score, Signals, StatusMark, Toast, useAsync, WorkIcon } from "../components/bits";
+import { ErrorLine, Flags, Logo, Score, Signals, StatusMark, Toast, useAsync, NationBadge, WorkIcon } from "../components/bits";
 import { Spark } from "../components/charts";
 import SicPicker, { loadSic, type SicOption } from "../components/SicPicker";
 import { NOT_NOW, NOT_SUITABLE, pickNote, rememberList, RuleOutMenu } from "../components/RuleOut";
@@ -547,6 +547,7 @@ function TargetRow({ r, cols, cursor, onOpen, showBox, mode, sics, dim, href, ti
       <div className="cn-body">
       <div className="name">
         <Link className="rowlink" to={href} onClick={(e) => e.stopPropagation()}>{r.name}</Link>
+        <NationBadge n={r.trading_region || r.region} />
         <WorkIcon m={r.work_model} />
         {bad && <span className="tag red">{cap(r.company_status)}</span>}
         {recent && r.last_kinds?.length ? <span className="tag" title={`Changed ${relDays(r.last_change)}`}>{r.last_kinds.map((k) => CHANGE_KIND[k] ?? k).join(", ")}</span> : null}
