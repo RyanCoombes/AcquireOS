@@ -450,12 +450,18 @@ def refresh_estimates(conn, from_table: str | None = None):
     """Revenue range for each company from its LATEST accounts: the filed
     turnover if those accounts give one; otherwise staff × the company's OWN
     revenue per head from earlier accounts that gave turnover (±10%), or
-    failing that staff × a typical revenue per head.
+    failing that staff × the middle half of revenue per head among companies in the
+    same industry and staff band that file turnover (accuracy.refresh_benchmarks).
     Recomputed whenever accounts change, so an estimate never sticks at an
     old staff count and an old turnover is not shown as the current one.
     An estimate imported from your own file is kept unless turnover is filed.
     from_table limits it to the companies listed in that temp table."""
+    from ..accuracy import BAND_SQL, refresh_benchmarks
+
     lo, hi = REVENUE_PER_HEAD
+    if not from_table:  # a full refresh relearns revenue per head first
+        refresh_benchmarks(conn)
+    band = BAND_SQL.format(e="l.employees")
     scope = f"and company_number in (select company_number from {from_table})" if from_table else ""
     conn.execute(
         f"""
@@ -476,11 +482,11 @@ def refresh_estimates(conn, from_table: str | None = None):
                    case when l.turnover > 0 then l.turnover
                         when l.employees > 0 and o.rph is not null then round(l.employees * o.rph * 0.9)
                         when o.rph is not null then o.own_turnover
-                        else l.employees::numeric * %(lo)s end as low,
+                        else l.employees::numeric * coalesce(bx.p25, bd.p25, bb.p25, bg.p25, %(lo)s) end as low,
                    case when l.turnover > 0 then l.turnover
                         when l.employees > 0 and o.rph is not null then round(l.employees * o.rph * 1.1)
                         when o.rph is not null then o.own_turnover
-                        else l.employees::numeric * %(hi)s end as high,
+                        else l.employees::numeric * coalesce(bx.p75, bd.p75, bb.p75, bg.p75, %(hi)s) end as high,
                    case when l.turnover > 0 then 'filed' else 'estimated' end as basis,
                    case when l.turnover > 0
                         then 'Turnover as filed for the year to ' || to_char(l.period_end, 'FMDD Mon YYYY')
@@ -490,9 +496,23 @@ def refresh_estimates(conn, from_table: str | None = None):
                              || to_char(o.own_end, 'FMDD Mon YYYY') || '), ±10%%'
                         when o.rph is not null
                         then 'Last filed turnover (year to ' || to_char(o.own_end, 'FMDD Mon YYYY') || '); no staff figure since'
+                        when coalesce(bx.n, bd.n, bb.n, bg.n) is not null
+                        then 'Staff (' || l.employees || ', accounts to ' || to_char(l.period_end, 'FMDD Mon YYYY')
+                             || ') × £' || round(coalesce(bx.p25, bd.p25, bb.p25, bg.p25) / 1000) || 'k–£'
+                             || round(coalesce(bx.p75, bd.p75, bb.p75, bg.p75) / 1000)
+                             || 'k revenue per head: the middle half of ' || coalesce(bx.n, bd.n, bb.n, bg.n)
+                             || ' companies that file turnover'
+                             || case when bx.n is not null then ' in the same industry (SIC ' || bx.division || ') with ' || bx.band || ' staff'
+                                     when bd.n is not null then ' in the same industry (SIC ' || bd.division || ')'
+                                     when bb.n is not null then ' with ' || bb.band || ' staff' else '' end
                         else 'Staff (' || l.employees || ', accounts to ' || to_char(l.period_end, 'FMDD Mon YYYY')
                              || %(per_head)s end as method
             from latest l left join own o on o.company_number = l.company_number
+            left join company c on c.company_number = l.company_number
+            left join rph_benchmark bx on bx.division = left(c.sic_codes[1], 2) and bx.band = {band}
+            left join rph_benchmark bd on bd.division = left(c.sic_codes[1], 2) and bd.band = '*'
+            left join rph_benchmark bb on bb.division = '*' and bb.band = {band}
+            left join rph_benchmark bg on bg.division = '*' and bg.band = '*'
             where l.turnover > 0 or l.employees > 0 or o.rph is not null
         )
         insert into estimate (company_number, revenue_low, revenue_high, basis, method)

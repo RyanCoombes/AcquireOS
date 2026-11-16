@@ -274,3 +274,27 @@ export function NationBadge({ n, label }: { n?: string | null; label?: boolean }
   if (!n || !NATION[n]) return null;
   return <span className="nation" title={`Nation: ${n}`} role="img" aria-label={n}><Flag n={n} />{label ? <span>{n}</span> : null}</span>;
 }
+
+export type Trust = { score: number; parts: { key: string; label: string; points: number; max: number }[] };
+/** How far the company's data can be relied on, with what adds to it and what's missing. */
+export function TrustBadge({ t }: { t?: Trust | null }) {
+  const [open, setOpen] = useState(false);
+  if (!t) return null;
+  const level = t.score >= 75 ? ["Solid", "good"] : t.score >= 50 ? ["Fair", "fair"] : ["Thin", "thin"];
+  return (
+    <span className="trustwrap">
+      <button className={`trust ${level[1]}`} onClick={() => setOpen(!open)} aria-expanded={open}
+              title="How far this company's data can be relied on">Data: {level[0]} <b>{t.score}</b></button>
+      {open && (
+        <span className="trustpop" role="dialog" aria-label="What the data rests on">
+          {t.parts.map((p) => (
+            <span key={p.key} className={`tp ${p.key === "issues" ? (p.points < 0 ? "neg" : "ok") : p.points >= p.max ? "ok" : p.points > 0 ? "part" : "miss"}`}>
+              <i aria-hidden>{p.key === "issues" ? (p.points < 0 ? "!" : "✓") : p.points >= p.max ? "✓" : p.points > 0 ? "~" : "✗"}</i>
+              {p.label}<em>{p.max ? `${p.points}/${p.max}` : p.points ? String(p.points) : ""}</em></span>
+          ))}
+          <span className="faint small">Filed figures, recent accounts, traced owners and research raise it; open data issues lower it.</span>
+        </span>
+      )}
+    </span>
+  );
+}

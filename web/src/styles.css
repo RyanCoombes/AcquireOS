@@ -1655,3 +1655,18 @@ td.c-name .cn-body { min-width: 0; flex: 1; }
 .card .cline.cl { display: block; }
 .card .cl-wrap { display: block; }
 .card .cl-wrap .progressbar { display: block; margin-bottom: 4px; }
+.trustwrap { position: relative; display: inline-block; }
+.trust { border: 0; border-radius: 99px; padding: 3px 10px; font: inherit; font-size: 12.5px; font-weight: 650; cursor: pointer; }
+.trust b { font-weight: 800; margin-left: 2px; }
+.trust.good { background: #e6f6ec; color: #1e7a46; }
+.trust.fair { background: #fdf1dc; color: #9a6517; }
+.trust.thin { background: #fdecea; color: #b4232c; }
+.trustpop { position: absolute; top: 30px; left: 0; z-index: 20; width: 300px; max-width: 86vw; display: grid; gap: 5px;
+            background: var(--panel, #fff); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+            box-shadow: 0 12px 30px rgba(20, 24, 31, .15); font-size: 13px; font-weight: 500; color: var(--ink, #14181f); }
+.trustpop .tp { display: flex; gap: 8px; align-items: baseline; }
+.trustpop .tp i { font-style: normal; font-weight: 800; width: 12px; text-align: center; }
+.trustpop .tp em { margin-left: auto; font-style: normal; color: var(--ink3, #8a91a0); font-size: 12px; }
+.trustpop .tp.ok i { color: #1e7a46; } .trustpop .tp.part i { color: #b7791f; }
+.trustpop .tp.miss i, .trustpop .tp.neg i { color: #b4232c; }
+.trust.mini { cursor: default; font-size: 11px; padding: 1px 7px; }

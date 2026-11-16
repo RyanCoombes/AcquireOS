@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
-import { ErrorLine, Flags, Hint, Score, Signals, StatusMark, Toast, useAsync, WatchButton, LogoEditor, NationBadge, WorkIcon } from "../components/bits";
+import { ErrorLine, Flags, Hint, Score, Signals, StatusMark, Toast, useAsync, WatchButton, LogoEditor, NationBadge, TrustBadge, WorkIcon } from "../components/bits";
 import Valuation from "../components/Valuation";
 import DealProgress from "../components/DealProgress";
 import MyScores from "../components/MyScores";
@@ -144,6 +144,7 @@ export default function Company() {
             {data.sics[0] && <span className="mt">{data.sics[0].description}</span>}
             <NationBadge n={data.enrichment?.trading_region || c.region} label />
             <WorkIcon m={data.enrichment?.work_model} label />
+            <TrustBadge t={data.trust} />
             {townOf(c.registered_address, c.postcode) && <span className="mt">{townOf(c.registered_address, c.postcode)}</span>}
             {data.enrichment?.website && <a className="mt" href={data.enrichment.website} target="_blank" rel="noreferrer">{data.enrichment.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")} ↗</a>}
             <Signals s={data.signals} region={c.region} />

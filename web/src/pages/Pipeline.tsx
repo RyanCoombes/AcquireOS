@@ -16,11 +16,11 @@ type Place = "top" | "main" | "lower" | "off";
 const CARD_FIELDS: [string, string][] = [
   ["nation", "Nation (flag)"], ["work", "Way of working"], ["score", "Score"], ["value", "Indicative value"],
   ["revenue", "Revenue"], ["staff", "Staff"], ["owner", "Oldest owner's age"], ["ownership", "Ownership"],
-  ["rating", "Your rating"], ["checklist", "Checklist progress"], ["days", "Days in stage"], ["next", "Next action"],
+  ["rating", "Your rating"], ["trust", "Data trust"], ["checklist", "Checklist progress"], ["days", "Days in stage"], ["next", "Next action"],
 ];
 const CARD_DEFAULT: [string, Place][] = [
   ["nation", "top"], ["work", "top"], ["score", "main"], ["value", "main"], ["revenue", "off"], ["staff", "off"],
-  ["owner", "off"], ["ownership", "off"], ["rating", "lower"], ["checklist", "lower"], ["days", "lower"], ["next", "lower"],
+  ["owner", "off"], ["ownership", "off"], ["rating", "lower"], ["trust", "off"], ["checklist", "lower"], ["days", "lower"], ["next", "lower"],
 ];
 const CKEY = "pipeline-card";
 const loadCard = (): [string, Place][] => {
@@ -265,6 +265,8 @@ export default function Pipeline() {
                           owner: age ? <span className="nowrap">Owner {age}</span> : null,
                           ownership: r.ownership_type && r.ownership_type !== "unknown" ? <span>{OWNERSHIP[r.ownership_type] ?? r.ownership_type}</span> : null,
                           rating: r.rating ? <span>{r.rating}/5</span> : null,
+                          trust: r.trust != null ? <span className={`trust mini ${r.trust >= 75 ? "good" : r.trust >= 50 ? "fair" : "thin"}`}
+                            title="How far this company's data can be relied on (out of 100)">Data {r.trust}</span> : null,
                           checklist: r.tasks_total > 0 ? <span className="cl-wrap"><span className="progressbar"><i style={{ width: `${(100 * r.tasks_done) / r.tasks_total}%` }} /></span>
                             <span>{r.tasks_done}/{r.tasks_total} checklist</span></span> : null,
                           days: d !== null ? <span>{d}d in stage</span> : null,

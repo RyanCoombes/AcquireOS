@@ -394,6 +394,14 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True, reread_old: bool =
         return scoring.rescore_all(conn, progress=_loader_progress)
 
     part("Scoring", score)
+
+    def checks():
+        from . import accuracy
+
+        r = accuracy.run_checks(conn)
+        return f"{sum(r.values())} new data issues" if sum(r.values()) else "nothing new"
+
+    part("Checking figures", checks)
     part("Ownership links", lambda: rebuild_links(conn, progress=_loader_progress) or "done")
 
     def locate():
@@ -540,6 +548,30 @@ def _negative_balance_catch_up(c):
         f"({r['pdf_cleared']} from scanned PDFs cleared, {r['pdf_requeued']} sent back to the reader)")
 
 
+ACCURACY_VERSION = 1
+
+
+def _accuracy_catch_up(c):
+    """Once after the update: learn revenue per head from companies that file turnover,
+    re-estimate revenue with it, rescore, then check every scored company's figures."""
+    from . import accuracy, chsync, scoring
+    from .importers.companies import refresh_estimates
+
+    done = chsync.get_setting(c, "accuracy_catch_up", None)
+    if isinstance(done, dict) and int(done.get("v", 0)) >= ACCURACY_VERSION:
+        return
+    refresh_estimates(c)  # relearns the benchmarks first
+    c.commit()
+    benchmarks = c.execute("select count(*) as n from rph_benchmark").fetchone()["n"]
+    scoring.rescore_all(c)
+    c.commit()
+    r = accuracy.run_checks(c)
+    chsync.set_setting(c, "accuracy_catch_up", {"v": ACCURACY_VERSION, "benchmarks": benchmarks, "issues": sum(r.values()),
+                                                "by_check": r, "at": datetime.now().isoformat(timespec="minutes")})
+    c.commit()
+    log(f"Accuracy: {benchmarks} revenue-per-head benchmarks; {sum(r.values())} data issues raised")
+
+
 def _director_address_catch_up(c):
     """Once after the update: companies left out only for their registered region get their
     directors re-read, so a director address elsewhere (registered in Aberdeen, run from
@@ -592,6 +624,7 @@ def _ownership_catch_up():
             _cleanup_step(c, "Removing made-up years (moved year ends)", _false_prior_catch_up)
             _cleanup_step(c, "Putting right negative cash, debtors and stock", _negative_balance_catch_up)
             _cleanup_step(c, "Reading director addresses", _director_address_catch_up)
+            _cleanup_step(c, "Recalibrating revenue estimates and checking figures", _accuracy_catch_up)
             if int(chsync.get_setting(c, "ownership_version", 1) or 1) < ownership.OWNERSHIP_VERSION:
                 while chsync.busy(c):
                     time.sleep(300)
@@ -707,6 +740,8 @@ def cleanups(c) -> list[dict]:
     staff = staff if isinstance(staff, dict) else {}
     prior = prior if isinstance(prior, dict) else {}
     neg = neg if isinstance(neg, dict) else {}
+    acc = g("accuracy_catch_up")
+    acc = acc if isinstance(acc, dict) else {}
     dirs = g("director_addresses_read")
     dirs = dirs if isinstance(dirs, dict) else {}
     last = staff.get("last") or {}
@@ -723,6 +758,9 @@ def cleanups(c) -> list[dict]:
          f"{int(neg.get('pdf_requeued') or 0):,} scanned-PDF years sent back to the reader" if neg else ""),
         ("Reclassifying owners and rescoring", int(g("ownership_version") or 1) >= ownership.OWNERSHIP_VERSION,
          g("owners_reclassified_at"), ""),
+        ("Recalibrating revenue estimates and checking figures", int(acc.get("v", 0)) >= ACCURACY_VERSION, acc.get("at"),
+         f"{int(acc.get('benchmarks') or 0):,} revenue-per-head benchmarks; {int(acc.get('issues') or 0):,} figures flagged as data issues"
+         if acc else ""),
         ("Reading director addresses", bool(dirs), dirs.get("at"),
          f"{int(dirs.get('read') or 0):,} of {int(dirs.get('companies') or 0):,} companies left out for their region re-read"
          if dirs else ""),

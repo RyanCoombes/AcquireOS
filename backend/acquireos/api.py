@@ -752,6 +752,7 @@ def company(num: str, bb: str | None = None):
         "watched_owners": [r["ref"] for r in c.execute("select ref from watch where kind = 'owner'")],
         "signals": signals, "sold": sold, "same_business": same_business,
         "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
+        "trust": c.execute("select ao_data_trust(%s) as t", (num,)).fetchone()["t"],
         "logo_v": logo_v,
         "changes": changes, "valuation": val, "fin_summary": fintrends.summary(fin), "ch": ch_details, "deals": deals_list,
         "company": row, "financials": fin, "estimate": est, "ownership": own, "people": people,
@@ -1612,6 +1613,7 @@ def pipeline():
                       o.ownership_type, o.oldest_birth_year, coalesce(sg.signals, '{{}}') as signals,
                       (select en.work_model from enrichment en where en.company_number = uc.company_number) as work_model,
                       coalesce((select en.trading_region from enrichment en where en.company_number = uc.company_number), c.region) as nation,
+                      (ao_data_trust(uc.company_number)->>'score')::int as trust,
                       (select en.website from enrichment en where en.company_number = uc.company_number) as website,
                       {_logo_sql("uc.company_number")},
                       (select max(created_at) from stage_event e where e.company_number = uc.company_number

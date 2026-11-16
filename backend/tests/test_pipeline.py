@@ -1,3 +1,4 @@
+import pytest
 import json
 from datetime import date
 from pathlib import Path
@@ -517,3 +518,51 @@ def test_director_address_catch_up_keeps_in_a_company_run_from_wales(c, monkeypa
     assert "SC999002" in rescored
     assert chsync.get_setting(c, "director_addresses_read", None)["read"] >= 1
     assert any(x["label"] == "Reading director addresses" and x["status"] == "done" for x in fetch.cleanups(c))
+
+
+def test_revenue_per_head_learned_from_filers_by_industry_and_size(c):
+    from acquireos.importers.companies import refresh_estimates
+    # 40 IT companies with 20 staff that file turnover: £100k–£140k a head
+    for i in range(40):
+        n = f"BM{i:06d}"
+        c.execute("insert into company (company_number, name, sic_codes) values (%s, %s, '{62020}')", (n, f"FILER {i} LTD"))
+        c.execute("insert into financial_period (company_number, period_end, employees, turnover) values (%s, current_date - 100, 20, %s)",
+                  (n, 20 * (100_000 + i * 1000)))
+    c.execute("insert into company (company_number, name, sic_codes) values ('BMX00001', 'NO TURNOVER LTD', '{62090}')")
+    c.execute("insert into financial_period (company_number, period_end, employees) values ('BMX00001', current_date - 100, 25)")
+    refresh_estimates(c)
+    b = c.execute("select * from rph_benchmark where division = '62' and band = '10–49'").fetchone()
+    assert b["n"] == 40 and 100_000 < b["p25"] < b["p50"] < b["p75"] < 140_000
+    e = c.execute("select * from estimate where company_number = 'BMX00001'").fetchone()
+    assert e["basis"] == "estimated" and "same industry (SIC 62) with 10–49 staff" in e["method"]
+    assert e["revenue_low"] == pytest.approx(25 * float(b["p25"]), rel=1e-6)
+    assert e["revenue_high"] == pytest.approx(25 * float(b["p75"]), rel=1e-6)
+    # A filer keeps its filed turnover.
+    assert c.execute("select basis from estimate where company_number = 'BM000005'").fetchone()["basis"] == "filed"
+
+
+def test_automatic_checks_raise_issues_once(c):
+    from acquireos import accuracy
+    rows = [("CK000001", 10, 40, None, None), ("CK000002", 50, 52, 2_000_000, 2_000), ("CK000003", 8, 8, 30_000_000, 30_000_000),
+            ("CK000004", 20, 21, 2_000_000, 2_100_000)]
+    for n, e0, e1, t0, t1 in rows:
+        c.execute("insert into company (company_number, name) values (%s, %s)", (n, n))
+        c.execute("insert into company_best (company_number, score) values (%s, 50)", (n,))
+        c.execute("insert into financial_period (company_number, period_end, employees, turnover) values (%s, current_date - 465, %s, %s)", (n, e0, t0))
+        c.execute("insert into financial_period (company_number, period_end, employees, turnover) values (%s, current_date - 100, %s, %s)", (n, e1, t1))
+    r = accuracy.run_checks(c)
+    got = {(x["company_number"], x["check_key"].split(":")[0]) for x in
+           c.execute("select company_number, check_key from data_issue where created_by = 'automatic check'")}
+    assert ("CK000001", "staff_jump") in got                      # 10 → 40 staff
+    assert ("CK000002", "turnover_jump") in got                   # £2m → £2k: units
+    assert ("CK000003", "revenue_per_head") in got                # £3.75m a head
+    assert not any(n == "CK000004" for n, _ in got)               # nothing odd
+    assert sum(r.values()) == len(got)
+    # Run again: nothing new; a dismissed one stays dismissed.
+    c.execute("update data_issue set status = 'dismissed' where company_number = 'CK000001'")
+    assert sum(accuracy.run_checks(c).values()) == 0
+    assert c.execute("select status from data_issue where company_number = 'CK000001'").fetchone()["status"] == "dismissed"
+    t = c.execute("select ao_data_trust('CK000002') as t").fetchone()["t"]
+    assert any(p["key"] == "issues" and p["points"] == -20 for p in t["parts"])  # two checks tripped
+    t4 = c.execute("select ao_data_trust('CK000004') as t").fetchone()["t"]
+    assert t4["score"] > t["score"]
