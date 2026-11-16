@@ -1633,3 +1633,11 @@ td.c-name .cn-body { min-width: 0; flex: 1; }
 .cu.running { background: #eef3ff; color: #2f62d8; }
 .cu.waiting { background: #f0f1f4; color: var(--ink-2); }
 .cu.failed { background: #fdecea; color: #c0392b; }
+
+/* Way of working icon: remote (house), on-site (building), hybrid (both) */
+.workicon { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; margin: 0 4px; padding: 2px 5px;
+            border-radius: 6px; font-size: 12px; font-weight: 600; line-height: 1; }
+.workicon.remote { color: #2f62d8; background: #eef3ff; }
+.workicon.hybrid { color: #7a4fd6; background: #f3eefe; }
+.workicon.on_site { color: #b7791f; background: #fdf1dc; }
+.card .meta .meta-r { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }

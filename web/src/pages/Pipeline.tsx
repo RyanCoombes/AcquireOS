@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type Status } from "../api";
-import { ErrorLine, Score, StatusMark, Toast, useAsync, Logo } from "../components/bits";
+import { ErrorLine, Score, StatusMark, Toast, useAsync, Logo, WorkIcon } from "../components/bits";
 import { ageFrom, date, int, OWNERSHIP, range, WORK_MODEL } from "../format";
 
 type PFilter = { q: string; box: string; region: string; min_staff: string; max_staff: string; min_rev: string;
@@ -205,7 +205,7 @@ export default function Pipeline() {
                       <div className="name has-logo"><Logo num={r.company_number} name={r.name} website={r.website} v={r.logo_v} size={26} /><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div>
                       <div className="meta">
                         <Score value={r.score} />
-                        <span>{r.value_low ? range(r.value_low, r.value_high) : ""}</span>
+                        <span className="meta-r"><WorkIcon m={r.work_model} />{r.value_low ? range(r.value_low, r.value_high) : ""}</span>
                       </div>
                       {r.tasks_total > 0 && (
                         <>

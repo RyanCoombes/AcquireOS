@@ -238,3 +238,22 @@ export function LogoEditor({ num, name, website, v, size = 40 }: { num: string; 
     </>
   );
 }
+
+
+/** How staff work, as a small icon (house = remote, building = on-site, both = hybrid). Nothing when not known. */
+export function WorkIcon({ m, label }: { m?: string | null; label?: boolean }) {
+  if (!m || !["remote", "hybrid", "on_site"].includes(m)) return null;
+  const text = m === "remote" ? "Remote" : m === "hybrid" ? "Hybrid" : "On-site";
+  const house = (x: number) => <path d={`M${x} 9 L${x + 5} 4.5 L${x + 10} 9 M${x + 1.5} 8 V14 H${x + 8.5} V8`} />;
+  const building = (x: number) => <><rect x={x} y="3" width="8" height="11" rx="0.8" />
+    <path d={`M${x + 2.5} 6 h1 M${x + 4.5} 6 h1 M${x + 2.5} 8.5 h1 M${x + 4.5} 8.5 h1 M${x + 3.5} 14 v-2.5`} /></>;
+  return (
+    <span className={`workicon ${m}`} title={`Way of working: ${text}`} aria-label={`Way of working: ${text}`} role="img">
+      <svg viewBox={m === "hybrid" ? "0 0 22 16" : "0 0 12 16"} width={m === "hybrid" ? 20 : 12} height="15" fill="none"
+           stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        {m === "remote" ? house(1) : m === "on_site" ? building(2) : <>{house(0.5)}{building(12.5)}</>}
+      </svg>
+      {label && <span>{text}</span>}
+    </span>
+  );
+}
