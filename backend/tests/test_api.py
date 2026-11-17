@@ -2503,3 +2503,7 @@ def test_pipeline_priority_order_and_future(loaded):
         assert any(r["company_number"] == "01000001" and r["status"] == "future" for r in p["rows"])
         shown = {r["company_number"] for r in cl.get("/api/companies", params={"mine": "hide_closed"}).json()["rows"]}
         assert "01000001" not in shown
+        # Not in the pipeline total (sidebar count)
+        tracked = cl.get("/api/meta").json()["counts"]["tracked"]
+        cl.put("/api/companies/01000001/state", json={"status": "researching"})
+        assert cl.get("/api/meta").json()["counts"]["tracked"] == tracked + 1

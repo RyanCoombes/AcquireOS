@@ -315,7 +315,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
             ) : (
               <>
                 <b className="ink">{int(m.counts.in_scope)}</b> open targets in your <Link to="/buy-box">buy boxes</Link>
-                {(m.counts as any).in_boxes > m.counts.in_scope ? ` · ${int((m.counts as any).in_boxes - m.counts.in_scope)} ruled out` : ""}
+                {(m.counts as any).in_boxes > m.counts.in_scope ? ` · ${int((m.counts as any).in_boxes - m.counts.in_scope)} ruled out or kept for later` : ""}
                 {" · "}{int(m.counts.tracked)} in your pipeline
               </>
             )) : " "}

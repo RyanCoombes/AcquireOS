@@ -162,11 +162,11 @@ def _meta():
         bb = scoring.active_buy_box(c)
         counts = {**d["counts"], **c.execute(
             f"""select (select count(*) from user_company where user_id = %(uid)s
-                         and status not in ('new', 'rejected', 'passed')) as tracked,
+                         and status not in ('new', 'rejected', 'passed', 'future')) as tracked,
                       -- targets still open: in a buy box, not ruled out or combined into another
                       (select count(*) from company_best cb where not exists (
                          select 1 from user_company uc where uc.company_number = cb.company_number and uc.user_id = %(uid)s
-                         and (uc.status in ('rejected', 'passed')))) as in_scope,
+                         and (uc.status in ('rejected', 'passed', 'future')))) as in_scope,
                       (select count(*) from company_change ch
                          left join user_company uc on uc.company_number = ch.company_number and uc.user_id = %(uid)s
                          where {UNREAD_SQL} and {alert_sql(alert_rules(c))}
@@ -1212,7 +1212,7 @@ def _dashboard(which: str = "all"):
             pipeline = c.execute(
                 """select count(*) as n from user_company uc join score s on s.company_number = uc.company_number
                      and s.buy_box_id = %s and not s.excluded
-                   where uc.user_id = %s and uc.status not in ('new','rejected','passed')""", (b["id"], UID)).fetchone()["n"]
+                   where uc.user_id = %s and uc.status not in ('new','rejected','passed','future')""", (b["id"], UID)).fetchone()["n"]
             boxes.append({**dict(b), "in_scope": bs["in_scope"], "strong": bs["strong"], "pipeline": pipeline})
     fmap = {r["status"]: r["n"] for r in funnel}
     hist = stored["hist"]
