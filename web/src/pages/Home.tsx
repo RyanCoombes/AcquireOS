@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { useSkin } from "../skin";
+import Today from "./Today";
 import { ErrorLine, Logo, Score, StatusMark, useAsync } from "../components/bits";
 import { Columns, HBars, TrendLine } from "../components/charts";
 import { ageFrom, CHANGE_KIND, describeChange, int, isBadStatus, OWNERSHIP, range, relDays } from "../format";
@@ -24,6 +26,7 @@ export default function Home() {
   };
   const { data, error, reload } = useAsync(() => api.dashboardFor(which), [which]);
   const [starting, setStarting] = useState(false);
+  const { skin } = useSkin();
   if (error) return <ErrorLine error={error} />;
   if (!data) return <div className="empty">Loading…</div>;
   const h = data.head;
@@ -51,6 +54,60 @@ export default function Home() {
     reload();
   };
 
+  const boxesList = which === "all" && (data.boxes ?? []).length > 0 && (
+          <section>
+            <div className="sechead"><h2>Your buy boxes</h2><span className="right"><Link to="/buy-box">Manage</Link></span></div>
+            <ul className="feed">
+              {data.boxes.map((b: any) => (
+                <li key={b.id}>
+                  <span className="what"><button className="linkish" onClick={() => setParams({ bb: String(b.id) }, { replace: true })}><b>{b.name}</b></button>
+                    <div className="small muted">{int(b.in_scope)} in scope · {int(b.strong)} score 70+ · {int(b.pipeline)} in your pipeline</div></span>
+                  <span className="when">{b.scored_at ? `scored ${relDays(b.scored_at)}` : "not scored yet"}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+  const numbers = (
+      <details className="home-more">
+        <summary>Your search in numbers <span className="faint small">staff over time, score spread, funnel, ownership</span></summary>
+        <div className="home-grid">
+        <section className="span-8">
+          <div className="sechead"><h2>Staff across your buy box</h2>
+            <span className="faint small">Median staff by year</span></div>
+          <TrendLine points={data.trend.map((t: any) => ({ x: String(t.year), y: Number(t.median_staff) }))} format={(n) => int(Math.round(n))} />
+          {data.trend.length > 0 && (
+            <div className="faint small">
+              {data.trend.map((t: any) => `${t.year}: ${int(t.companies)} companies`).slice(-4).join(" · ")}
+              {" · "}{int(h.with_history)} companies have 3+ years of accounts
+            </div>
+          )}
+        </section>
+
+        <section className="span-4">
+          <div className="sechead"><h2>Score spread</h2><span className="faint small">Companies in your buy box</span></div>
+          <Columns rows={data.score_hist.map((b: any, i: number) => ({ label: `${i * 10}`, n: Number(b.n) }))} highlight={(i) => i >= 7} />
+        </section>
+
+        <section className="span-4">
+          <div className="sechead"><h2>Search funnel</h2></div>
+          <HBars rows={data.funnel.map((f: any) => ({ label: f.label, n: f.n, key: f.status }))}
+                 accent={(k) => ["offer", "heads", "diligence", "spa", "completion"].includes(k)} onPick={(k) => nav(tq({ status: k }))} />
+        </section>
+
+        <section className="span-4">
+          <div className="sechead"><h2>Who owns them</h2></div>
+          <HBars rows={data.ownership.map((o: any) => ({ label: OWNERSHIP[o.type] ?? o.type, n: o.n, key: o.type }))}
+                 accent={(k) => k === "owner_held"} onPick={(k) => nav(tq({ in_box: "1", ownership: k }))} />
+        </section>
+        </div>
+      </details>
+  );
+  if (skin === "ledger") {
+    return <Today data={data} which={which} tq={tq} setWhich={(v) => setParams(v === "all" ? {} : { bb: v }, { replace: true })}
+                  todo={<ToDo due={data.due} noNext={data.no_next ?? 0} onChanged={reload} />}
+                  boxes={boxesList} numbers={numbers} refresh={{ run: refreshNow, busy: !!running || starting }} />;
+  }
   return (
     <>
       <div className="greeting">
@@ -146,56 +203,11 @@ export default function Home() {
           ) : <div className="faint">Nothing changed in the last 30 days.</div>}
         </section>
 
-        {which === "all" && (data.boxes ?? []).length > 0 && (
-          <section>
-            <div className="sechead"><h2>Your buy boxes</h2><span className="right"><Link to="/buy-box">Manage</Link></span></div>
-            <ul className="feed">
-              {data.boxes.map((b: any) => (
-                <li key={b.id}>
-                  <span className="what"><button className="linkish" onClick={() => setParams({ bb: String(b.id) }, { replace: true })}><b>{b.name}</b></button>
-                    <div className="small muted">{int(b.in_scope)} in scope · {int(b.strong)} score 70+ · {int(b.pipeline)} in your pipeline</div></span>
-                  <span className="when">{b.scored_at ? `scored ${relDays(b.scored_at)}` : "not scored yet"}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+        {boxesList}
         </div>
       </div>
 
-      <details className="home-more">
-        <summary>Your search in numbers <span className="faint small">staff over time, score spread, funnel, ownership</span></summary>
-        <div className="home-grid">
-        <section className="span-8">
-          <div className="sechead"><h2>Staff across your buy box</h2>
-            <span className="faint small">Median staff by year</span></div>
-          <TrendLine points={data.trend.map((t: any) => ({ x: String(t.year), y: Number(t.median_staff) }))} format={(n) => int(Math.round(n))} />
-          {data.trend.length > 0 && (
-            <div className="faint small">
-              {data.trend.map((t: any) => `${t.year}: ${int(t.companies)} companies`).slice(-4).join(" · ")}
-              {" · "}{int(h.with_history)} companies have 3+ years of accounts
-            </div>
-          )}
-        </section>
-
-        <section className="span-4">
-          <div className="sechead"><h2>Score spread</h2><span className="faint small">Companies in your buy box</span></div>
-          <Columns rows={data.score_hist.map((b: any, i: number) => ({ label: `${i * 10}`, n: Number(b.n) }))} highlight={(i) => i >= 7} />
-        </section>
-
-        <section className="span-4">
-          <div className="sechead"><h2>Search funnel</h2></div>
-          <HBars rows={data.funnel.map((f: any) => ({ label: f.label, n: f.n, key: f.status }))}
-                 accent={(k) => ["offer", "heads", "diligence", "spa", "completion"].includes(k)} onPick={(k) => nav(tq({ status: k }))} />
-        </section>
-
-        <section className="span-4">
-          <div className="sechead"><h2>Who owns them</h2></div>
-          <HBars rows={data.ownership.map((o: any) => ({ label: OWNERSHIP[o.type] ?? o.type, n: o.n, key: o.type }))}
-                 accent={(k) => k === "owner_held"} onPick={(k) => nav(tq({ in_box: "1", ownership: k }))} />
-        </section>
-        </div>
-      </details>
+      {numbers}
     </>
   );
 }

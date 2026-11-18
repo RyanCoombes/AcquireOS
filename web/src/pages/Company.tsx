@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useSkin } from "../skin";
 import { api, type CompanyDetail } from "../api";
 import { ErrorLine, Flags, Hint, Score, Signals, StatusMark, Toast, useAsync, WatchButton, LogoEditor, NationBadge, TrustBadge, WorkIcon } from "../components/bits";
 import Valuation from "../components/Valuation";
@@ -13,6 +14,7 @@ import { ageFrom, CHANGE_KIND, chUrl, date, describeChange, int, isBadStatus, LI
 
 
 export default function Company() {
+  const { skin } = useSkin();
   const { num = "" } = useParams();
   useEffect(() => { document.body.classList.add("has-mbar"); return () => document.body.classList.remove("has-mbar"); }, []);
   const nav = useNavigate();
@@ -196,6 +198,14 @@ export default function Company() {
         </div>
       </div>
 
+      {skin === "ledger" && data.trust && (() => {
+        const t = data.trust!, level = t.score >= 75 ? ["Solid", "good"] : t.score >= 50 ? ["Fair", "fair"] : ["Thin", "thin"];
+        const lower = (x: string) => x.charAt(0).toLowerCase() + x.slice(1);
+        const have = t.parts.filter((p) => p.max > 0 && p.points >= p.max).map((p) => lower(p.label));
+        const lack = t.parts.filter((p) => (p.max > 0 && p.points < p.max) || p.points < 0).map((p) => lower(p.label));
+        return <p className="trustline">How far to trust this: <strong className={level[1]}>{level[0]}, {t.score} of 100</strong>.
+          {have.length ? ` In place: ${have.join(", ")}.` : ""}{lack.length ? ` Missing: ${lack.join(", ")}.` : ""}</p>;
+      })()}
       {(data.ch?.disqualified ?? []).length > 0 && (
         <div className="callout red"><b>Disqualified director:</b>{" "}
           {[...new Set(data.ch!.disqualified!.map((d) => d.name))].join(", ")}. Matched on name and month and year of birth: check the
@@ -288,6 +298,7 @@ export default function Company() {
           </section>
           </div>
           <div className="pcol">
+            {skin === "ledger" && <DealPanel data={data} num={num} onChanged={reload} />}
             <ActivitySection key={num} data={data} num={num} setState={setState} onChanged={reload} />
           </div>
         </div>
@@ -521,6 +532,38 @@ function CallBar({ data, num, setState, onNote }: {
 
 
 /** Notes, contacts and stage moves in one timeline, newest first, with one box to add a note or log a contact. */
+/** The new look: where this deal stands, at the top of the column that stays beside the page. */
+function DealPanel({ data, num, onChanged }: { data: CompanyDetail; num: string; onChanged: () => void }) {
+  const meta = useAsync(() => api.meta(), []);
+  const [err, setErr] = useState<string | null>(null);
+  const s = data.state;
+  const live = (meta.data?.statuses ?? []).filter((x) => !["new", "passed", "rejected", "future"].includes(x.value));
+  const idx = live.findIndex((x) => x.value === s.status);
+  const label = meta.data?.statuses.find((x) => x.value === s.status)?.label ?? s.status;
+  const tasks = data.deal?.tasks?.[s.status] ?? [];
+  const days = data.deal?.stage_entered_at ? Math.max(0, Math.floor((Date.now() - new Date(data.deal.stage_entered_at).getTime()) / 864e5)) : null;
+  const late = s.next_action_on && s.next_action_on <= new Date().toISOString().slice(0, 10);
+  return (
+    <section className="dealpanel" aria-label="Your deal">
+      <div className="sechead"><h2>Your deal</h2>{days !== null && s.status !== "new" ? <span className="faint small">{days} days in stage</span> : null}</div>
+      {idx >= 0 && <div className="dp-steps" aria-hidden>{live.map((x, i) => <i key={x.value} className={i <= idx ? "on" : ""} />)}</div>}
+      <div className="small">
+        <b>{s.status === "new" ? "Not in your pipeline yet" : label}</b>
+        <span className="faint">{idx >= 0 ? ` · stage ${idx + 1} of ${live.length}` : ""}{tasks.length ? ` · checklist ${tasks.filter((t) => t.done).length} of ${tasks.length}` : ""}
+          {s.rating ? ` · your rating ${s.rating} of 5` : ""}</span>
+      </div>
+      {s.next_action ? (
+        <div className={`dp-next ${late ? "late" : ""}`}>
+          <input type="checkbox" aria-label={`Mark done: ${s.next_action}`}
+                 onChange={async () => { setErr(null); try { await api.nextActionDone(num); onChanged(); } catch (e: any) { setErr(`Not marked done: ${e.message}`); } }} />
+          <span>{s.next_action}</span>{s.next_action_on && <em>{relDays(s.next_action_on)}</em>}
+        </div>
+      ) : s.status !== "new" ? <div className="faint small" style={{ marginTop: 8 }}>No next action set. Add one below.</div> : null}
+      {err && <div className="callout red small" role="alert">{err}</div>}
+    </section>
+  );
+}
+
 function ActivitySection({ data, num, setState, onChanged }: {
   data: CompanyDetail; num: string; setState: (p: Record<string, unknown>) => Promise<void>; onChanged: () => void;
 }) {

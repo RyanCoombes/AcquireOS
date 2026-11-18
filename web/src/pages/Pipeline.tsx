@@ -2,6 +2,8 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type Status } from "../api";
 import { BT_LABEL } from "../components/CompanyExtras";
+import DealPeek from "../components/DealPeek";
+import { useSkin } from "../skin";
 import { ErrorLine, Score, StatusMark, Toast, useAsync, Logo, NationBadge, WorkIcon } from "../components/bits";
 import { ageFrom, date, int, money, OWNERSHIP, range, WORK_MODEL } from "../format";
 
@@ -64,6 +66,8 @@ export default function Pipeline() {
   const [over, setOver] = useState<string | null>(null);
   const [overCard, setOverCard] = useState<{ num: string; after: boolean } | null>(null);
   const moving = useRef(false);
+  const { skin } = useSkin();
+  const [peek, setPeek] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [mStage, setMStage] = useState<string | null>(null);
   const today = new Date().toISOString().slice(0, 10);
@@ -173,6 +177,9 @@ export default function Pipeline() {
     return placeAt(num, row.status, seen[j], how === "down");
   };
   const byPriority = f.sort === "";
+  // Each card's place in its stage's priority order (whatever the filters or groups show).
+  const rankOf = new Map<string, number>();
+  for (const st of data.statuses) all.filter((r) => r.status === st.value).forEach((r, i) => rankOf.set(r.company_number, i + 1));
   const groupOf = (r: (typeof all)[number]): [string, string] => {
     if (f.group === "type") { const [t] = typeOf(r); return t ? [t, TYPE_LABEL[t] ?? t] : ["~", "Not classified"]; }
     if (f.group === "nation") return r.nation ? [r.nation, r.nation] : ["~", "Nation not known"];
@@ -185,7 +192,7 @@ export default function Pipeline() {
     <>
       <div className="pagehead">
         <div>
-          <h1>Pipeline</h1>
+          <h1>{skin === "ledger" ? "Deals" : "Pipeline"}</h1>
           <div className="lede">From first look to handover. Drag cards between stages, or up and down to set your priority.</div>
         </div>
       </div>
@@ -307,6 +314,7 @@ export default function Pipeline() {
                            onClick={() => setMStage(s.value)}>{s.label} <b>{n}</b></button>;
           })}
         </div>
+        <div className={skin === "ledger" && peek ? "deal-layout" : undefined}>
         <div className="board">
           {cols.map((s) => {
             const items = rows.filter((r) => r.status === s.value);
@@ -318,7 +326,9 @@ export default function Pipeline() {
               <div key={s.value} className={`col ${over === s.value ? "over" : ""} ${mStageOf === s.value ? "" : "m-off"}`}
                    onDragOver={(e) => { e.preventDefault(); setOver(s.value); }} onDragLeave={() => setOver(null)}
                    onDrop={(e) => { e.preventDefault(); drop(s.value); }}>
-                <h3><span>{s.label}</span><span className="count">{items.length}</span></h3>
+                <h3><span>{s.label}</span><span className="count">{items.length}</span>
+                  {(() => { const lo = items.reduce((a, r) => a + Number(r.value_low ?? 0), 0), hi = items.reduce((a, r) => a + Number(r.value_high ?? 0), 0);
+                    return hi > 0 ? <span className="colval" title="Indicative value of the deals in this stage">{range(lo, hi)}</span> : null; })()}</h3>
                 <div className="desc">{s.description}</div>
                 {(f.group ? ordered.flatMap(([k, g]) => [{ sep: k, label: g.label, n: g.rows.length, guessed: f.group === "type" ? g.rows.filter((r) => typeOf(r)[1]).length : 0 }, ...g.rows]) : items).map((r: any) => {
                   if ("sep" in r) return <div key={`sep-${r.sep}`} className="grpsep" title={r.guessed ? `${r.guessed} of these not yet classified by research: guessed from the industry (SIC) code` : undefined}>
@@ -342,11 +352,12 @@ export default function Pipeline() {
                              if (moved.status === s.value) setToast("Cards stay in their own group: drop it on a card in the same group to rank it");
                              else placeAt(num, s.value as Status, null, false);
                            } else placeAt(num, s.value as Status, r.company_number, oc?.after ?? false); } : undefined}
-                         onClick={() => nav(`/c/${r.company_number}`)}>
+                         aria-current={peek === r.company_number ? "true" : undefined}
+                         onClick={() => (skin === "ledger" && window.innerWidth > 1100 ? setPeek(r.company_number) : nav(`/c/${r.company_number}`))}>
                       {r.website && <a className="card-web" href={r.website} target="_blank" rel="noreferrer" draggable={false}
                                        title={`Website: ${r.website.replace(/^https?:\/\/(www\.)?/, "")}`} aria-label={`${r.name} website`}
                                        onClick={(e) => e.stopPropagation()}>↗</a>}
-                      <div className="name has-logo"><Logo num={r.company_number} name={r.name} website={r.website} v={r.logo_v} size={26} /><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div>
+                      <div className="name has-logo">{byPriority && <span className="rank" aria-label="Priority">{rankOf.get(r.company_number)}</span>}<Logo num={r.company_number} name={r.name} website={r.website} v={r.logo_v} size={26} /><Link className="rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></div>
                       {(() => {
                         const age = ageFrom(r.oldest_birth_year);
                         const rv = r.revenue_high ?? r.revenue_low;
@@ -398,6 +409,11 @@ export default function Pipeline() {
               </div>
             );
           })}
+        </div>
+        {skin === "ledger" && peek && all.some((r) => r.company_number === peek) && (
+          <DealPeek key={peek} num={peek} statuses={data.statuses} onClose={() => setPeek(null)}
+                    onChanged={(m) => { if (m) setToast(m); reload(); }} />
+        )}
         </div>
         </>
       )}
