@@ -77,7 +77,8 @@ export default function MapPage() {
         <div className="right">
           <FocusSearch onPick={setFocus} />
           {counts && counts.pending > 0 && (
-            <button className="btn" disabled={geo.data?.running} onClick={async () => { await api.startGeocode(); geo.reload(); setTimeout(() => { geo.reload(); data.reload(); }, 8000); }}>
+            <button className="btn" disabled={geo.data?.running} onClick={async () => { try { await api.startGeocode(); } catch (e: any) { window.alert(`Not started: ${e.message}`); }
+              geo.reload(); setTimeout(() => { geo.reload(); data.reload(); }, 8000); }}>
               {geo.data?.running ? "Locating…" : `Locate ${int(counts.pending)} postcodes`}
             </button>
           )}

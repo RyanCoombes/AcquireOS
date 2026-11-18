@@ -33,7 +33,8 @@ export default function Company() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName)) return;
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (document.querySelector('[role="dialog"]')) return;  // Escape closes the open dialog, not the page
       if (e.key === "Escape") nav(-1);
       if (/^[1-5]$/.test(e.key) && data) setState({ rating: Number(e.key) });
     };

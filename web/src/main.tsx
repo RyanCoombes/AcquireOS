@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useRef, useState } from "react";
+import { lazy, StrictMode, Suspense, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import "./styles.css";
@@ -7,14 +7,14 @@ import Home from "./pages/Home";
 import Targets from "./pages/Targets";
 import Company from "./pages/Company";
 import Pipeline from "./pages/Pipeline";
-import Reports from "./pages/Reports";
-import Connections from "./pages/Connections";
-import BuyBox from "./pages/BuyBox";
-import Import from "./pages/Import";
+const Reports = lazy(() => import("./pages/Reports"));  // loaded when first opened
+const Connections = lazy(() => import("./pages/Connections"));  // loaded when first opened
+const BuyBox = lazy(() => import("./pages/BuyBox"));  // loaded when first opened
+const Import = lazy(() => import("./pages/Import"));  // loaded when first opened
 import Changes from "./pages/Changes";
 import Watching from "./pages/Watching";
-import MapPage from "./pages/MapPage";
-import Connect from "./pages/Connect";
+const MapPage = lazy(() => import("./pages/MapPage"));  // loaded when first opened
+const Connect = lazy(() => import("./pages/Connect"));  // loaded when first opened
 import JobBar from "./components/JobBar";
 import Review from "./pages/Review";
 import Owners from "./pages/Owners";
@@ -177,6 +177,7 @@ function App() {
       <div className="content">
         <TopBar />
         <main>
+          <Suspense fallback={<div className="empty">Loading…</div>}>
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/companies" element={<Targets key="directory" mode="directory" />} />
@@ -198,6 +199,7 @@ function App() {
             <Route path="/import" element={<Import />} />
             <Route path="*" element={<div className="empty"><b>Page not found.</b> <Link to="/">Back to home</Link></div>} />
           </Routes>
+          </Suspense>
         </main>
       </div>
       <MobileNav meta={meta} />

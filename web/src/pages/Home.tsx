@@ -206,6 +206,7 @@ export default function Home() {
 function ToDo({ due, noNext, onChanged }: { due: any[]; noNext: number; onChanged: () => void }) {
   const [gone, setGone] = useState<Set<string>>(new Set());
   const [undo, setUndo] = useState<{ num: string; name: string; was: any } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const days = (d: string | null) => d ? Math.round((new Date(d + "T00:00:00").getTime() - today.getTime()) / 864e5) : null;
   const when = (n: number | null): [string, string] =>
@@ -218,15 +219,17 @@ function ToDo({ due, noNext, onChanged }: { due: any[]; noNext: number; onChange
   const shown = rows;
   const done = async (r: any) => {
     setGone((g) => new Set([...g, r.company_number]));
+    setErr(null);
     try { const res = await api.nextActionDone(r.company_number); setUndo({ num: r.company_number, name: r.name, was: res.was }); }
-    catch { setGone((g) => { const x = new Set(g); x.delete(r.company_number); return x; }); }
+    catch (e: any) { setGone((g) => { const x = new Set(g); x.delete(r.company_number); return x; }); setErr(`Not marked done: ${e.message}`); }
   };
   const snooze = async (r: any, by: number) => {
     const base = r.n !== null && r.n > 0 ? new Date(r.next_action_on + "T00:00:00") : new Date(today);
     base.setDate(base.getDate() + by);
     const iso = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
-    await api.setState(r.company_number, { next_action_on: iso } as any);
-    onChanged();
+    setErr(null);
+    try { await api.setState(r.company_number, { next_action_on: iso } as any); onChanged(); }
+    catch (e: any) { setErr(`Not moved: ${e.message}`); }
   };
   let last = "";
   return (
@@ -265,6 +268,7 @@ function ToDo({ due, noNext, onChanged }: { due: any[]; noNext: number; onChange
             </div>
           );
         })}
+        {err && <div className="callout red small" role="alert">{err}</div>}
         {!rows.length && <div className="faint">Nothing to follow up. Next actions you set on pipeline companies show here.</div>}
       </div>
       {noNext > 0 && (

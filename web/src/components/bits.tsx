@@ -146,10 +146,10 @@ export function WatchButton({ kind, refId, on, label, onChange, small }: { kind:
   const toggle = async () => {
     setBusy(true);
     try {
-      const { api } = await import("../api");
       if (state) await api.unwatch(kind, refId); else await api.watch(kind, refId, label);
       setState(!state); onChange?.();
-    } finally { setBusy(false); }
+    } catch (e: any) { window.alert(`Not saved: ${e.message}`); }
+    finally { setBusy(false); }
   };
   return (
     <button className={`${small ? "watchsm" : "btn quiet"} ${state ? "watching" : ""}`} disabled={busy} onClick={toggle}

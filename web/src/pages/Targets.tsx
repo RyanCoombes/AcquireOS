@@ -191,7 +191,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName)) return;
+      // Typing, or a button or link in focus: Enter and the arrows belong to that, not the list.
+      if (["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(t.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); setCursor((c) => Math.min(c + 1, rows.length - 1)); }
       if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); setCursor((c) => Math.max(c - 1, 0)); }
       if (e.key === "Enter" && rows[cursor]) nav(`/c/${rows[cursor].company_number}${query.bb ? `?bb=${query.bb}` : ""}`);
@@ -228,9 +229,8 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
     if (!name) return;
     const p = Object.fromEntries([...params.entries()].filter(([k]) => k !== "page"));
     if (mode === "targets") p.list = "targets";
-    await api.saveSearch(name, p);
-    saved.reload();
-    setToast(`Saved “${name}”`);
+    try { await api.saveSearch(name, p); saved.reload(); setToast(`Saved “${name}”`); }
+    catch (e: any) { setToast(`Not saved: ${e.message}`); }
   };
 
   const boxSelect = (
@@ -363,7 +363,7 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                     <button onClick={() => target === base ? setParams(new URLSearchParams(p), { replace: true }) : nav(`${target}?${new URLSearchParams(p)}`)}>
                       {s.name}{s.buy_box_name ? <span className="faint"> · {s.buy_box_name}</span> : null}</button>
                     <button className="x" title={`Delete “${s.name}”`} aria-label={`Delete saved search ${s.name}`}
-                            onClick={async () => { if (confirm(`Delete saved search “${s.name}”?`)) { await api.deleteSearch(s.id); saved.reload(); } }}>×</button>
+                            onClick={async () => { if (confirm(`Delete saved search “${s.name}”?`)) { try { await api.deleteSearch(s.id); saved.reload(); } catch (e: any) { setToast(`Not deleted: ${e.message}`); } } }}>×</button>
                   </span>
                   );
                 })}

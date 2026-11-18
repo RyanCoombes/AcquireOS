@@ -1623,7 +1623,7 @@ td.c-name .cn-body { min-width: 0; flex: 1; }
 .todo-undo { position: absolute; left: 16px; right: 16px; bottom: 12px; z-index: 5; box-shadow: 0 8px 20px rgba(20,24,31,.2); display: flex; gap: 12px; align-items: center; background: #14181f; color: #fff; border-radius: 9px; padding: 7px 12px; font-size: 13px; }
 .todo-undo .linkish { color: #7fe0c9; font-weight: 700; }
 @media (max-width: 900px) { .home-top { grid-template-columns: 1fr; } .kpis.slim { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .todo-snz { display: none; } }
+@media (max-width: 640px) { .todo-snz { visibility: visible; } .todo-snz .btn { padding: 4px 6px; } }  /* no hover on a phone */
 
 /* Data page: background clean-ups */
 .cleanups { margin: 6px 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfc; }

@@ -1,6 +1,7 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type Status } from "../api";
+import { BT_LABEL } from "../components/CompanyExtras";
 import { ErrorLine, Score, StatusMark, Toast, useAsync, Logo, NationBadge, WorkIcon } from "../components/bits";
 import { ageFrom, date, int, money, OWNERSHIP, range, WORK_MODEL } from "../format";
 
@@ -33,8 +34,7 @@ const loadCard = (): [string, Place][] => {
 };
 
 // Business type: Claude's (or yours) from research; otherwise a guess from the industry code.
-const TYPE_LABEL: Record<string, string> = { software: "Software", saas: "SaaS", data: "Data", msp: "MSP",
-  it_consultancy: "IT consultancy", field_service: "Field service", agency: "Agency", reseller: "Reseller", other: "Other" };
+const TYPE_LABEL: Record<string, string> = { ...BT_LABEL, msp: "MSP" };  // one list of names; MSP short for the dividers
 const SIC_GUESS: [RegExp, string][] = [
   [/^(62011|62012|58210|58290)/, "software"], [/^62030/, "msp"], [/^62020/, "it_consultancy"],
   [/^(63110|63120|63990)/, "data"], [/^(46510|46520|47410|47420)/, "reseller"],
@@ -57,6 +57,7 @@ export default function Pipeline() {
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [overCard, setOverCard] = useState<{ num: string; after: boolean } | null>(null);
+  const moving = useRef(false);
   const [toast, setToast] = useState<string | null>(null);
   const [mStage, setMStage] = useState<string | null>(null);
   const today = new Date().toISOString().slice(0, 10);
@@ -138,26 +139,32 @@ export default function Pipeline() {
   const ranked = (status: string) => all.filter((r) => r.status === status).map((r) => r.company_number);
   const placeAt = async (num: string, status: Status, target: string | null, after: boolean) => {
     const row = all.find((r) => r.company_number === num);
-    if (!row) return;
+    if (!row || moving.current) return;   // one move at a time: a second before the first is saved would undo it
     const list = ranked(status).filter((x) => x !== num);
     const i = target ? list.indexOf(target) : -1;
     list.splice(i < 0 ? list.length : i + (after ? 1 : 0), 0, num);
+    moving.current = true;
+    const stage = data.statuses.find((s) => s.value === status)?.label;
     try {
-      if (row.status !== status) await api.setState(num, { status, stage_note: "Moved on the pipeline board" });
-      await api.pipelineOrder(status, list);
-      if (row.status !== status) setToast(`${row.name} moved to ${data.statuses.find((s) => s.value === status)?.label}`);
+      if (row.status !== status) {
+        await api.setState(num, { status, stage_note: "Moved on the pipeline board" });
+        setToast(`${row.name} moved to ${stage}`);
+      }
+      try { await api.pipelineOrder(status, list); }
+      catch (e: any) { setToast(row.status !== status ? `${row.name} moved to ${stage}, but its place in the order wasn't saved: ${e.message}` : `Order not saved: ${e.message}`); }
     } catch (e: any) { setToast(`Not moved: ${e.message}`); }
     reload();
+    setTimeout(() => { moving.current = false; }, 400);
   };
+  // Up and down are relative to the cards you can see (filters and groups applied).
   const nudge = async (num: string, how: "top" | "up" | "down") => {
     const row = all.find((r) => r.company_number === num);
     if (!row) return;
-    const list = ranked(row.status);
-    const i = list.indexOf(num);
-    if (how === "top") return placeAt(num, row.status, list[0] === num ? null : list[0], false);
-    const j = how === "up" ? i - 1 : i + 1;
-    if (j < 0 || j >= list.length) return;
-    return placeAt(num, row.status, list[j], how === "down");
+    if (how === "top") { const first = ranked(row.status)[0]; return first === num ? undefined : placeAt(num, row.status, first, false); }
+    const seen = rows.filter((r) => r.status === row.status && (!f.group || groupOf(r)[0] === groupOf(row)[0])).map((r) => r.company_number);
+    const j = seen.indexOf(num) + (how === "up" ? -1 : 1);
+    if (j < 0 || j >= seen.length) return;
+    return placeAt(num, row.status, seen[j], how === "down");
   };
   const byPriority = f.sort === "";
   const groupOf = (r: (typeof all)[number]): [string, string] => {
@@ -322,7 +329,13 @@ export default function Pipeline() {
                            if (!overCard || overCard.num !== r.company_number || overCard.after !== after) setOverCard({ num: r.company_number, after }); } : undefined}
                          onDrop={byPriority ? (e) => { e.preventDefault(); e.stopPropagation(); const num = dragging; const oc = overCard;
                            setDragging(null); setOver(null); setOverCard(null);
-                           if (num && num !== r.company_number) placeAt(num, s.value as Status, r.company_number, oc?.after ?? false); } : undefined}
+                           const moved = all.find((x) => x.company_number === num);
+                           if (!num || !moved || num === r.company_number) return;
+                           // Grouped: a card can be ranked within its own group; dropped on another group it just joins the stage.
+                           if (f.group && groupOf(moved)[0] !== groupOf(r)[0]) {
+                             if (moved.status === s.value) setToast("Cards stay in their own group: drop it on a card in the same group to rank it");
+                             else placeAt(num, s.value as Status, null, false);
+                           } else placeAt(num, s.value as Status, r.company_number, oc?.after ?? false); } : undefined}
                          onClick={() => nav(`/c/${r.company_number}`)}>
                       {r.website && <a className="card-web" href={r.website} target="_blank" rel="noreferrer" draggable={false}
                                        title={`Website: ${r.website.replace(/^https?:\/\/(www\.)?/, "")}`} aria-label={`${r.name} website`}
