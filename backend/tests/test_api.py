@@ -2562,7 +2562,7 @@ def test_password_guessing_is_slowed_and_changes_need_the_app_header(loaded, mon
         for _ in range(10):
             assert cl.get("/api/meta", headers=bad).status_code == 401
         assert cl.get("/api/meta", headers=bad).status_code == 429
-        assert cl.post("/mcp", json={}).status_code == 401   # never open without a token
+        assert cl.post("/mcp", json={}).status_code == 401   # a password is set, so the AI tools need the token
     api_mod._AUTH_FAILS.clear()
 
 

@@ -59,8 +59,9 @@ async def basic_auth(request: Request, call_next):
     token_ok = bool(config.API_TOKEN) and (
         same(header, f"Bearer {config.API_TOKEN}") or same(request.headers.get("x-api-key", ""), config.API_TOKEN))
     if path.startswith("/mcp"):
-        # The AI tools can read and change everything: never open without a token.
-        if token_ok:
+        # Open on a home network with neither a token nor a password set; once
+        # either is set, the AI tools need the token.
+        if token_ok or (not config.API_TOKEN and not config.APP_PASSWORD):
             return await call_next(request)
         msg = ("Set API_TOKEN in the stack (docker exec acquireos acquireos new-token makes one) and send it as a Bearer token"
                if not config.API_TOKEN else "Invalid or missing API token")
