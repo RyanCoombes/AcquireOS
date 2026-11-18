@@ -245,7 +245,8 @@ def save_shareholders(company_number: str, as_at: str, source_url: str, holders:
         c.execute("""insert into ch_fetch (company_number, fetched_at, shareholders_from) values (%s, now(), %s)
                      on conflict (company_number) do update set shareholders_from = excluded.shareholders_from""",
                   (num, f"Read by Claude, as at {as_at}"))
-        c.execute("select ao_refresh_company_signals()")
+        from . import gaps
+        gaps.refresh_shareholder_signals(c, [num])  # this company only, not the whole register
         flagged = c.execute("select 'investor_shareholder' = any(signals) as f from company_signal where company_number = %s",
                             (num,)).fetchone()
         from . import scoring

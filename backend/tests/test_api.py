@@ -2454,14 +2454,31 @@ def test_shareholder_sweep_goes_pipeline_targets_then_everyone_in_batches(loaded
     r = gaps.run_shareholder_batch(c)
     assert r["checked"] == 0
     assert gaps.sweep_state(c)["finished"] and not gaps.sweep_state(c)["active"]
-    # Stop on the job pauses the sweep.
+    # Pausing stops the batch at the next company; it is not a job, so nothing else waits on it.
     gaps.set_sweep(c, True)
     c.execute("delete from ch_fetch"); c.commit()
-    def stop(*a, **k):
-        raise jobs.Cancelled("Stopped by you")
-    monkeypatch.setattr(jobs.Job, "progress", stop)
-    gaps.run_shareholder_batch(c)
-    assert gaps.sweep_state(c)["active"] is False
+    order.clear()
+    def fetch_then_pause(conn, num, people=True):
+        fake_fetch(conn, num)
+        gaps.set_sweep(conn, False)
+    monkeypatch.setattr(chapi, "fetch", fetch_then_pause)
+    assert gaps.run_shareholder_batch(c) == {}
+    assert len(order) == 1 and gaps.sweep_state(c)["active"] is False
+    assert not c.execute("select 1 from job where kind = 'read-shareholders'").fetchone()
+
+
+def test_shareholder_signals_refreshed_for_one_company(loaded):
+    from acquireos import gaps
+    c = loaded
+    n = c.execute("select company_number from company order by 1 limit 1").fetchone()["company_number"]
+    c.execute("delete from shareholder where company_number = %s", (n,))
+    c.execute("insert into company_signal (company_number, signals) values (%s, '{office:Wales,many_shareholders}') "
+              "on conflict (company_number) do update set signals = excluded.signals", (n,))
+    c.execute("insert into shareholder (company_number, name, shares, share_class, as_at, source) "
+              "values (%s, 'BGF INVESTMENTS LP', 100, 'ORDINARY', current_date, 'test')", (n,))
+    gaps.refresh_shareholder_signals(c, [n])
+    sig = c.execute("select signals from company_signal where company_number = %s", (n,)).fetchone()["signals"]
+    assert "investor_shareholder" in sig and "office:Wales" in sig and "many_shareholders" not in sig
 
 
 def test_work_model_saved_shown_and_filtered(loaded):

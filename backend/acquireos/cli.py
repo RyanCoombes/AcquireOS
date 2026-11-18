@@ -52,6 +52,7 @@ def main(argv=None):
     p.add_argument("--sheet")
 
     sub.add_parser("rebuild", help="Recompute ownership, links and scores")
+    sub.add_parser("restore-saved-figures", help="After restoring a nightly backup: put back the accounts figures saved by you or Claude and read from PDFs")
     sub.add_parser("read-shareholders", help="Read shareholder lists for the pipeline and buy-box companies with 10+ staff (used by the web app)")
     sub.add_parser("look-up-holdcos", help="Look up holding companies whose owners aren't on record (used by the web app)")
     sub.add_parser("fill-accounts-gaps", help="Check companies whose newer accounts never arrived with Companies House (used by the web app)")
@@ -73,6 +74,12 @@ def main(argv=None):
         import secrets
 
         print(secrets.token_urlsafe(32))
+        return
+    if a.cmd == "restore-saved-figures":
+        from . import db as _db, fetch as _fetch
+
+        with _db.conn(dedicated=True) as c:
+            print(f"Restored {_fetch.restore_saved_figures(c):,} saved years of accounts")
         return
     if a.cmd == "read-shareholders":
         from . import db as _db, gaps as _gaps

@@ -465,4 +465,4 @@ export type ChExtras = { directors_total: number; directors_checked: number; dis
 export type AlertRules = { who: "tracked" | "watch" | "buy_box"; routine: boolean; kinds: string[] };
 
 export type SweepState = { active: boolean; finished?: boolean; checked?: number; found?: number; last_batch?: string;
-  left?: { pipeline: number; targets: number; all: number } };
+  left?: { pipeline: number; targets: number; all: number }; now?: string | null };

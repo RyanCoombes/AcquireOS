@@ -742,23 +742,23 @@ def company(num: str, bb: str | None = None):
                                "coverage": r["coverage"], "excluded": r["excluded"], "exclusion": r["exclusion"],
                                "reasons": r["reasons"], "value_low": r.get("value_low"), "value_high": r.get("value_high")})
         sc = next((x for x in scores if x["buy_box_id"] == bb["id"]), None)
-    return {
-        "deal": deal, "manual": manual, "buy_box": {"id": bb["id"], "name": bb["name"]}, "scores": scores,
-        "pdf_reads": c.execute("select made_up, status, method, note, read_at, tries from pdf_read where company_number = %s order by made_up desc",
-                               (num,)).fetchall(),
-        "pdf_waiting": __import__("acquireos.pdfaccounts", fromlist=["x"]).todo_for(c, num),
-        "watching": bool(c.execute("select 1 from watch where kind = 'company' and ref = %s", (num,)).fetchone()),
-        "watched_officers": [r["ref"] for r in c.execute("select ref from watch where kind = 'director'")],
-        "watched_owners": [r["ref"] for r in c.execute("select ref from watch where kind = 'owner'")],
-        "signals": signals, "sold": sold, "same_business": same_business,
-        "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
-        "trust": c.execute("select ao_data_trust(%s) as t", (num,)).fetchone()["t"],
-        "logo_v": logo_v,
-        "changes": changes, "valuation": val, "fin_summary": fintrends.summary(fin), "ch": ch_details, "deals": deals_list,
-        "company": row, "financials": fin, "estimate": est, "ownership": own, "people": people,
-        "links": links, "score": sc, "state": state or {"status": "new", "rating": None, "tags": []},
-        "notes": notes, "research": research, "outreach": outreach,
-    }
+        return {
+            "deal": deal, "manual": manual, "buy_box": {"id": bb["id"], "name": bb["name"]}, "scores": scores,
+            "pdf_reads": c.execute("select made_up, status, method, note, read_at, tries from pdf_read where company_number = %s order by made_up desc",
+                                   (num,)).fetchall(),
+            "pdf_waiting": __import__("acquireos.pdfaccounts", fromlist=["x"]).todo_for(c, num),
+            "watching": bool(c.execute("select 1 from watch where kind = 'company' and ref = %s", (num,)).fetchone()),
+            "watched_officers": [r["ref"] for r in c.execute("select ref from watch where kind = 'director'")],
+            "watched_owners": [r["ref"] for r in c.execute("select ref from watch where kind = 'owner'")],
+            "signals": signals, "sold": sold, "same_business": same_business,
+            "geo": geo, "sics": sics, "enrichment": enr, "issues": issues,
+            "trust": c.execute("select ao_data_trust(%s) as t", (num,)).fetchone()["t"],
+            "logo_v": logo_v,
+            "changes": changes, "valuation": val, "fin_summary": fintrends.summary(fin), "ch": ch_details, "deals": deals_list,
+            "company": row, "financials": fin, "estimate": est, "ownership": own, "people": people,
+            "links": links, "score": sc, "state": state or {"status": "new", "rating": None, "tags": []},
+            "notes": notes, "research": research, "outreach": outreach,
+        }
 
 
 def _deal(c, num, status):
@@ -1852,7 +1852,9 @@ def shareholders_sweep():
     from . import gaps
     with db.conn() as c:
         st = gaps.sweep_state(c)
-        return {**st, "left": gaps.shareholder_counts(c)}
+        # Counting every target is slow: that is done at the end of each batch and kept.
+        left = st.get("left") if isinstance(st.get("left"), dict) else gaps.shareholder_counts(c)
+        return {**st, "left": {**left, **gaps.shareholder_counts(c, quick=True)}}
 
 
 class SweepIn(BaseModel):

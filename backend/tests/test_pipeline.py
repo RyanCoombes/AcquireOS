@@ -566,3 +566,15 @@ def test_automatic_checks_raise_issues_once(c):
     assert any(p["key"] == "issues" and p["points"] == -20 for p in t["parts"])  # two checks tripped
     t4 = c.execute("select ao_data_trust('CK000004') as t").fetchone()["t"]
     assert t4["score"] > t["score"]
+
+
+def test_saved_figures_copied_for_the_nightly_backup_and_restored(c):
+    from acquireos import fetch
+    c.execute("insert into company (company_number, name) values ('SV000001', 'SAVED LTD')")
+    c.execute("insert into financial_period (company_number, period_end, turnover, source) values "
+              "('SV000001', '2025-03-31', 1234567, 'manual'), ('SV000001', '2024-03-31', 999, 'pdf:ocr'), ('SV000001', '2023-03-31', 5, 'bulk')")
+    assert fetch.copy_saved_figures(c) == 2
+    c.execute("delete from financial_period where company_number = 'SV000001'")
+    assert fetch.restore_saved_figures(c) == 2
+    r = c.execute("select turnover, source from financial_period where company_number = 'SV000001' and period_end = '2025-03-31'").fetchone()
+    assert r["turnover"] == 1234567 and r["source"] == "manual"

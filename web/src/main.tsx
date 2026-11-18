@@ -1,6 +1,6 @@
 import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import "./styles.css";
 import { api, type Meta } from "./api";
 import Home from "./pages/Home";
@@ -151,6 +151,12 @@ function TopBar() {
   );
 }
 
+// A fresh page per company: nothing typed or loaded for one carries over to the next.
+function CompanyRoute() {
+  const { num } = useParams();
+  return <Company key={num} />;
+}
+
 function App() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const loc = useLocation();
@@ -176,7 +182,7 @@ function App() {
             <Route path="/companies" element={<Targets key="directory" mode="directory" />} />
             <Route path="/targets" element={<Targets key="targets" mode="targets" />} />
             <Route path="/review" element={<Review />} />
-            <Route path="/c/:num" element={<Company />} />
+            <Route path="/c/:num" element={<CompanyRoute />} />
             <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/changes" element={<Changes />} />
             <Route path="/watch" element={<Watching />} />

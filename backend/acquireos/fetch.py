@@ -661,6 +661,28 @@ def _cleanup_step(c, label: str, fn):
         _cleanup_state(c, failed=(label, str(e)))
 
 
+SAVED_SQL = "(source in ('manual', 'pdf:claude') or source like 'manual%%' or source like 'pdf:%%')"
+
+
+def copy_saved_figures(conn) -> int:
+    """Refresh saved_figure (see migration 063) so the nightly backup carries these figures."""
+    conn.execute("delete from saved_figure")
+    n = conn.execute(f"""insert into saved_figure (company_number, period_end, data)
+                         select company_number, period_end, to_jsonb(fp) from financial_period fp where {SAVED_SQL}""").rowcount
+    conn.commit()
+    return n
+
+
+def restore_saved_figures(conn) -> int:
+    """After restoring a nightly backup onto freshly downloaded data: put the saved figures back."""
+    n = conn.execute("""insert into financial_period
+                        select (jsonb_populate_record(null::financial_period, s.data)).* from saved_figure s
+                        where exists (select 1 from company c where c.company_number = s.company_number)
+                        on conflict (company_number, period_end) do nothing""").rowcount
+    conn.commit()
+    return n
+
+
 def scheduler():
     """Run refresh() once a month. Day and hour come from REFRESH_DAY and
     REFRESH_HOUR (defaults: the 6th at 03:00, after Companies House has
@@ -717,8 +739,16 @@ def scheduler():
             chstream.run()
         threading.Thread(target=_stream, daemon=True, name="ch-stream-start").start()
     last = None
+    copied = None
     while True:
         now = datetime.now()
+        if now.hour == 1 and copied != now.date():  # before the 02:30 backup
+            copied = now.date()
+            try:
+                with db.conn(dedicated=True) as c:
+                    log(f"Saved figures copied for the nightly backup: {copy_saved_figures(c):,} years")
+            except Exception as e:
+                log(f"Copying saved figures failed: {e}")
         if now.day == day and now.hour == hour and last != (now.year, now.month):
             last = (now.year, now.month)
             log("Monthly refresh starting")

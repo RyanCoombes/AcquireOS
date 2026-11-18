@@ -998,7 +998,7 @@ function ShareholderLists() {
   const toggle = async (on: boolean) => {
     setMsg(null);
     try { await api.setShareholderSweep(on); t.reload();
-      setMsg(on ? "On. The first batch starts within a few minutes, when nothing else is running; progress shows in the bar at the top." : "Paused. The batch in progress (if any) finishes first.");
+      setMsg(on ? "On. It starts within a couple of minutes and runs quietly in the background; progress shows here." : "Paused. The batch in progress (if any) finishes first.");
     } catch (e: any) { setMsg(e.message); }
   };
   return (
@@ -1007,7 +1007,7 @@ function ShareholderLists() {
       <p className="small" style={{ marginTop: 0 }}>
         The owners register only shows holdings over 25%, so a minority investor (the Development Bank of Wales, BGF, UK Steel
         Enterprise…) can be missed. This reads the full list from each company's newest confirmation statement that has one
-        (re-filed ones too), in batches of 500 that start by themselves whenever nothing else is running, and flags known
+        (re-filed ones too), quietly in the background alongside everything else, and flags known
         investors. Scanned statements are read with OCR for your pipeline and targets.
       </p>
       {d && left && (
@@ -1030,6 +1030,7 @@ function ShareholderLists() {
           </span>
         </div>
       )}
+      {d?.active && d.now && <div className="small" style={{ marginTop: 8 }}><span className="cu running">Reading</span> {d.now}</div>}
       {msg && <div className="faint small" style={{ marginTop: 8 }}>{msg}</div>}
     </section>
   );

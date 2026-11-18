@@ -2,7 +2,7 @@ import flagWales from "../assets/flags/gb-wls.svg";
 import flagEngland from "../assets/flags/gb-eng.svg";
 import flagScotland from "../assets/flags/gb-sct.svg";
 import flagNI from "../assets/flags/gb-stpatrick.svg";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Status } from "../api";
 import { FLAGS, toNum } from "../format";
 
@@ -60,22 +60,29 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
+  const has = useRef(false);        // data on screen for the current deps
+  const key = JSON.stringify(deps);
+  const lastKey = useRef(key);
   useEffect(() => {
     let live = true;
+    if (lastKey.current !== key) {  // a different question: a failure now is shown, not hidden behind the old answer
+      lastKey.current = key; has.current = false;
+    }
     setLoading(true);
     fn()
-      .then((d) => { if (live) { setData(d); setError(null); } })
-      .catch((e) => { if (live) setError(String(e.message ?? e)); })
+      .then((d) => { if (live) { has.current = true; setData(d); setError(null); } })
+      // A failed background refresh keeps what is on screen; only a first load shows the error.
+      .catch((e) => { if (live && !has.current) setError(String(e.message ?? e)); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, tick]);
+  }, [key, tick]);
   return { data, error, loading, reload: () => setTick((t) => t + 1), setData };
 }
 
 export function ErrorLine({ error }: { error: string | null }) {
   if (!error) return null;
-  return <div className="callout red">{error}</div>;
+  return <div className="callout red">{error} <button className="linkish" onClick={() => window.location.reload()}>Try again</button></div>;
 }
 
 /** Where a revenue figure comes from, as a pill: "Filed · Mar 2025" (from the

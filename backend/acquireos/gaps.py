@@ -202,13 +202,45 @@ def shareholders_to_read(conn, tier: str | None = None, n: int = 100000) -> list
     return out
 
 
-def shareholder_counts(conn) -> dict:
-    """What's left in each stage (the last, every company, roughly: it's large)."""
+def shareholder_counts(conn, quick: bool = False) -> dict:
+    """What's left in each stage. quick: the pipeline only (cheap enough for a status poll);
+    the rest is counted at the end of each batch and kept with the sweep's state."""
     p = len(shareholders_to_read(conn, "pipeline"))
+    if quick:
+        return {"pipeline": p}
     t = len(shareholders_to_read(conn, "targets"))
-    approx = conn.execute("""select greatest(0, (select count(*) from company_latest where employees is not null)
-                                   - (select count(distinct company_number) from shareholder)) as n""").fetchone()["n"]
+    # Every other company, roughly: table estimates, not a count of millions of rows.
+    approx = conn.execute("""select greatest(0, (select greatest(reltuples, 0)::bigint from pg_class where relname = 'company_latest')
+                                   - (select count(*) from ch_fetch where shareholders_from is not null)) as n""").fetchone()["n"]
     return {"pipeline": p, "targets": t, "all": approx}
+
+
+def refresh_shareholder_signals(conn, nums: list[str]):
+    """The signals that come from shareholder lists (10 or more holders, a known investor,
+    a regional funder), for these companies only. The monthly refresh rebuilds everything."""
+    if not nums:
+        return
+    conn.execute(
+        """
+        with calc as (
+            select n as company_number,
+                   (select count(*) from shareholder s where s.company_number = n) >= 10 as many,
+                   exists (select 1 from shareholder s where s.company_number = n and s.name ~* ao_investor_name_re()
+                           and s.as_at = (select max(as_at) from shareholder s2 where s2.company_number = n)) as inv,
+                   array(select distinct 'funding:' || f.nation from shareholder sh, ao_regional_funders() f
+                         where sh.company_number = n and sh.name ~* f.pattern) as fund
+            from unnest(%s::text[]) n
+        ), want as (
+            select company_number, array_remove(array[case when many then 'many_shareholders' end,
+                                                      case when inv then 'investor_shareholder' end], null) || fund as add
+            from calc where exists (select 1 from company c where c.company_number = calc.company_number)
+        )
+        insert into company_signal (company_number, signals)
+        select company_number, add from want
+        on conflict (company_number) do update set updated_at = now(), signals = array(
+            select distinct x from unnest(array_remove(array_remove(company_signal.signals, 'many_shareholders'),
+                                                       'investor_shareholder') || excluded.signals) x order by x)
+        """, (list(nums),))
 
 
 def _read_one(conn, r: dict, ocr: bool) -> bool:
@@ -235,36 +267,53 @@ def _read_one(conn, r: dict, ocr: bool) -> bool:
 
 def read_shareholder_batch(conn, job=None, batch: int = 500) -> dict:
     """One batch: up to `batch` companies, pipeline first, then targets, then every
-    other active company. Shows progress on the job (stage per group); stops
-    cleanly when you press Stop. Returns what's left, so the next batch can follow."""
-    from . import chapi
+    other active company. `job` (anything with stage() and progress()) is told where
+    it has got to and may stop it. Returns what's left, so the next batch can follow."""
+    from . import chapi, scoring
+    from .fetch import log
 
     if not chapi.enabled():
         raise chapi.NoKey("Add your Companies House API key (CH_API_KEY in the stack) to read shareholder lists")
-    done = found = 0
-    for key, label, sql, ocr in SH_TIERS:
-        if done >= batch:
-            break
-        todo = conn.execute(sql, {"n": batch - done}).fetchall()
-        if not todo:
-            continue
-        if job:
-            job.stage(label)
-        for i, r in enumerate(todo):
+    done = 0
+    found: list[str] = []
+    try:
+        for key, label, sql, ocr in SH_TIERS:
+            if done >= batch:
+                break
+            todo = conn.execute(sql, {"n": batch - done}).fetchall()
+            if not todo:
+                continue
             if job:
-                job.progress(i / len(todo), f"{label}: {i + 1:,} of {len(todo):,} in this batch ({r['name']})")
-            try:
-                found += _read_one(conn, r, ocr)
-                conn.commit()
-            except chapi.NoKey:
-                raise
-            except Exception:
-                conn.rollback()
-            done += 1
-    if found:
-        conn.execute("select ao_refresh_company_signals()")
-        conn.commit()
-    return {"checked": done, "lists_found": found, "left": shareholder_counts(conn)}
+                job.stage(label)
+            for i, r in enumerate(todo):
+                if job:
+                    job.progress(i / len(todo), f"{label}: {i + 1:,} of {len(todo):,} in this batch ({r['name']})")
+                try:
+                    if _read_one(conn, r, ocr):
+                        found.append(r["company_number"])
+                    conn.commit()
+                except chapi.NoKey:
+                    raise
+                except Exception as e:
+                    conn.rollback()
+                    log(f"Shareholder list for {r['company_number']} not read: {str(e).splitlines()[0][:200]}")
+                    # Looked at again in a week, not at the head of every batch.
+                    conn.execute("""insert into ch_fetch (company_number, fetched_at, shareholders_from)
+                                    values (%s, now() - interval '173 days', 'none found')
+                                    on conflict (company_number) do update set shareholders_from = 'none found',
+                                      fetched_at = now() - interval '173 days'
+                                    where ch_fetch.shareholders_from is null or ch_fetch.shareholders_from = 'none found'""",
+                                 (r["company_number"],))
+                    conn.commit()
+                done += 1
+    finally:
+        if found:  # only the companies read, not the whole register
+            refresh_shareholder_signals(conn, found)
+            conn.commit()
+            scored = [r["company_number"] for r in conn.execute(
+                "select company_number from company_best where company_number = any(%s)", (found,))]
+            scoring.rescore_each(conn, scored)
+    return {"checked": done, "lists_found": len(found), "left": shareholder_counts(conn)}
 
 
 def read_all_shareholders(conn, progress=None, limit: int = 300) -> dict:
@@ -294,52 +343,73 @@ def set_sweep(conn, active: bool) -> dict:
     return st
 
 
+class _SweepProgress:
+    """Where the sweep has got to, kept with its state (shown on the Data page). Pausing
+    the sweep stops the batch at the next company."""
+
+    def __init__(self, conn):
+        self.conn, self.label, self.n = conn, "", 0
+
+    def stage(self, label: str):
+        self.label = label
+
+    def progress(self, frac=None, detail=None):
+        from . import chsync, jobs
+        st = sweep_state(self.conn)
+        if not st.get("active"):
+            raise jobs.Cancelled("Paused")
+        self.n += 1
+        if self.n % 5 == 1 and detail:
+            chsync.set_setting(self.conn, SWEEP_KEY, {**st, "now": detail})
+            self.conn.commit()
+
+
 def run_shareholder_batch(conn) -> dict:
-    """One batch as a job (progress in the bar at the top); stopping it pauses the sweep."""
+    """One batch, quietly in the background: it is not a job, so the Companies House
+    sync, the PDF reader, clean-ups and jobs you start all carry on alongside it."""
     from datetime import datetime
 
     from . import chsync, jobs
+    from .fetch import log
 
-    job = jobs.Job("read-shareholders", ["Pipeline", "Targets", "Every other active company"])
     try:
-        r = read_shareholder_batch(conn, job=job)
-        left = r["left"]
-        job.log(f"Checked {r['checked']:,}; {r['lists_found']:,} shareholder lists found. Left: pipeline {left['pipeline']:,}, "
-                f"targets {left['targets']:,}, other companies about {left['all']:,}")
+        r = read_shareholder_batch(conn, job=_SweepProgress(conn))
+    except jobs.Cancelled:
+        conn.rollback()
         st = sweep_state(conn)
-        total = {"checked": int(st.get("checked") or 0) + r["checked"], "found": int(st.get("found") or 0) + r["lists_found"]}
-        finished = r["checked"] == 0
-        chsync.set_setting(conn, SWEEP_KEY, {**st, **total, "left": left, "last_batch": datetime.now().isoformat(timespec="minutes"),
-                                             "active": st.get("active", False) and not finished, "finished": finished})
+        chsync.set_setting(conn, SWEEP_KEY, {**st, "now": None})
         conn.commit()
-        job.finish(r)
-        return r
-    except jobs.Cancelled as e:
-        conn.rollback()
-        set_sweep(conn, False)  # Stop pauses the whole sweep, not just this batch
-        job.finish(None, status="cancelled", error=str(e))
         return {}
-    except Exception as e:
-        conn.rollback()
-        job.finish({}, status="failed", error=str(e))
-        raise
+    st = sweep_state(conn)
+    finished = r["checked"] == 0
+    chsync.set_setting(conn, SWEEP_KEY, {
+        **st, "checked": int(st.get("checked") or 0) + r["checked"], "found": int(st.get("found") or 0) + r["lists_found"],
+        "left": r["left"], "last_batch": datetime.now().isoformat(timespec="minutes"), "now": None,
+        "active": bool(st.get("active")) and not finished, "finished": finished})
+    conn.commit()
+    if r["checked"]:
+        log(f"Shareholder lists: checked {r['checked']:,}, found {r['lists_found']:,}")
+    return r
 
 
 def sweep_forever():
-    """While the sweep is on: start the next batch whenever no job is running and no
-    data load is busy. Each batch is its own job, so nothing waits on it for long."""
+    """While the sweep is on: batch after batch, with a short pause, stepping aside for
+    bulk loads and scoring."""
     import time
 
-    from . import chsync, db, jobs
+    from . import chapi, chsync, db
+    from .fetch import log
     time.sleep(90)
     while True:
+        wait = 120
         try:
             with db.conn(dedicated=True) as c:
                 if sweep_state(c).get("active") and not chsync.busy(c):
-                    cur = jobs.current(c)
-                    if not (cur and cur["status"] == "running"):
-                        run_shareholder_batch(c)
-                        continue  # straight on to the next batch
-        except Exception:
-            pass
-        time.sleep(120)
+                    r = run_shareholder_batch(c)
+                    wait = 10 if r.get("checked") else 120
+        except chapi.NoKey:
+            wait = 3600
+        except Exception as e:
+            log(f"Shareholder sweep: {str(e).splitlines()[0][:200]}")
+            wait = 300
+        time.sleep(wait)
