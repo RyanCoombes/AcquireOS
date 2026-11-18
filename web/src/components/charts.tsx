@@ -84,7 +84,6 @@ export function AreaChart({
 }
 
 // Kept for compatibility with older imports.
-export const SmallLine = AreaChart;
 
 export function Spark({ values, w = 64, h = 20 }: { values: (number | null)[] | null | undefined; w?: number; h?: number }) {
   const v = (values ?? []).filter((x): x is number => x !== null);

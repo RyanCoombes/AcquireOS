@@ -1680,3 +1680,13 @@ td.c-name .cn-body { min-width: 0; flex: 1; }
 .card .quietline { margin-top: 6px; font-size: 11.5px; font-weight: 600; color: #9a6517; }
 .card.drop-before { box-shadow: 0 -3px 0 0 var(--teal, #0e7c66); }
 .card.drop-after { box-shadow: 0 3px 0 0 var(--teal, #0e7c66); }
+
+/* Larger touch targets and a data-trust panel that stays on screen, on phones */
+@media (max-width: 640px) {
+  .trustpop { position: fixed; left: 12px; right: 12px; top: auto; bottom: 88px; width: auto; max-width: none; }
+  .cardcfg .mv { min-width: 40px; min-height: 40px; font-size: 15px; }
+  .cardcfg select { min-height: 40px; }
+  .card .card-web { width: 36px; height: 36px; display: grid; place-items: center; }
+  .todo-snz .btn, .movesel { min-height: 40px; }
+}
+th.sortable:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }

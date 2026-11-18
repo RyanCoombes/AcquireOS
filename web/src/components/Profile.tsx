@@ -4,16 +4,10 @@ import type React from "react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type CompanyDetail } from "../api";
-import { Hint, WatchButton } from "./bits";
+import { WatchButton } from "./bits";
 import { date, money, filingLabel } from "../format";
 
 type FinSummary = NonNullable<CompanyDetail["fin_summary"]>;
-
-const fmtValue = (key: string, v: number) =>
-  key === "employees" ? Math.round(v).toLocaleString("en-GB") : key === "debt_ratio" ? `${Math.round(v)}%` : money(v);
-
-const fmtChange = (key: string, v: number) =>
-  key === "employees" ? Math.abs(Math.round(v)).toLocaleString("en-GB") : key === "debt_ratio" ? `${Math.abs(Math.round(v))} pts` : money(Math.abs(v));
 
 /** Assets, net assets and liabilities over the years, like a balance-sheet strip. */
 export function BalanceChart({ series }: { series: FinSummary["series"] }) {
@@ -82,39 +76,6 @@ export function BalanceChart({ series }: { series: FinSummary["series"] }) {
         {!hasTA && <span className="faint">Totals not stated in these accounts</span>}
       </figcaption>
     </figure>
-  );
-}
-
-export function FinancialOverview({ s }: { s: FinSummary }) {
-  if (!s.period_end || !s.rows.length) return null;
-  return (
-    <>
-      <BalanceChart series={s.series} />
-      <table className="fintrend">
-        <tbody>
-          <tr>
-            <td>Period ended</td><td><b>{date(s.period_end)}</b></td>
-            <td className="muted">{s.previous_end ? <>Compared with {date(s.previous_end)}{s.months ? ` (${s.months} months earlier)` : ""}</> : "First year on file"}</td>
-          </tr>
-          {s.rows.map((r) => (
-            <tr key={r.key}>
-              <td>{r.label}</td>
-              <td>
-                <b className={r.estimated ? "estval" : ""} title={r.estimated ? "Estimate: staff × the company's own revenue per head from its last accounts with turnover" : undefined}>
-                  {r.estimated ? "≈" : ""}{fmtValue(r.key, r.value)}{r.estimated ? " est." : ""}</b>
-                {r.change != null && r.change !== 0 && (
-                  <div className={`chg ${r.good === true ? "pos" : r.good === false ? "neg" : ""}`}>
-                    {r.change > 0 ? "▲" : "▼"} {fmtChange(r.key, r.change)}{r.change_pct != null ? ` (${r.change_pct > 0 ? "+" : ""}${r.change_pct}%)` : ""}
-                  </div>
-                )}
-              </td>
-              <td>{r.trend}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="faint small">From the filed accounts.{s.rows.some((r) => r.estimated) ? <> ≈ is an estimate<Hint text="Staff × the company's own revenue per head. Dashed on the charts." /></> : null}</p>
-    </>
   );
 }
 

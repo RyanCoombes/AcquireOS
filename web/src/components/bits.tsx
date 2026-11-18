@@ -286,14 +286,22 @@ export type Trust = { score: number; parts: { key: string; label: string; points
 /** How far the company's data can be relied on, with what adds to it and what's missing. */
 export function TrustBadge({ t }: { t?: Trust | null }) {
   const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } };
+    const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    window.addEventListener("keydown", esc, true); window.addEventListener("mousedown", away);
+    return () => { window.removeEventListener("keydown", esc, true); window.removeEventListener("mousedown", away); };
+  }, [open]);
   if (!t) return null;
   const level = t.score >= 75 ? ["Solid", "good"] : t.score >= 50 ? ["Fair", "fair"] : ["Thin", "thin"];
   return (
-    <span className="trustwrap">
+    <span className="trustwrap" ref={box}>
       <button className={`trust ${level[1]}`} onClick={() => setOpen(!open)} aria-expanded={open}
               title="How far this company's data can be relied on">Data: {level[0]} <b>{t.score}</b></button>
       {open && (
-        <span className="trustpop" role="dialog" aria-label="What the data rests on">
+        <span className="trustpop" role="group" aria-label="What the data rests on">
           {t.parts.map((p) => (
             <span key={p.key} className={`tp ${p.key === "issues" ? (p.points < 0 ? "neg" : "ok") : p.points >= p.max ? "ok" : p.points > 0 ? "part" : "miss"}`}>
               <i aria-hidden>{p.key === "issues" ? (p.points < 0 ? "!" : "✓") : p.points >= p.max ? "✓" : p.points > 0 ? "~" : "✗"}</i>

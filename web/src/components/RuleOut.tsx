@@ -21,9 +21,6 @@ export function nextInList(num: string): string | null {
     return i >= 0 && i + 1 < l.numbers.length ? l.numbers[i + 1] : null;
   } catch { return null; }
 }
-export function listFrom(): string | null {
-  try { return (JSON.parse(sessionStorage.getItem("ao.list") ?? "null") as { from: string } | null)?.from ?? null; } catch { return null; }
-}
 
 /** One click: each reason is a button. */
 export function RuleOutChips({ onPick, compact, only }: { onPick: (p: RuleOutPick) => void; compact?: boolean; only?: "rejected" | "passed" }) {

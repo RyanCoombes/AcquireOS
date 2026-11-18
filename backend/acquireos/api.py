@@ -451,11 +451,12 @@ def companies(
         page_sql = f"""select c.company_number {filt} order by {order_sql} limit %(limit)s offset %(offset)s"""
         side = SIDE_SORTS.get((sort, direction))
         if side and where == ["true"] and not in_box:
-            table, scol = side
+            table, scol, tie = (*side, "")[:3]
+            tie = direction if tie else ""
             n_side = cached(f"count:{table}.{scol}", 3600, lambda: _count_table(table, scol))
             with_sql = f"""select x.company_number, 0 as grp, row_number() over () as rn from (
                                select x.company_number from {table} x where x.{scol} is not null
-                               order by x.{scol} {direction}, x.company_number limit %(limit)s offset %(offset)s) x"""
+                               order by x.{scol} {direction}, x.company_number {tie} limit %(limit)s offset %(offset)s) x"""
             params["limit2"] = max(0, min(params["limit"], offset + params["limit"] - n_side))
             params["offset2"] = max(0, offset - n_side)
             without_sql = f"""select c.company_number, 1 as grp, row_number() over () as rn from (
@@ -548,6 +549,10 @@ SIDE_SORTS = {
     ("profit", "desc"): ("company_latest", "operating_profit"),
     ("cash", "desc"): ("company_latest", "cash"),
     ("debt", "desc"): ("company_latest", "bank_debt"),
+    # Either direction through one index (migration 066): the third item says ties follow the direction.
+    **{(k, d): (t, col, True) for k, t, col in (
+        ("work", "enrichment", "work_model"), ("website", "enrichment", "website"), ("industry", "company", "sic_codes[1]"),
+        ("years", "company", "incorporation_date"), ("ownership", "company_ownership", "ownership_type")) for d in ("asc", "desc")},
 }
 
 

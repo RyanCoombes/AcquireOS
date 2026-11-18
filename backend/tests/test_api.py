@@ -2564,3 +2564,19 @@ def test_password_guessing_is_slowed_and_changes_need_the_app_header(loaded, mon
         assert cl.get("/api/meta", headers=bad).status_code == 429
         assert cl.post("/mcp", json={}).status_code == 401   # never open without a token
     api_mod._AUTH_FAILS.clear()
+
+
+def test_every_column_sorts_both_ways_through_an_index_path(loaded):
+    from acquireos.api import app
+
+    loaded.commit()
+    with TestClient(app) as cl:
+        cl.post("/api/companies/01000001/enrichment", json={"source_url": "manual", "work_model": "remote", "website": "example.com"})
+        for sort in ("work", "website", "industry", "years", "ownership"):
+            for d in ("asc", "desc"):
+                r = cl.get("/api/companies", params={"sort": sort, "dir": d, "limit": 500})
+                assert r.status_code == 200, (sort, d, r.text)
+                rows = r.json()["rows"]
+                assert len({x["company_number"] for x in rows}) == len(rows) >= 4   # every company once, none lost
+        first = cl.get("/api/companies", params={"sort": "work", "dir": "asc"}).json()["rows"][0]
+        assert first["company_number"] == "01000001"   # the one with a figure comes first

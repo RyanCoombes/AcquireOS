@@ -339,8 +339,6 @@ export const api = {
   findLogos: () => req<{ started: boolean }>("/api/logos/find", { method: "POST" }),
   websiteCheck: (scope: string, limit: number) =>
     req<{ started: boolean }>(`/api/website-check?scope=${scope}&limit=${limit}`, { method: "POST" }),
-  chDetailsBatch: (scope: string, limit: number) =>
-    req<{ started: boolean }>(`/api/ch-details?scope=${scope}&limit=${limit}`, { method: "POST" }),
   researchBrief: (n: string) => req<Record<string, any>>(`/api/companies/${encodeURIComponent(n)}/research-brief`),
   compare: (n: string) => req<{ peers: number; group: string | null; metrics: { key: string; label: string; fmt: "money" | "pct"; value: number | null; pct: number | null; median: number | null; n: number }[] }>(
     `/api/companies/${encodeURIComponent(n)}/compare`),
@@ -380,12 +378,10 @@ export const api = {
     req(`/api/companies/${encodeURIComponent(n)}/enrichment`, { method: "POST", body: JSON.stringify(body) }),
   startRefresh: (months = 1, reread = false) =>
     req<Record<string, any>>(`/api/refresh?months=${months}${reread ? "&reread=true" : ""}`, { method: "POST" }),
-  refreshStatus: () => req<Record<string, any>>("/api/refresh"),
   jobCurrent: () => req<Job>("/api/jobs/current"),
   buyboxes: () => req<BuyBoxRow[]>("/api/buyboxes"),
   buyboxTemplates: () => req<{ key: string; label: string; description: string }[]>("/api/buybox-templates"),
   createBuybox: (body: Record<string, unknown>) => req<BuyBoxRow & { background: boolean }>("/api/buyboxes", { method: "POST", body: JSON.stringify(body) }),
-  activateBuybox: (id: number) => req<{ ok: boolean; scoring: boolean }>(`/api/buyboxes/${id}/activate`, { method: "POST" }),
   renameBuybox: (id: number, body: Record<string, unknown>) => req(`/api/buyboxes/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteBuybox: (id: number) => req(`/api/buyboxes/${id}`, { method: "DELETE" }),
   bulkState: (body: Record<string, unknown>) =>

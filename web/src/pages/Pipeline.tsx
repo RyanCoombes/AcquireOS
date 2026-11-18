@@ -9,7 +9,13 @@ type PFilter = { q: string; box: string; region: string; min_staff: string; max_
   min_age: string; ownership: string; work: string; min_score: string; show: string; sort: string; group: string };
 const NO_FILTER: PFilter = { q: "", box: "", region: "", min_staff: "", max_staff: "", min_rev: "", min_age: "",
   ownership: "", work: "", min_score: "", show: "", sort: "", group: "" };
-const FKEY = "pipeline-filters";
+const FKEY = "ao.pipeline.filters";
+try {  // carried over once from the first names used
+  for (const [was, now] of [["pipeline-filters", "ao.pipeline.filters"], ["pipeline-card", "ao.pipeline.card"]]) {
+    const v = localStorage.getItem(was);
+    if (v !== null) { if (localStorage.getItem(now) === null) localStorage.setItem(now, v); localStorage.removeItem(was); }
+  }
+} catch { /* private window */ }
 const loadF = (): PFilter => { try { return { ...NO_FILTER, ...JSON.parse(localStorage.getItem(FKEY) || "{}") }; } catch { return NO_FILTER; } };
 
 // What each card shows, and where: beside the name (small badges), the main row, the lower lines, or hidden.
@@ -23,7 +29,7 @@ const CARD_DEFAULT: [string, Place][] = [
   ["nation", "top"], ["work", "top"], ["score", "main"], ["value", "main"], ["revenue", "off"], ["staff", "off"],
   ["owner", "off"], ["ownership", "off"], ["rating", "lower"], ["trust", "off"], ["checklist", "lower"], ["days", "lower"], ["next", "lower"],
 ];
-const CKEY = "pipeline-card";
+const CKEY = "ao.pipeline.card";
 const loadCard = (): [string, Place][] => {
   try {
     const v = JSON.parse(localStorage.getItem(CKEY) || "null");
@@ -260,7 +266,7 @@ export default function Pipeline() {
             {card.map(([k, place], i) => (
               <tr key={k}>
                 <td>{CARD_FIELDS.find((x) => x[0] === k)?.[1]}</td>
-                <td><select value={place} aria-label={`Where to show ${k}`}
+                <td><select value={place} aria-label={`Where to show ${(CARD_FIELDS.find((x) => x[0] === k)?.[1] ?? k).toLowerCase()}`}
                             onChange={(e) => setCard(card.map((x) => x[0] === k ? [k, e.target.value as Place] : x))}>
                   <option value="top">Beside the name</option><option value="main">Main row</option>
                   <option value="lower">Lower lines</option><option value="off">Hidden</option></select></td>
@@ -404,7 +410,7 @@ export default function Pipeline() {
               {closed.map((r) => (
                 <tr key={r.company_number} style={{ cursor: "pointer" }} onClick={() => nav(`/c/${r.company_number}`)}>
                   <td style={{ width: 120 }}><Score value={r.score} /></td>
-                  <td><div className="name">{r.name}</div></td>
+                  <td><Link className="name rowlink" to={`/c/${r.company_number}`} onClick={(e) => e.stopPropagation()}>{r.name}</Link></td>
                   <td><StatusMark s={r.status} /></td>
                   <td className="faint small num">{r.stage_entered_at ? date(r.stage_entered_at) : ""}</td>
                 </tr>

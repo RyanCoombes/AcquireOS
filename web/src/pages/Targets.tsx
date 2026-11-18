@@ -492,7 +492,9 @@ export default function Targets({ mode = "targets" }: { mode?: Mode }) {
                   onChange={(e) => setSel((x) => { const y = new Set(x); rows.forEach((r) => e.target.checked ? y.add(r.company_number) : y.delete(r.company_number)); return y; })} /></th>
                 {cols.map((c) => (
                   <th key={c.key} className={`${c.nosort ? "" : "sortable"} ${c.num ? "num" : ""} ${c.sm ? "hide-sm" : ""}`}
-                      onClick={() => !c.nosort && toggleSort(c.key)} aria-sort={sort === c.key ? (dir === "asc" ? "ascending" : "descending") : undefined}>
+                      tabIndex={c.nosort ? undefined : 0} onClick={() => !c.nosort && toggleSort(c.key)}
+                      onKeyDown={(e) => { if (!c.nosort && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); e.stopPropagation(); toggleSort(c.key); } }}
+                      aria-sort={sort === c.key ? (dir === "asc" ? "ascending" : "descending") : undefined}>
                     {c.label}
                     {sort === c.key && <span className="arrow">{dir === "asc" ? "↑" : "↓"}</span>}
                   </th>
