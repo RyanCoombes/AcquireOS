@@ -115,7 +115,8 @@ def _fetch(url: str, limit: int = 600_000) -> tuple[str, str] | None:
     """(final url, text) or None."""
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "text/html"})
     try:
-        with urllib.request.urlopen(req, timeout=6) as r:
+        from . import netsafe
+        with netsafe.urlopen(req, timeout=6) as r:
             if "html" not in (r.headers.get("Content-Type") or "html"):
                 return None
             return r.geturl(), r.read(limit).decode("utf-8", errors="replace")

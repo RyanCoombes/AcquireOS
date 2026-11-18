@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 import json
 import re
 import shutil
+import time
 import uuid
 from datetime import date
 from pathlib import Path
@@ -54,25 +55,57 @@ async def basic_auth(request: Request, call_next):
     token (API_TOKEN, for Claude over MCP and for scripts)."""
     path = request.url.path
     header = request.headers.get("authorization", "")
+    same = lambda a, b: secrets.compare_digest(a.encode(), b.encode())  # noqa: E731  (bytes: any characters)
     token_ok = bool(config.API_TOKEN) and (
-        secrets.compare_digest(header, f"Bearer {config.API_TOKEN}")
-        or secrets.compare_digest(request.headers.get("x-api-key", ""), config.API_TOKEN)
-    )
+        same(header, f"Bearer {config.API_TOKEN}") or same(request.headers.get("x-api-key", ""), config.API_TOKEN))
     if path.startswith("/mcp"):
-        if token_ok or (not config.API_TOKEN and not config.APP_PASSWORD):
+        # The AI tools can read and change everything: never open without a token.
+        if token_ok:
             return await call_next(request)
-        msg = "Set API_TOKEN on the server and send it as a Bearer token" if not config.API_TOKEN else "Invalid or missing API token"
+        msg = ("Set API_TOKEN in the stack (docker exec acquireos acquireos new-token makes one) and send it as a Bearer token"
+               if not config.API_TOKEN else "Invalid or missing API token")
         return JSONResponse({"error": msg}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
     if token_ok or not config.APP_PASSWORD or path == "/api/health":
-        return await call_next(request)
+        return _secure(await call_next(request))
+    who = request.client.host if request.client else "?"
+    now = time.time()
+    fails = [t for t in _AUTH_FAILS.get(who, []) if t > now - 300]
+    if len(fails) >= 10:  # ten wrong passwords in five minutes: wait
+        return Response("Too many attempts. Try again in a few minutes.", status_code=429)
     if header.startswith("Basic "):
         try:
             user, _, pw = base64.b64decode(header[6:]).decode().partition(":")
         except Exception:
             user, pw = "", ""
-        if secrets.compare_digest(user, config.APP_USER) and secrets.compare_digest(pw, config.APP_PASSWORD):
-            return await call_next(request)
+        if same(user, config.APP_USER) and same(pw, config.APP_PASSWORD):
+            _AUTH_FAILS.pop(who, None)
+            # A browser sends your password with requests other sites make it send too. Changes must
+            # carry a header only this app's own pages can add.
+            if request.method not in ("GET", "HEAD", "OPTIONS") and not request.headers.get("x-requested-with"):
+                return JSONResponse({"detail": "Reload the page and try again"}, status_code=403)
+            return _secure(await call_next(request))
+        _AUTH_FAILS[who] = fails + [now]
+        if len(_AUTH_FAILS) > 5000:
+            _AUTH_FAILS.clear()
     return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="AcquireOS"'})
+
+
+_AUTH_FAILS: dict[str, list[float]] = {}
+
+
+def _secure(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    return resp
+
+
+UPLOAD_MAX = 200 << 20
+
+
+def _cell(v):
+    """Text that a spreadsheet would run as a formula is exported as text."""
+    return "'" + v if isinstance(v, str) and v[:1] in ("=", "+", "-", "@") else v
 
 
 _CACHE: dict = {}
@@ -2781,8 +2814,20 @@ async def import_preview(kind: str = Form(...), file: UploadFile = File(...), sh
         raise HTTPException(400, "Upload a CSV, zipped CSV or Excel (.xlsx) file")
     token = uuid.uuid4().hex
     dest = config.UPLOAD_DIR / f"{token}{suffix}"
+    for old in config.UPLOAD_DIR.glob("*"):  # previews never committed: gone after a day
+        try:
+            if old.is_file() and old.stat().st_mtime < time.time() - 86400:
+                old.unlink()
+        except OSError:
+            pass
+    size = 0
     with dest.open("wb") as out:
-        shutil.copyfileobj(file.file, out)
+        while chunk := file.file.read(1 << 20):
+            size += len(chunk)
+            if size > UPLOAD_MAX:
+                out.close(); dest.unlink(missing_ok=True)
+                raise HTTPException(413, f"That file is over {UPLOAD_MAX >> 20} MB. Larger Companies House files load from the data folder.")
+            out.write(chunk)
     from .importers.tables import list_sheets
 
     try:
@@ -2807,7 +2852,7 @@ class CommitIn(BaseModel):
 
 @app.post("/api/import/commit")
 def import_commit(body: CommitIn):
-    if body.kind not in IMPORTERS or not body.token.isalnum():
+    if body.kind not in IMPORTERS or not body.token.isalnum() or body.suffix not in {".csv", ".xlsx", ".xlsm", ".txt", ".zip"}:
         raise HTTPException(400, "Bad request")
     path = config.UPLOAD_DIR / f"{body.token}{body.suffix}"
     if not path.exists():
@@ -2976,9 +3021,9 @@ def export_csv(request: Request):
             buf = io.StringIO()
             w = csv.writer(buf)
             for r in chunk[: EXPORT_CAP - sent]:
-                w.writerow([(", ".join(map(str, r.get(k) or [])) if isinstance(r.get(k), list) else r.get(k))
+                w.writerow([_cell(", ".join(map(str, r.get(k) or [])) if isinstance(r.get(k), list) else r.get(k))
                             for _, k in _EXPORT_COLS]
-                           + [notes.get(r["company_number"]),
+                           + [_cell(notes.get(r["company_number"])),
                               f"https://find-and-update.company-information.service.gov.uk/company/{r['company_number']}"])
             sent += len(chunk)
             yield buf.getvalue()

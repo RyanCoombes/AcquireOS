@@ -360,6 +360,9 @@ def readonly_query(conn, sql: str, max_rows: int = 500) -> dict:
     try:
         ro.execute("set transaction read only")
         ro.execute("set local statement_timeout = '15s'")
+        # As a role that may only read the tables (migration 064), where it exists.
+        if ro.execute("select 1 from pg_roles where rolname = 'acquireos_ro'").fetchone():
+            ro.execute("set local role acquireos_ro")
         try:
             rows = ro.execute(q).fetchmany(max_rows + 1)
         except Exception as e:
@@ -367,4 +370,7 @@ def readonly_query(conn, sql: str, max_rows: int = 500) -> dict:
     finally:
         ro.rollback()
         ro.close()
-    return {"rows": json.loads(json.dumps(rows[:max_rows], default=str)), "truncated": len(rows) > max_rows}
+    out = json.dumps(rows[:max_rows], default=str)
+    if len(out) > 2_000_000:
+        raise EnrichError("The result is too large: select fewer columns or rows")
+    return {"rows": json.loads(out), "truncated": len(rows) > max_rows}

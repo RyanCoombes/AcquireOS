@@ -246,7 +246,8 @@ export interface Outreach {
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
-    headers: init?.body && !(init.body instanceof FormData) ? { "Content-Type": "application/json" } : undefined,
+    // X-Requested-With: only this app's own pages can add it, so another site can't make your browser change things here.
+    headers: { "X-Requested-With": "acquireos", ...(init?.body && !(init.body instanceof FormData) ? { "Content-Type": "application/json" } : {}) },
   });
   if (!res.ok) {
     let msg = res.statusText;

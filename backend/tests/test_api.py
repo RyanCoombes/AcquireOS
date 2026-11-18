@@ -1,3 +1,4 @@
+import pytest
 import io
 
 from fastapi.testclient import TestClient
@@ -2524,3 +2525,42 @@ def test_pipeline_priority_order_and_future(loaded):
         tracked = cl.get("/api/meta").json()["counts"]["tracked"]
         cl.put("/api/companies/01000001/state", json={"status": "researching"})
         assert cl.get("/api/meta").json()["counts"]["tracked"] == tracked + 1
+
+
+def test_query_tool_reads_tables_but_not_the_server(loaded):
+    from acquireos import enrich
+    loaded.commit()
+    assert enrich.readonly_query(loaded, "select count(*) as n from company")["rows"][0]["n"] > 0
+    for bad in ("select pg_read_file('/etc/passwd')", "select * from pg_shadow", "select * from app_user",
+                "select pg_terminate_backend(pid) from pg_stat_activity where pid <> pg_backend_pid()"):
+        with pytest.raises(enrich.EnrichError):
+            enrich.readonly_query(loaded, bad)
+
+
+def test_fetchers_refuse_addresses_inside_the_network():
+    from acquireos import netsafe
+    for bad in ("http://127.0.0.1:8000/api/health", "http://localhost/", "http://192.168.1.1/", "http://169.254.169.254/latest",
+                "http://10.0.0.5/", "file:///etc/passwd", "http://[::1]/"):
+        with pytest.raises(netsafe.Blocked):
+            netsafe.check(bad)
+
+
+def test_password_guessing_is_slowed_and_changes_need_the_app_header(loaded, monkeypatch):
+    from acquireos import api as api_mod, config
+    from acquireos.api import app
+    import base64 as b64
+    loaded.commit()
+    monkeypatch.setattr(config, "APP_PASSWORD", "pw")
+    api_mod._AUTH_FAILS.clear()
+    good = {"Authorization": "Basic " + b64.b64encode(b"admin:pw").decode()}
+    bad = {"Authorization": "Basic " + b64.b64encode(b"admin:nope").decode()}
+    with TestClient(app) as cl:
+        assert cl.get("/api/meta", headers=good).status_code == 200
+        # A change without the app's own header (as another site would send it) is refused.
+        assert cl.put("/api/companies/01000001/state", json={"rating": 3}, headers=good).status_code == 403
+        assert cl.put("/api/companies/01000001/state", json={"rating": 3}, headers={**good, "X-Requested-With": "acquireos"}).status_code == 200
+        for _ in range(10):
+            assert cl.get("/api/meta", headers=bad).status_code == 401
+        assert cl.get("/api/meta", headers=bad).status_code == 429
+        assert cl.post("/mcp", json={}).status_code == 401   # never open without a token
+    api_mod._AUTH_FAILS.clear()

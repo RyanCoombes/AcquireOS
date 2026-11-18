@@ -115,7 +115,8 @@ def manifest_icons(page_url: str, html: str) -> list[str]:
 def _get(url: str, accept: str = "image/*") -> tuple[bytes, str] | None:
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept})
     try:
-        with urllib.request.urlopen(req, timeout=6) as r:
+        from . import netsafe
+        with netsafe.urlopen(req, timeout=6) as r:
             data = r.read(MAX_BYTES + 1)
             if len(data) > MAX_BYTES or not data:
                 return None
@@ -138,7 +139,10 @@ def normalise(data: bytes, content_type: str, url: str, chosen: bool = False) ->
         return {"image": data, "content_type": "image/svg+xml", "width": None}
     try:
         from PIL import Image
+        Image.MAX_IMAGE_PIXELS = 16_000_000  # a small file must not unpack into hundreds of MB on the Pi
         im = Image.open(io.BytesIO(data))
+        if im.width * im.height > 16_000_000:
+            return None
         if getattr(im, "format", "") == "ICO":
             im.size = max(im.ico.sizes())  # the largest picture in the .ico
         im.load()
