@@ -390,6 +390,8 @@ def refresh(conn, accounts_months: int = 1, psc: bool = True, reread_old: bool =
         log(f"Accounts failed: {e}")
         out["accounts"] = {"error": str(e)}
     def score():
+        from . import accuracy
+        accuracy.refresh_benchmarks(conn)  # this month's accounts update revenue per head
         conn.execute("select ao_refresh_company_signals()")  # signals the scores use
         return scoring.rescore_all(conn, progress=_loader_progress)
 
@@ -588,16 +590,25 @@ def _director_address_catch_up(c):
              and not exists (select 1 from officer o where o.company_number = s.company_number and o.postcode is not null)
            group by s.company_number, l.employees
            order by l.employees desc nulls last limit 3000""")]
+    if not nums and not c.execute("select 1 from score where excluded limit 1").fetchone():
+        return  # nothing scored yet: look again after the next start
     done = 0
     for i, n in enumerate(nums):
         if i % 50 == 0:
             _cleanup_state(c, running=f"Reading director addresses ({i:,} of {len(nums):,})")
-        if chapi.read_officers(c, n)[0]:
-            done += 1
-        c.commit()
-    c.execute("select ao_refresh_company_signals()")
+        try:
+            if chapi.read_officers(c, n)[0]:
+                done += 1
+            c.commit()
+            scoring.rescore_company_all_boxes(c, n)  # as it goes: a restart loses nothing
+            c.commit()
+        except chapi.NoKey:
+            raise
+        except Exception as e:  # one company's trouble must not stop the rest
+            c.rollback()
+            log(f"Director addresses for {n}: {str(e).splitlines()[0][:160]}")
+    c.execute("select ao_refresh_company_signals()")  # once, for the list filters
     c.commit()
-    scoring.rescore_each(c, nums)
     chsync.set_setting(c, "director_addresses_read", {"companies": len(nums), "read": done,
                                                       "at": datetime.now().isoformat(timespec="minutes")})
     c.commit()
@@ -656,9 +667,12 @@ def _cleanup_step(c, label: str, fn):
         fn(c)
         c.commit()
     except Exception as e:
-        c.rollback()
         log(f"{label} failed: {e}")
-        _cleanup_state(c, failed=(label, str(e)))
+        try:  # a dropped connection must not stop the steps after this one
+            c.rollback()
+            _cleanup_state(c, failed=(label, str(e)))
+        except Exception as e2:
+            log(f"{label}: could not record the failure: {e2}")
 
 
 SAVED_SQL = "(source in ('manual', 'pdf:claude') or source like 'manual%%' or source like 'pdf:%%')"

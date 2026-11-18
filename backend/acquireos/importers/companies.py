@@ -355,11 +355,21 @@ def run(conn, path: Path, mapping: dict | None = None, sheet: str | None = None,
         "update import_run set rows_in=%s, rows_ok=%s, rows_skipped=%s, messages=%s, finished_at=now() where id=%s",
         (rows_in, ok, skipped + not_in_list, json.dumps(messages), run_id),
     )
-    refresh_estimates(conn)
-    flag_mass_addresses(conn)
     from ..scoring import refresh_latest
 
-    refresh_latest(conn)
+    if not full_register and seen_numbers and len(seen_numbers) < 200_000:
+        # A list of your own: bring only its companies up to date, not the whole register.
+        conn.execute("drop table if exists imp_touched; create temp table imp_touched (company_number text primary key)")
+        with conn.cursor().copy("copy imp_touched (company_number) from stdin") as cp:
+            for x in seen_numbers:
+                cp.write_row((x,))
+        refresh_estimates(conn, from_table="imp_touched")
+        flag_mass_addresses(conn)
+        refresh_latest(conn, from_table="imp_touched")
+    else:
+        refresh_estimates(conn)
+        flag_mass_addresses(conn)
+        refresh_latest(conn)
     from .. import sic as sic_mod
 
     sic_mod.seed(conn)
@@ -433,9 +443,12 @@ def _upsert_period(conn, num, period, inferred, values, source, balance_date=Non
     params = {**{c: values[c] for c in cols}, "num": num, "period": period, "inferred": inferred, "source": source,
               "bd": balance_date or period}
     # Never let an inferred period overwrite a real one, or an older filing a newer one.
-    where = ("where financial_period.period_inferred" if inferred else
-             "where financial_period.period_inferred or financial_period.source_balance_date is null "
-             "or excluded.source_balance_date >= financial_period.source_balance_date")
+    # ... or figures saved by you or Claude (accounts.py has the full rule).
+    saved = ("coalesce(financial_period.source, '') in ('manual', 'pdf:claude') "
+             "or coalesce(financial_period.source, '') like 'manual%%'")
+    where = (f"where financial_period.period_inferred and not ({saved})" if inferred else
+             f"where (financial_period.period_inferred or financial_period.source_balance_date is null "
+             f"or excluded.source_balance_date >= financial_period.source_balance_date) and not ({saved})")
     conn.execute(
         f"""insert into financial_period (company_number, period_end, period_inferred, source, source_balance_date, {col_sql})
             values (%(num)s, %(period)s, %(inferred)s, %(source)s, %(bd)s, {val_sql})

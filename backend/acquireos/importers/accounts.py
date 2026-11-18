@@ -747,12 +747,14 @@ def _merge_sql(cols) -> str:
             # Staff counts are never restated in practice, but next year's comparative
             # column often has a typo: the year's own accounts always win.
             return (f"{c} = case when {_SAVING} then coalesce(excluded.{c}, fp.{c}) "
-                    f"when {_SAVED} then coalesce(fp.{c}, excluded.{c}) "
+                    f"when {_SAVED} then case when '{c}' = any(coalesce(fp.cleared, '{{}}'::text[])) then fp.{c} "   # blanked on purpose
+                    f"else coalesce(fp.{c}, excluded.{c}) end "
                     f"when {_KEEP} then coalesce(fp.{c}, excluded.{c}) "
                     f"when {_FILL} and not {_SAVED} then coalesce(excluded.{c}, fp.{c}) "
                     f"else coalesce(excluded.{c}, fp.{c}) end")
         return (f"{c} = case when {_SAVING} then coalesce(excluded.{c}, fp.{c}) "
-                f"when {_SAVED} then coalesce(fp.{c}, excluded.{c}) "   # yours or Claude's: an import only fills blanks
+                f"when {_SAVED} then case when '{c}' = any(coalesce(fp.cleared, '{{}}'::text[])) then fp.{c} "   # blanked on purpose
+                    f"else coalesce(fp.{c}, excluded.{c}) end "   # yours or Claude's: an import only fills blanks
                 f"when {_KEEP} and {blank} then coalesce(fp.{c}, excluded.{c}) "
                 f"when {_FILL} then case when {fblank} then coalesce(excluded.{c}, fp.{c}) else fp.{c} end "
                 f"else coalesce(excluded.{c}, fp.{c}) end")

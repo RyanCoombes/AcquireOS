@@ -242,11 +242,13 @@ def read_shareholders(conn, num: str, filings: list[dict], limit: int = 8, ocr: 
     where the list came from, or None. A newer list already held (e.g. saved by
     Claude) is never replaced by an older one."""
     docs = [f for f in filings if _lists_shareholders(f) and f.get("document")][:limit]
-    held = conn.execute("select max(as_at) as d from shareholder where company_number = %s", (num,)).fetchone()["d"]
+    h = conn.execute("""select as_at as d, source from shareholder where company_number = %s
+                        order by as_at desc nulls last limit 1""", (num,)).fetchone()
+    held, by_claude = (h["d"], (h["source"] or "").startswith("claude")) if h else (None, False)
     for f in docs:
         as_at = _d(f.get("made_up_date") or f.get("date"))
-        if held and as_at and as_at < held:
-            return None  # what's held is newer than anything left to read
+        if held and as_at and (as_at < held or (as_at == held and by_claude)):
+            return None  # what's held is newer (or the same statement, read by Claude) than anything left to read
         pdf = _document(f["document"])
         if not pdf:
             continue
@@ -464,6 +466,7 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
         changes = _record_changes(conn, num, before, after, profile)
     else:
         changes = 0
+    failed = lambda name: any(e.startswith(name + ":") for e in errors)  # noqa: E731
     keep = {k: profile.get(k) for k in ("has_charges", "has_insolvency_history", "has_been_liquidated", "can_file",
                                          "date_of_cessation", "jurisdiction", "type", "subtype", "accounts",
                                          "confirmation_statement", "registered_office_is_in_dispute",
@@ -473,16 +476,21 @@ def fetch(conn, company_number: str, people: bool = True) -> dict:
     conn.execute(
         """insert into ch_fetch (company_number, fetched_at, checked_at, error, profile, insolvency, psc_statements,
                                  shareholders_from, etag, psc, accounts_pdf)
-           values (%s, now(), now(), %s, %s, %s, %s, %s, %s, %s, %s)
+           values (%(num)s, now(), now(), %(err)s, %(profile)s, %(insolvency)s, %(statements)s, %(sh)s, %(etag)s, %(psc)s, %(pdf)s)
            on conflict (company_number) do update set fetched_at = now(), checked_at = now(), error = excluded.error,
-             profile = excluded.profile, insolvency = excluded.insolvency, psc_statements = excluded.psc_statements,
+             -- a part that failed this time keeps what was held
+             profile = case when %(profile_ok)s then excluded.profile else ch_fetch.profile end,
+             insolvency = case when %(insolvency_ok)s then excluded.insolvency else ch_fetch.insolvency end,
+             psc_statements = case when %(statements_ok)s then excluded.psc_statements else ch_fetch.psc_statements end,
              shareholders_from = coalesce(excluded.shareholders_from, ch_fetch.shareholders_from),
              etag = coalesce(excluded.etag, ch_fetch.etag),
              psc = case when excluded.psc is null then ch_fetch.psc else excluded.psc end,
-             accounts_pdf = excluded.accounts_pdf""",
-        (num, "; ".join(errors) or None, json.dumps(keep), json.dumps(insolvency), json.dumps(statements), shareholders_from,
-         profile.get("etag"), None if any(e.startswith("owners:") for e in errors) else json.dumps(psc),
-         json.dumps(accounts_pdf)))
+             accounts_pdf = case when %(pdf_ok)s then excluded.accounts_pdf else ch_fetch.accounts_pdf end""",
+        {"num": num, "err": "; ".join(errors) or None, "profile": json.dumps(keep), "insolvency": json.dumps(insolvency),
+         "statements": json.dumps(statements), "sh": shareholders_from, "etag": profile.get("etag"),
+         "psc": None if failed("owners") else json.dumps(psc), "pdf": json.dumps(accounts_pdf),
+         "profile_ok": bool(profile) and not failed("profile"), "insolvency_ok": not failed("insolvency") and not failed("profile"),  # only asked for when the profile says so
+         "statements_ok": not failed("owner statements"), "pdf_ok": not (failed("filings") or failed("accounts"))})
     try:  # PSC exemptions and UK establishments (a request each, only where they apply)
         from . import chextras
         chextras.company_extras(conn, num, profile, psc)

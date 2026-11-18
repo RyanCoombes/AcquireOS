@@ -2304,6 +2304,8 @@ def refresh_company(num: str):
             except Exception:
                 pass
         c.commit()
+        scoring.rescore_if_scored(c, num)
+        c.commit()
         todo = pdfaccounts.todo_for(c, num)
     if todo:
         threading.Thread(target=pdfaccounts.read_company, args=(num,), daemon=True, name=f"pdf-{num}").start()

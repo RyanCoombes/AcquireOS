@@ -808,6 +808,18 @@ def rescore_company_all_boxes(conn, company_number: str):
     refresh_best(conn, company_number)
 
 
+def rescore_if_scored(conn, company_number: str) -> bool:
+    """After new data for one company (a Companies House fetch, a status change): bring its
+    scores up to date now, if it is scored or in your pipeline, not at the next monthly run."""
+    if not conn.execute(
+            """select 1 where exists (select 1 from score where company_number = %(n)s)
+                  or exists (select 1 from user_company where company_number = %(n)s and status <> 'new')""",
+            {"n": company_number}).fetchone():
+        return False
+    rescore_company_all_boxes(conn, company_number)
+    return True
+
+
 def scope_test(criteria: dict):
     """Universe test, built once per rescore (see companies.universe_filter)."""
     from .importers.companies import universe_filter

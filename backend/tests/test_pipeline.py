@@ -511,7 +511,7 @@ def test_director_address_catch_up_keeps_in_a_company_run_from_wales(c, monkeypa
                                                                "address": {"postal_code": "sa1 1aa"}}]})
     rescored = []
     from acquireos import scoring as _sc
-    monkeypatch.setattr(_sc, "rescore_each", lambda conn, nums, progress=None: rescored.extend(nums))
+    monkeypatch.setattr(_sc, "rescore_company_all_boxes", lambda conn, num: rescored.append(num))
     fetch._cleanup_step(c, "Reading director addresses", fetch._director_address_catch_up)
     fetch._cleanup_state(c, running=None)
     assert c.execute("select postcode from officer where company_number = 'SC999002'").fetchone()["postcode"] == "SA1 1AA"
@@ -578,3 +578,37 @@ def test_saved_figures_copied_for_the_nightly_backup_and_restored(c):
     assert fetch.restore_saved_figures(c) == 2
     r = c.execute("select turnover, source from financial_period where company_number = 'SV000001' and period_end = '2025-03-31'").fetchone()
     assert r["turnover"] == 1234567 and r["source"] == "manual"
+
+
+def test_saved_and_cleared_figures_survive_imports(c):
+    from acquireos import pdfaccounts
+    from acquireos.importers.accounts import _upsert
+    from acquireos.importers.companies import _upsert_period
+    c.execute("insert into company (company_number, name) values ('KP000001', 'KEEP LTD')")
+    pe = date(2025, 3, 31)
+    _upsert(c, "KP000001", pe, {"turnover": 500, "cash": 77, "employees": 9}, "pdf:ocr", balance_date=pe)
+    # You correct turnover and blank a wrong cash figure.
+    pdfaccounts.correct(c, "KP000001", "2025-03-31", {"turnover": 1_000_000, "cash": None})
+    # A spreadsheet import and a bulk re-read of the same year arrive afterwards.
+    _upsert_period(c, "KP000001", pe, False, {"turnover": 5, "cash": 123}, "ranked file", pe)
+    _upsert(c, "KP000001", pe, {"turnover": 7, "cash": 456, "net_assets": 42}, "bulk", balance_date=pe)
+    r = c.execute("select * from financial_period where company_number = 'KP000001'").fetchone()
+    assert r["turnover"] == 1_000_000 and r["cash"] is None      # yours kept; the blank stays blank
+    assert r["net_assets"] == 42 and r["source"] == "manual"     # other gaps are still filled
+    # Putting a figure back yourself un-blanks it.
+    pdfaccounts.correct(c, "KP000001", "2025-03-31", {"cash": 10})
+    assert c.execute("select cash, cleared from financial_period where company_number = 'KP000001'").fetchone()["cash"] == 10
+
+
+def test_failed_fetch_part_keeps_what_was_held(c, monkeypatch):
+    from acquireos import chapi
+    c.execute("insert into company (company_number, name) values ('FF000001', 'FAIL LTD')")
+    c.execute("""insert into ch_fetch (company_number, fetched_at, profile, insolvency)
+                 values ('FF000001', now(), '{"type": "ltd", "has_charges": true}', '[{"case": 1}]')""")
+    monkeypatch.setattr(chapi, "enabled", lambda: True)
+    def boom(path):
+        raise OSError("Companies House is down")
+    monkeypatch.setattr(chapi, "_get", boom)
+    chapi.fetch(c, "FF000001", people=False)
+    f = c.execute("select profile, insolvency, error from ch_fetch where company_number = 'FF000001'").fetchone()
+    assert f["profile"]["type"] == "ltd" and f["insolvency"] == [{"case": 1}] and "profile" in f["error"]

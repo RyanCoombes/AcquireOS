@@ -52,7 +52,13 @@ class Job:
                 with self._lock:
                     self.conn.execute("update job set updated_at = now() where id = %s and status = 'running'", (self.id,))
             except Exception:
-                return
+                # A dropped connection: reconnect, or the job would look dead while it still runs.
+                try:
+                    with self._lock:
+                        self.conn = db.connect()
+                        self.conn.autocommit = True
+                except Exception:
+                    pass
 
     # -- stages ------------------------------------------------------------
     def stage(self, name: str):

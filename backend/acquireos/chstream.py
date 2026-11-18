@@ -105,10 +105,11 @@ def process(conn, batch: list[tuple[str, dict]]) -> dict:
                select c.company_number, 'status', 'status', c.status, u.st, 'stream'
                from unnest(%s::text[], %s::text[]) as u(num, st) join company c on c.company_number = u.num
                where c.status is distinct from u.st""", (nums, sts)).rowcount
-        conn.execute(
+        changed = [r["company_number"] for r in conn.execute(
             """update company c set status = u.st, status_changed_at = now()
                from unnest(%s::text[], %s::text[]) as u(num, st)
-               where c.company_number = u.num and c.status is distinct from u.st""", (nums, sts))
+               where c.company_number = u.num and c.status is distinct from u.st returning c.company_number""", (nums, sts))]
+        out["rescore"] = changed  # the caller rescores these once this is saved (a liquidation changes the score)
     if touched:
         nums = list(touched)
         kinds = [",".join(sorted(touched[n])) for n in nums]
@@ -190,6 +191,15 @@ class Streamer:
                 if batch:
                     with db.conn(dedicated=True) as c:
                         got = process(c, batch)
+                    if got.get("rescore"):
+                        try:
+                            from . import scoring
+                            with db.conn(dedicated=True) as c:
+                                for n in got["rescore"][:200]:
+                                    scoring.rescore_if_scored(c, n)
+                                    c.commit()
+                        except Exception as e:
+                            log(f"rescore after a status change: {e}")
                     with self.lock:
                         for k in ("status_changes", "marked", "disqualified"):
                             self.totals[k] += got[k]

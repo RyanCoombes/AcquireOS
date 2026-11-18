@@ -199,6 +199,10 @@ def run_forever():
                         r = chapi.fetch(c, num) if mode == "full" else chapi.check(c, num)
                         c.execute("delete from ch_dirty where company_number = %s and last_at <= %s", (num, t0))
                         c.commit()
+                        if mode == "full" or r.get("full") or r.get("changes") or r.get("accounts_added"):
+                            from . import scoring
+                            scoring.rescore_if_scored(c, num)  # new accounts, directors or charges change the score
+                            c.commit()
                     except chapi.NoKey as e:
                         c.rollback()
                         log(str(e))

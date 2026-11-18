@@ -28,8 +28,10 @@ def refresh_benchmarks(conn) -> int:
         insert into rph_benchmark (division, band, n, p25, p50, p75)
         select case when grouping(division) = 1 then '*' else division end,
                case when grouping(band) = 1 then '*' else band end, count(*),
-               percentile_cont(0.25) within group (order by rph), percentile_cont(0.5) within group (order by rph),
-               percentile_cont(0.75) within group (order by rph)
+               -- to the nearest £1,000: a penny's drift must not rewrite every estimate and rescore
+               round(percentile_cont(0.25) within group (order by rph)::numeric, -3),
+               round(percentile_cont(0.5) within group (order by rph)::numeric, -3),
+               round(percentile_cont(0.75) within group (order by rph)::numeric, -3)
         from x group by grouping sets ((division, band), (division), (band), ())
         having count(*) >= {MIN_N}
         """)

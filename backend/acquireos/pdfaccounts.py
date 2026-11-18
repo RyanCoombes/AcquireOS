@@ -416,6 +416,7 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
            and detail->>'made_up_date' = %s order by filed_on desc limit 1""", (num, made_up)).fetchone()
     link = (f or {}).get("detail", {}).get("document") if f else None
     result = {"status": "failed", "method": None, "figures": {}, "note": None, "sample": None, "full_text": None, "lines": None}
+    transient = False
     try:
         if not link:
             result["note"] = "no document link for these accounts"
@@ -437,8 +438,10 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
                 pass
             elif not pdf:
                 result["note"] = "Companies House did not return the document"
+                transient = True
             else:
                 text, method = pdf_text(pdf)
+                text = text.replace("\x00", "")  # Postgres text can't hold NUL bytes
                 result["method"] = method
                 result["sample"] = _sample(text)
                 result["full_text"] = text[:300_000]
@@ -484,6 +487,7 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
                         result["note"] = "left out: " + "; ".join(ex["dropped"])
     except Exception as e:
         result["note"] = str(e)[:200]
+        transient = isinstance(e, OSError)  # network or Companies House trouble, not the document
     import json
 
     conn.execute(
@@ -493,7 +497,8 @@ def read_and_save(conn, company_number: str, made_up: str) -> dict:
              figures = excluded.figures, note = excluded.note, sample = excluded.sample, version = excluded.version,
              full_text = excluded.full_text, lines = excluded.lines, tries = pdf_read.tries + 1, read_at = now()""",
         (num, made_up, result["status"], result["method"], json.dumps(result["figures"]), result["note"],
-         result["sample"], VERSION, result["full_text"], json.dumps(result["lines"]) if result["lines"] else None))
+         result["sample"], 0 if transient and result["status"] != "done" else VERSION,  # 0: try again later (see TODO_SQL)
+         result["full_text"], json.dumps(result["lines"]) if result["lines"] else None))
     if result["status"] == "done":
         from . import scoring
         from .importers.companies import refresh_estimates
@@ -533,7 +538,9 @@ where aa.made_up > current_date - interval '10 years 6 months'
                   and not fp.period_inferred and abs(fp.period_end - aa.made_up) <= 45
                   and coalesce(fp.source, '') not in ('pdf:text', 'pdf:ocr'))  -- figures saved by you or Claude count
   and not exists (select 1 from pdf_read r where r.company_number = aa.company_number and r.made_up = aa.made_up
-                  and (r.status in ('done', 'closed') or r.version >= %(version)s or r.tries >= 3))
+                  and (r.status in ('done', 'closed') or r.version >= %(version)s or (r.tries >= 3 and r.version > 0)
+                       -- the document couldn't be fetched (version 0): again after 12 hours, up to 10 times
+                       or (r.version = 0 and (r.read_at > now() - interval '12 hours' or r.tries >= 10))))
 """
 
 QUEUE_SQL = """
@@ -842,9 +849,13 @@ def correct(conn, company_number: str, period_end: str, values: dict) -> dict:
     clear = [k for k, v in values.items() if k in CHECK_FIELDS and v is None and old.get(k) is not None]
     if keep:
         _upsert(conn, num, pe, keep, "manual", balance_date=pe)
+        conn.execute("""update financial_period set cleared = array(select x from unnest(cleared) x where x <> all(%s))
+                        where company_number = %s and period_end = %s and cleared is not null""", (list(keep), num, pe))
     if clear:
-        conn.execute(f"update financial_period set {', '.join(f'{k} = null' for k in clear)}, source = 'manual' "
-                     "where company_number = %s and period_end = %s", (num, pe))
+        # Remembered as blanked on purpose, so no later import or re-read fills them in again.
+        conn.execute(f"update financial_period set {', '.join(f'{k} = null' for k in clear)}, source = 'manual', "
+                     "cleared = array(select distinct x from unnest(coalesce(cleared, '{}') || %s::text[]) x) "
+                     "where company_number = %s and period_end = %s", (clear, num, pe))
     changes = [f"{k.replace('_', ' ')}: {old.get(k) if old.get(k) is not None else 'blank'} → {keep.get(k, 'blank')}"
                for k in [*keep, *clear] if (float(old[k]) if old.get(k) is not None else None) != keep.get(k)]
     if changes:
