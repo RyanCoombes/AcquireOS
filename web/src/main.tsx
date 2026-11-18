@@ -93,10 +93,12 @@ function Side({ meta }: { meta: Meta | null }) {
 // The new look's navigation: five places on a dark rail; the pages inside each show as tabs.
 const SECTIONS: { key: string; label: string; icon: string; pages: [string, string][] }[] = [
   { key: "today", label: "Today", icon: "home", pages: [["/", "Today"]] },
-  { key: "find", label: "Find", icon: "targets", pages: [["/targets", "Targets"], ["/companies", "All companies"], ["/review", "Review"], ["/map", "Map"], ["/owners", "Owners"], ["/connections", "Connections"]] },
+  { key: "find", label: "Find", icon: "targets", pages: [["/targets", "Targets"], ["/companies", "All companies"], ["/review", "Review"], ["/owners", "Owners"], ["/connections", "Connections"]] },
+  { key: "map", label: "Map", icon: "map", pages: [["/map", "Map"]] },
   { key: "deals", label: "Deals", icon: "pipeline", pages: [["/pipeline", "Deals"]] },
   { key: "watching", label: "Watching", icon: "changes", pages: [["/changes", "Changes"], ["/watch", "Watch list"]] },
-  { key: "data", label: "Data", icon: "import", pages: [["/import", "Data"], ["/buy-box", "Buy boxes"], ["/reports", "Reports"], ["/connect", "Connect AI"]] },
+  { key: "boxes", label: "Buy boxes", icon: "buybox", pages: [["/buy-box", "Buy boxes"]] },
+  { key: "data", label: "Data", icon: "import", pages: [["/import", "Data"], ["/reports", "Reports"], ["/connect", "Connect AI"]] },
 ];
 const sectionOf = (path: string) =>
   SECTIONS.find((s) => s.pages.some(([to]) => (to === "/" ? path === "/" : path === to || path.startsWith(to + "/")))) ?? (path.startsWith("/c/") ? SECTIONS[1] : null);
@@ -163,15 +165,15 @@ function MobileNav({ meta }: { meta: Meta | null }) {
     <>
       <nav className="mnav" aria-label="Main (phone)">
         {tab("/targets", "targets", "Targets")}
-        {tab("/review", "review", "Review")}
-        {tab("/pipeline", "pipeline", "Pipeline")}
+        {skin === "ledger" ? tab("/map", "map", "Map") : tab("/review", "review", "Review")}
+        {tab("/pipeline", "pipeline", skin === "ledger" ? "Deals" : "Pipeline")}
         {tab(c?.pipeline_new ? "/changes?alerts=1&unread=1" : "/changes", "changes", "Changes", c?.pipeline_new)}
         <button className={`mtab ${more ? "active" : ""}`} onClick={() => setMore(!more)} aria-expanded={more}>
           <svg viewBox="0 0 24 24" aria-hidden><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg><span>More</span></button>
       </nav>
       {more && <div className="msheet-back" onClick={() => setMore(false)}>
         <div className="msheet" onClick={(e) => e.stopPropagation()}>
-          {sheetItem("/", "home", "Home")}{sheetItem("/companies", "companies", "Companies")}{sheetItem("/watch", "watch", "Watching")}
+          {sheetItem("/", "home", skin === "ledger" ? "Today" : "Home")}{skin === "ledger" && sheetItem("/review", "review", "Review")}{sheetItem("/companies", "companies", "Companies")}{sheetItem("/watch", "watch", "Watching")}
           {sheetItem("/map", "map", "Map")}{sheetItem("/owners", "owners", "Owners")}{sheetItem("/connections", "connections", "Connections")}
           {sheetItem("/reports", "reports", "Reports")}{sheetItem("/buy-box", "buybox", "Buy boxes")}{sheetItem("/import", "import", "Data")}
           {sheetItem("/connect", "claude", "Connect AI")}

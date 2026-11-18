@@ -96,7 +96,9 @@ _AUTH_FAILS: dict[str, list[float]] = {}
 def _secure(resp):
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    # The site's address only (no page path) to other sites. Not "same-origin": map tile servers
+    # (OpenStreetMap) refuse requests that don't say which site they come from.
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     return resp
 
 

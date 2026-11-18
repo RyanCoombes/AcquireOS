@@ -45,7 +45,7 @@
 /* Shell: a dark rail in place of the sidebar */
 :root[data-skin="ledger"] .shell { background: linear-gradient(90deg, var(--rail) 0, var(--rail) var(--side), transparent var(--side)); }
 .rail { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: var(--rail); display: flex; flex-direction: column;
-        align-items: center; gap: 6px; padding: 16px 0 12px; }
+        align-items: center; gap: 4px; padding: 16px 0 12px; }
 .rail .rmark { width: 40px; height: 40px; border-radius: 10px; background: var(--accent); display: grid; place-items: center; margin-bottom: 14px; flex: none; }
 .rail .rmark svg { width: 22px; height: 22px; fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .rail a.ritem { position: relative; width: 72px; padding: 9px 0; border-radius: 10px; color: var(--rail-ink); text-decoration: none; display: flex;
