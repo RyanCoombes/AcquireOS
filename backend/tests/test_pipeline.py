@@ -612,3 +612,34 @@ def test_failed_fetch_part_keeps_what_was_held(c, monkeypatch):
     chapi.fetch(c, "FF000001", people=False)
     f = c.execute("select profile, insolvency, error from ch_fetch where company_number = 'FF000001'").fetchone()
     assert f["profile"]["type"] == "ltd" and f["insolvency"] == [{"case": 1}] and "profile" in f["error"]
+
+
+def test_index_migration_does_not_deadlock_with_a_live_change_being_recorded(c):
+    """As on the Pi: the stream writer records a change (company_change, then company) while
+    the app applies the index migration at start-up. With every statement saved by itself,
+    the migration never holds one table's lock while waiting for the other's."""
+    import threading, time
+    from acquireos import db
+    from .conftest import TEST_URL
+    c.execute("insert into company (company_number, name, status) values ('DL000001', 'DEADLOCK LTD', 'active')")
+    c.execute("delete from schema_migration where name >= '066'")
+    c.execute("drop index if exists company_sic1_idx; drop index if exists company_inc_idx")
+    c.execute("create index if not exists company_change_time_idx on company_change (detected_at desc)")
+    c.commit()
+    writer = db.connect(TEST_URL)
+    writer.execute("insert into company_change (company_number, kind, field, old_value, new_value, source) "
+                   "values ('DL000001', 'status', 'status', 'active', 'liquidation', 'stream')")
+    out: dict = {}
+    def run():
+        try:
+            out["applied"] = db.migrate(TEST_URL)
+        except Exception as e:
+            out["error"] = e
+    t = threading.Thread(target=run); t.start()
+    time.sleep(1.5)   # the migration has built its indexes and is waiting to drop the old one
+    writer.execute("update company set status = 'liquidation' where company_number = 'DL000001'")  # deadlocked before
+    writer.commit(); writer.close()
+    t.join(30)
+    assert "error" not in out, out.get("error")
+    assert out["applied"] == ["066_sort_indexes.sql", "067_drop_redundant_index.sql"]
+    assert c.execute("select to_regclass('company_sic1_idx') as a, to_regclass('company_change_time_idx') as b").fetchone() == {"a": "company_sic1_idx", "b": None}

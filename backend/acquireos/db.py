@@ -60,27 +60,53 @@ def conn(url: str | None = None, dedicated: bool = False):
         c.close()
 
 
+STEPWISE = "-- each statement in its own transaction"
+
+
 def migrate(url: str | None = None) -> list[str]:
-    """Apply any migrations that have not run yet. Returns names applied."""
+    """Apply any migrations that have not run yet. Returns names applied.
+
+    Each file is saved (committed) by itself, so the locks one takes are released before
+    the next starts. A file that begins with the STEPWISE comment is saved statement by
+    statement: for building indexes on large tables, where holding one table's lock while
+    asking for another's can deadlock with the background services (it did)."""
     applied = []
-    with conn(url) as c:
+    c = connect(url)
+    try:
         c.execute(
             "create table if not exists schema_migration ("
             "name text primary key, applied_at timestamptz not null default now())"
         )
-        c.execute("select pg_advisory_xact_lock(727001)")  # one process migrates at a time
-        done = {r["name"] for r in c.execute("select name from schema_migration")}
-        files = sorted(
-            p for p in resources.files("acquireos.migrations").iterdir() if p.name.endswith(".sql")
-        )
-        for f in files:
-            if f.name in done:
-                continue
-            sql = f.read_text()
-            # 001 creates schema_migration itself; drop our bootstrap copy first.
-            if f.name.startswith("001"):
-                c.execute("drop table if exists schema_migration")
-            c.execute(sql)
-            c.execute("insert into schema_migration (name) values (%s)", (f.name,))
-            applied.append(f.name)
+        c.commit()
+        c.execute("select pg_advisory_lock(727001)")  # one process migrates at a time
+        c.commit()
+        try:
+            done = {r["name"] for r in c.execute("select name from schema_migration")}
+            c.commit()
+            files = sorted(
+                p for p in resources.files("acquireos.migrations").iterdir() if p.name.endswith(".sql")
+            )
+            for f in files:
+                if f.name in done:
+                    continue
+                sql = f.read_text()
+                # 001 creates schema_migration itself; drop our bootstrap copy first.
+                if f.name.startswith("001"):
+                    c.execute("drop table if exists schema_migration")
+                if sql.lstrip().startswith(STEPWISE):
+                    for stmt in sql.split(";\n"):
+                        if any(line.strip() and not line.strip().startswith("--") for line in stmt.splitlines()):
+                            c.execute(stmt)
+                            c.commit()
+                else:
+                    c.execute(sql)
+                c.execute("insert into schema_migration (name) values (%s)", (f.name,))
+                c.commit()
+                applied.append(f.name)
+        finally:
+            c.rollback()
+            c.execute("select pg_advisory_unlock(727001)")
+            c.commit()
+    finally:
+        c.close()
     return applied
