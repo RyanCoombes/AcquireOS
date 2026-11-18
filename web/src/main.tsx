@@ -2,6 +2,10 @@ import { lazy, StrictMode, Suspense, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import "./styles.css";
+import "./skin-ledger.css";
+import { ACCENTS, applySkin, setSkin, useSkin } from "./skin";
+
+applySkin();  // before the first paint
 import { api, type Meta } from "./api";
 import Home from "./pages/Home";
 import Targets from "./pages/Targets";
@@ -80,13 +84,73 @@ function Side({ meta }: { meta: Meta | null }) {
       <div className="foot">
         {c ? <>{c.companies.toLocaleString("en-GB")} companies</> : " "}
         {c?.last_import ? <div>Updated {new Date(c.last_import).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</div> : null}
+        <button className="skin-try" onClick={() => setSkin("ledger")} title="Switch the look. Your data and settings stay the same; switch back any time.">Try the new look →</button>
       </div>
+    </nav>
+  );
+}
+
+// The new look's navigation: five places on a dark rail; the pages inside each show as tabs.
+const SECTIONS: { key: string; label: string; icon: string; pages: [string, string][] }[] = [
+  { key: "today", label: "Today", icon: "home", pages: [["/", "Today"]] },
+  { key: "find", label: "Find", icon: "targets", pages: [["/targets", "Targets"], ["/companies", "All companies"], ["/review", "Review"], ["/map", "Map"], ["/owners", "Owners"], ["/connections", "Connections"]] },
+  { key: "deals", label: "Deals", icon: "pipeline", pages: [["/pipeline", "Deals"]] },
+  { key: "watching", label: "Watching", icon: "changes", pages: [["/changes", "Changes"], ["/watch", "Watch list"]] },
+  { key: "data", label: "Data", icon: "import", pages: [["/import", "Data"], ["/buy-box", "Buy boxes"], ["/reports", "Reports"], ["/connect", "Connect AI"]] },
+];
+const sectionOf = (path: string) =>
+  SECTIONS.find((s) => s.pages.some(([to]) => (to === "/" ? path === "/" : path === to || path.startsWith(to + "/")))) ?? (path.startsWith("/c/") ? SECTIONS[1] : null);
+
+function Rail({ meta }: { meta: Meta | null }) {
+  const loc = useLocation();
+  const { accent } = useSkin();
+  const cur = sectionOf(loc.pathname);
+  const c = meta?.counts;
+  const badge: Record<string, [number | undefined, boolean]> = { deals: [c?.tracked, false], watching: [c?.pipeline_new, true] };
+  return (
+    <nav className="rail" aria-label="Main">
+      <Link to="/" className="rmark" aria-label="AcquireOS: Today"><svg viewBox="0 0 22 22" aria-hidden><path d="M4 18 11 4l7 14M7.5 13h7" /></svg></Link>
+      {SECTIONS.map((s) => {
+        const [n, alert] = badge[s.key] ?? [undefined, false];
+        return (
+          <Link key={s.key} to={s.key === "watching" && c?.pipeline_new ? "/changes?alerts=1&unread=1" : s.pages[0][0]}
+                className={`ritem ${cur?.key === s.key ? "on" : ""}`} aria-current={cur?.key === s.key ? "page" : undefined}>
+            <Icon name={s.icon} /><span>{s.label}</span>
+            {n ? <i className={`rbadge ${alert ? "alert" : ""}`} title={alert ? "Unread changes" : "In your pipeline"}>{n > 99 ? "99+" : n}</i> : null}
+          </Link>
+        );
+      })}
+      <div className="rfoot">
+        <div className="rdots" role="group" aria-label="Accent colour">
+          {ACCENTS.map(([col, name]) => (
+            <button key={col} className={`rdot ${accent === col ? "on" : ""}`} style={{ background: col }} aria-label={`${name} accent`}
+                    aria-pressed={accent === col} title={`${name} accent`} onClick={() => setSkin("ledger", col)} />
+          ))}
+        </div>
+        <button className="rback" onClick={() => setSkin("classic")}>Old look</button>
+      </div>
+    </nav>
+  );
+}
+
+function SubNav({ meta }: { meta: Meta | null }) {
+  const loc = useLocation();
+  const cur = sectionOf(loc.pathname);
+  if (!cur || cur.pages.length < 2) return null;
+  const c = meta?.counts;
+  const counts: Record<string, number | undefined> = { "/targets": c?.in_scope, "/companies": c?.companies, "/changes": c?.pipeline_new || undefined };
+  return (
+    <nav className="subnav m-hide" aria-label={cur.label}>
+      {cur.pages.map(([to, label]) => (
+        <NavLink key={to} to={to}>{label}{counts[to] ? <span className="sn-count">{counts[to]!.toLocaleString("en-GB")}</span> : null}</NavLink>
+      ))}
     </nav>
   );
 }
 
 /** Phones only: a fixed bottom bar for the main pages, and a sheet with the rest. */
 function MobileNav({ meta }: { meta: Meta | null }) {
+  const { skin } = useSkin();
   const [more, setMore] = useState(false);
   const loc = useLocation();
   useEffect(() => setMore(false), [loc.pathname]);
@@ -111,6 +175,9 @@ function MobileNav({ meta }: { meta: Meta | null }) {
           {sheetItem("/map", "map", "Map")}{sheetItem("/owners", "owners", "Owners")}{sheetItem("/connections", "connections", "Connections")}
           {sheetItem("/reports", "reports", "Reports")}{sheetItem("/buy-box", "buybox", "Buy boxes")}{sheetItem("/import", "import", "Data")}
           {sheetItem("/connect", "claude", "Connect AI")}
+          <button className="msheet-item" style={{ border: 0, background: "none", font: "inherit", textAlign: "left" }}
+                  onClick={() => setSkin(skin === "ledger" ? "classic" : "ledger")}>
+            <Icon name="claude" />{skin === "ledger" ? "Old look" : "Try the new look"}</button>
         </div></div>}
     </>
   );
@@ -158,6 +225,7 @@ function CompanyRoute() {
 }
 
 function App() {
+  const { skin } = useSkin();
   const [meta, setMeta] = useState<Meta | null>(null);
   const loc = useLocation();
   useEffect(() => { api.meta().then(setMeta).catch(() => {}); }, [loc.pathname]);
@@ -173,9 +241,10 @@ function App() {
   }, [loc.pathname]);
   return (
     <div className="shell">
-      <Side meta={meta} />
+      {skin === "ledger" ? <Rail meta={meta} /> : <Side meta={meta} />}
       <div className="content">
         <TopBar />
+        {skin === "ledger" && <SubNav meta={meta} />}
         <main>
           <Suspense fallback={<div className="empty">Loading…</div>}>
           <Routes>

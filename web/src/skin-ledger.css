@@ -1,0 +1,100 @@
+/* The new look ("ledger"), switched on with <html data-skin="ledger">. It only restyles:
+   the classic look is untouched when the attribute is absent. See src/skin.ts. */
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-sans/700.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/600.css";
+
+:root[data-skin="ledger"] {
+  --accent: #0f7a5c;
+  --rail: #0f1b2d;
+  --rail-2: #1d2c44;
+  --rail-ink: #b7c2d3;
+  --canvas: #f4f6f8;
+  --panel-2: #f8f9fb;
+  --line: #d6dbe3;
+  --line-2: #c3cad6;
+  --ink: #0f1b2d;
+  --ink-2: #39455a;
+  --ink-3: #4b5668;
+  --teal: var(--accent);
+  --teal-2: color-mix(in srgb, var(--accent) 82%, #000);
+  --teal-soft: color-mix(in srgb, var(--accent) 11%, #fff);
+  --teal-tint: color-mix(in srgb, var(--accent) 13%, transparent);
+  --amber: #8a5a12;
+  --red: #a3261d;
+  --radius: 14px;
+  --radius-s: 9px;
+  --shadow: none;
+  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --side: 88px;
+}
+:root[data-skin="ledger"] body { font-feature-settings: normal; }
+:root[data-skin="ledger"] h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; }
+:root[data-skin="ledger"] h2 { font-size: 16px; font-weight: 600; letter-spacing: 0; }
+
+/* Figures, dates and scores in the typewriter face, so they line up and read as figures */
+:root[data-skin="ledger"] :is(.num, td.num, .factline b, .kpi .v, .count, .scorechip, .score, .due-chip, .kbd,
+    .card .meta, .trust b, .crumb, .jb-eta) { font-family: var(--mono); letter-spacing: -0.01em; }
+:root[data-skin="ledger"] .factline b { font-weight: 500; }
+
+/* Shell: a dark rail in place of the sidebar */
+:root[data-skin="ledger"] .shell { background: linear-gradient(90deg, var(--rail) 0, var(--rail) var(--side), transparent var(--side)); }
+.rail { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: var(--rail); display: flex; flex-direction: column;
+        align-items: center; gap: 6px; padding: 16px 0 12px; }
+.rail .rmark { width: 40px; height: 40px; border-radius: 10px; background: var(--accent); display: grid; place-items: center; margin-bottom: 14px; flex: none; }
+.rail .rmark svg { width: 22px; height: 22px; fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.rail a.ritem { position: relative; width: 72px; padding: 9px 0; border-radius: 10px; color: var(--rail-ink); text-decoration: none; display: flex;
+                flex-direction: column; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 500; flex: none; }
+.rail a.ritem svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.rail a.ritem:hover { background: var(--rail-2); color: #fff; text-decoration: none; }
+.rail a.ritem.on { background: var(--rail-2); color: #fff; font-weight: 600; }
+.rail .rbadge { position: absolute; top: 4px; right: 12px; font-family: var(--mono); font-size: 10.5px; font-weight: 600; font-style: normal;
+                border-radius: 99px; padding: 0 5px; background: var(--rail-2); color: #fff; }
+.rail .rbadge.alert { background: #c8352b; }
+.rail .rfoot { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 12px; }
+.rail .rdots { display: grid; grid-template-columns: repeat(2, 18px); gap: 6px; }
+.rail .rdot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; padding: 0; cursor: pointer; }
+.rail .rdot.on { border-color: #fff; }
+.rail .rback { border: 0; background: none; color: var(--rail-ink); font: inherit; font-size: 11px; cursor: pointer; padding: 6px 4px; text-decoration: underline;
+               text-underline-offset: 3px; }
+.rail .rback:hover { color: #fff; }
+
+/* The pages inside a section, as tabs under the search bar */
+.subnav { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 var(--gutter); border-bottom: 1px solid var(--line); }
+.subnav a { padding: 9px 12px; color: var(--ink-2); font-weight: 500; text-decoration: none; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+.subnav a:hover { color: var(--ink); text-decoration: none; }
+.subnav a.active { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.subnav .sn-count { font-family: var(--mono); font-size: 12px; color: var(--ink-3); margin-left: 6px; }
+
+/* Calmer surfaces: flat panels, a stronger column head on the board */
+:root[data-skin="ledger"] .topbar { background: color-mix(in srgb, var(--canvas) 88%, transparent); }
+:root[data-skin="ledger"] .btn.primary { background: var(--accent); border-color: var(--accent); }
+:root[data-skin="ledger"] .board .col { background: transparent; border: 0; padding: 0 2px; }
+:root[data-skin="ledger"] .board .col h3 { color: var(--ink); font-size: 14.5px; padding: 0 4px 10px; border-bottom: 2px solid var(--ink); margin-bottom: 4px; }
+:root[data-skin="ledger"] .board .col .desc { padding: 6px 4px 8px; }
+:root[data-skin="ledger"] .board .card { border: 1px solid var(--line); box-shadow: none; border-radius: 12px; }
+:root[data-skin="ledger"] .viewtabs { background: #e4e8ee; }
+
+/* The switch back, on the classic sidebar */
+.skin-try { margin-top: 10px; border: 1px dashed var(--line-2); background: none; border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 12px;
+            color: var(--ink-2); cursor: pointer; width: 100%; text-align: left; }
+.skin-try:hover { color: var(--ink); border-color: var(--ink-3); }
+
+@media (max-width: 860px) {
+  :root[data-skin="ledger"] .shell { background: none; }
+  .rail { position: sticky; z-index: 40; height: auto; flex-direction: row; padding: 8px 10px; gap: 4px; overflow-x: auto; }
+  .rail .rmark { margin: 0 8px 0 0; width: 34px; height: 34px; }
+  .rail a.ritem { width: auto; flex-direction: row; padding: 7px 10px; gap: 6px; font-size: 12.5px; }
+  .rail .rbadge { position: static; }
+  .rail .rfoot { margin: 0 0 0 auto; flex-direction: row; padding: 0; }
+  .rail .rdots { grid-template-columns: repeat(4, 18px); }
+}
+@media (max-width: 640px) {
+  .rail { display: none; }
+  .subnav { overflow-x: auto; flex-wrap: nowrap; white-space: nowrap; }
+}
