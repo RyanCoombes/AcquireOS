@@ -1882,8 +1882,12 @@ def accounts_gaps(scope: str = "targets"):
     """Companies whose latest accounts on the register are much newer than the
     latest year held, with why, in your buy boxes and pipeline (or scope=all)."""
     from . import gaps
-    with db.conn() as c:
-        return gaps.summary(c, scope)
+
+    def work():
+        with db.conn() as c:
+            c.execute("set local statement_timeout = '60s'")  # never pile up behind a slow run
+            return gaps.summary(c, scope)
+    return cached(f"accounts_gaps:{scope}", 600, work)
 
 
 @app.get("/api/shareholders-sweep")

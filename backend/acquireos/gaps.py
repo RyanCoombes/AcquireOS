@@ -11,11 +11,15 @@ from __future__ import annotations
 
 GAP_DAYS = 300  # register's last accounts this much newer than the latest year held
 
+# /*held*/ is how the latest year held is found: for your targets, one index look-up per company
+# (HELD_EACH); only for the whole register is every row of financial_period grouped (HELD_ALL),
+# which takes minutes on the Pi and used to run each time the Data page opened.
+HELD_EACH = """left join lateral (select max(fp.period_end) as latest from financial_period fp
+                                 where fp.company_number = c.company_number and not fp.period_inferred) h on true"""
+HELD_ALL = """left join (select company_number, max(period_end) as latest
+                         from financial_period where not period_inferred group by company_number) h
+                     on h.company_number = c.company_number"""
 GAP_SQL = """
-with held as (
-    select company_number, max(period_end) as latest
-    from financial_period where not period_inferred group by company_number
-)
 select c.company_number, c.name, c.last_accounts_date, h.latest as latest_held,
        f.fetched_at as ch_checked,
        exists (select 1 from pdf_read r where r.company_number = c.company_number
@@ -30,8 +34,8 @@ select c.company_number, c.name, c.last_accounts_date, h.latest as latest_held,
        exists (select 1 from user_company uc where uc.company_number = c.company_number and uc.user_id = 1
                and uc.status not in ('new', 'rejected', 'passed')) as in_pipeline,
        (select max(score) from company_best cb where cb.company_number = c.company_number) as score
-from company c
-left join held h on h.company_number = c.company_number
+from /*from*/company c
+/*held*/
 left join ch_fetch f on f.company_number = c.company_number
 where c.last_accounts_date is not null
   and lower(coalesce(c.status, 'active')) = 'active'
@@ -41,11 +45,13 @@ where c.last_accounts_date is not null
   /*scope*/
 """
 
-SCOPE = {
-    # in a buy box (scored) or in your pipeline
-    "targets": """and (exists (select 1 from company_best cb where cb.company_number = c.company_number)
-                       or exists (select 1 from user_company uc where uc.company_number = c.company_number
-                                  and uc.user_id = 1 and uc.status not in ('new', 'rejected', 'passed')))""",
+# "targets": in a buy box (scored) or in your pipeline. The query starts from those companies,
+# so it never walks the whole register.
+SCOPE_FROM = {
+    "targets": """(select company_number from company_best
+                   union select company_number from user_company
+                         where user_id = 1 and status not in ('new', 'rejected', 'passed')) sc
+                  join company c on c.company_number = sc.company_number""",
     "all": "",
 }
 
@@ -64,7 +70,9 @@ def reason(r: dict) -> tuple[str, str]:
 
 
 def find(conn, scope: str = "targets", limit: int | None = None) -> list[dict]:
-    sql = GAP_SQL.replace("/*scope*/", SCOPE.get(scope, SCOPE["targets"]))
+    start = SCOPE_FROM.get(scope, SCOPE_FROM["targets"])
+    sql = (GAP_SQL.replace("/*from*/company c", start.strip() if start else "company c")
+           .replace("/*held*/", HELD_EACH if start else HELD_ALL).replace("/*scope*/", ""))
     sql += " order by in_pipeline desc, score desc nulls last, c.last_accounts_date desc"
     if limit:
         sql += f" limit {int(limit)}"
