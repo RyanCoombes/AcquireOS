@@ -3,31 +3,51 @@
 import { useEffect, useState } from "react";
 
 export type Skin = "classic" | "ledger";
-export const ACCENTS: [string, string][] = [["#0f7a5c", "Green"], ["#2f4fd8", "Blue"], ["#b4532a", "Rust"], ["#6d3fc4", "Purple"]];
+export const ACCENTS: [string, string][] = [["#0f7a5c", "Green"], ["#2f4fd8", "Blue"], ["#b4532a", "Rust"], ["#6d3fc4", "Purple"], ["#e8336d", "Pink"]];
 
 const read = (k: string, d: string) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
 export const getSkin = (): Skin => (read("ao.skin", "classic") === "ledger" ? "ledger" : "classic");
-export const getAccent = () => { const a = read("ao.accent", ACCENTS[0][0]); return ACCENTS.some(([c]) => c === a) ? a : ACCENTS[0][0]; };
+// One of the listed colours, or any colour you picked yourself.
+export const getAccent = () => { const a = read("ao.accent", ACCENTS[0][0]).toLowerCase(); return /^#[0-9a-f]{6}$/.test(a) ? a : ACCENTS[0][0]; };
 
 // How the new look's navigation is drawn: the icon rail, live tiles, or tabs up the edge.
-export type NavStyle = "rail" | "live" | "tabs";
+export type NavStyle = "rail" | "live" | "tabs" | "dock";
 export const NAVS: [NavStyle, string, string][] = [
   ["rail", "Icons", "The dark rail with an icon for each section"],
   ["live", "Live", "Each section shows what is in it right now"],
   ["tabs", "Tabs", "Section names up the edge, like ledger tabs"],
+  ["dock", "Dock", "A floating bar at the bottom; the page gets the full width"],
 ];
-export const getNav = (): NavStyle => { const n = read("ao.nav", "rail"); return n === "live" || n === "tabs" ? n : "rail"; };
+export const getNav = (): NavStyle => { const n = read("ao.nav", "rail"); return n === "live" || n === "tabs" || n === "dock" ? n : "rail"; };
+
+// Effects: how strong the colour glow is, and whether the dots drift when the pointer is still.
+export type Glow = "off" | "soft" | "full";
+export const GLOWS: [Glow, string, number][] = [["off", "Off", 0], ["soft", "Soft", 0.55], ["full", "Full", 1]];
+export const getGlow = (): Glow => { const g = read("ao.glow", "soft"); return g === "off" || g === "full" ? g : "soft"; };
+export const getDrift = () => read("ao.drift", "off") === "on";
 
 export function applySkin() {
   const root = document.documentElement;
   const skin = getSkin();
   root.dataset.skin = skin;
   if (skin === "ledger") root.dataset.nav = getNav(); else delete root.dataset.nav;
-  if (skin === "ledger") root.style.setProperty("--accent", getAccent()); else root.style.removeProperty("--accent");
+  if (skin === "ledger") {
+    root.style.setProperty("--accent", getAccent());
+    root.style.setProperty("--glow-k", String(GLOWS.find(([g]) => g === getGlow())![2]));
+  } else { root.style.removeProperty("--accent"); root.style.removeProperty("--glow-k"); }
 }
 
 export function setSkin(skin: Skin, accent?: string) {
   try { localStorage.setItem("ao.skin", skin); if (accent) localStorage.setItem("ao.accent", accent); } catch { /* private window */ }
+  applySkin();
+  window.dispatchEvent(new Event("ao-skin"));
+}
+
+export function setEffects(v: { glow?: Glow; drift?: boolean }) {
+  try {
+    if (v.glow) localStorage.setItem("ao.glow", v.glow);
+    if (v.drift !== undefined) localStorage.setItem("ao.drift", v.drift ? "on" : "off");
+  } catch { /* private window */ }
   applySkin();
   window.dispatchEvent(new Event("ao-skin"));
 }
@@ -50,10 +70,10 @@ export function noteRecent(num: string, name: string) {
   } catch { /* private window */ }
 }
 
-export function useSkin(): { skin: Skin; accent: string; nav: NavStyle } {
-  const [v, setV] = useState({ skin: getSkin(), accent: getAccent(), nav: getNav() });
+export function useSkin(): { skin: Skin; accent: string; nav: NavStyle; glow: Glow; drift: boolean } {
+  const [v, setV] = useState({ skin: getSkin(), accent: getAccent(), nav: getNav(), glow: getGlow(), drift: getDrift() });
   useEffect(() => {
-    const on = () => setV({ skin: getSkin(), accent: getAccent(), nav: getNav() });
+    const on = () => setV({ skin: getSkin(), accent: getAccent(), nav: getNav(), glow: getGlow(), drift: getDrift() });
     window.addEventListener("ao-skin", on);
     return () => window.removeEventListener("ao-skin", on);
   }, []);

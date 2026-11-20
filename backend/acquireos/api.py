@@ -168,30 +168,40 @@ def _nav_live():
     with db.conn() as c:
         due = c.execute(
             """select count(*) filter (where next_action_on <= current_date) as due,
-                      count(*) filter (where next_action_on < current_date) as late
-               from user_company where user_id = %s and next_action_on is not null
-                 and status not in ('rejected', 'passed')""", (UID,)).fetchone()
-        bands = c.execute(
-            """select count(*) filter (where cb.score >= 80) as b80, count(*) filter (where cb.score >= 60 and cb.score < 80) as b60,
-                      count(*) filter (where cb.score >= 40 and cb.score < 60) as b40, count(*) filter (where cb.score < 40) as b0
-               from company_best cb where not exists (
-                 select 1 from user_company uc where uc.company_number = cb.company_number and uc.user_id = %s
-                 and uc.status in ('rejected', 'passed', 'future'))""", (UID,)).fetchone()
+                      count(*) filter (where next_action_on < current_date) as late,
+                      min(next_action_on) filter (where next_action_on > current_date) as next_due,
+                      count(*) filter (where next_action_on is null and next_action is null
+                                       and status not in ('new', 'future')) as no_next
+               from user_company where user_id = %s and status not in ('rejected', 'passed')""", (UID,)).fetchone()
         by = {r["status"]: r["n"] for r in c.execute(
             "select status, count(*) as n from user_company where user_id = %s and status not in ('new', 'rejected', 'passed', 'future') group by 1", (UID,))}
+        # Each buy box: how many companies fit it, and how many of those score well.
+        boxes = [dict(r) for r in c.execute(
+            """select b.id, b.name, coalesce(x.n, 0) as n, coalesce(x.strong, 0) as strong, coalesce(x.good, 0) as good
+               from buy_box b left join lateral (
+                 select count(*) as n, count(*) filter (where s.score >= 80) as strong,
+                        count(*) filter (where s.score >= 60 and s.score < 80) as good
+                 from score s where s.buy_box_id = b.id and not s.excluded) x on true
+               where b.user_id = %s and b.is_active order by b.id""", (UID,))]
+        # Changes on the companies you follow, a count for each of the last seven days (oldest first).
+        days = {r["d"]: r["n"] for r in c.execute(
+            """select (current_date - ch.detected_at::date) as d, count(*) as n
+               from user_company uc join company_change ch on ch.company_number = uc.company_number
+               where uc.user_id = %s and uc.status not in ('rejected', 'passed')
+                 and ch.detected_at >= current_date - 6 group by 1""", (UID,))}
     phases = []
     for key, label in stages.PHASES:
         if key in ("future", "closed"):
             continue
         phases.append({"value": key, "label": label, "n": sum(n for st, n in by.items() if stages.PHASE_OF.get(st) == key)})
-    return {"due": due["due"], "late": due["late"],
-            "bands": [bands["b0"], bands["b40"], bands["b60"], bands["b80"]], "phases": phases}
+    return {"due": due["due"], "late": due["late"], "next_due": due["next_due"], "no_next": due["no_next"],
+            "phases": phases, "boxes": boxes, "week": [days.get(d, 0) for d in range(6, -1, -1)]}
 
 
 @app.get("/api/nav")
 def nav_live():
-    """Small live figures for the navigation rail: follow-ups due, open targets by score band,
-    deals by phase. Cheap (your own companies and the targets table) and cached for a minute."""
+    """Small live figures for the navigation rail: follow-ups, deals by phase, each buy box's
+    matches, and the week's changes on your companies. Cached for a minute."""
     return cached("nav_live", 60, _nav_live)
 
 

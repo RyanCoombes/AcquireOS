@@ -2621,5 +2621,7 @@ def test_nav_live_figures(loaded):
     r = TestClient(app).get("/api/nav").json()
     assert (r["due"], r["late"]) == (2, 1)
     assert {p["value"]: p["n"] for p in r["phases"]} == {"assess": 1, "engage": 1, "deal": 0, "owned": 0}   # future is not a deal
-    assert len(r["bands"]) == 4 and all(isinstance(n, int) for n in r["bands"])
+    assert r["next_due"] == str(date.today() + timedelta(days=9)) and r["no_next"] == 0 and len(r["week"]) == 7
+    box = r["boxes"][0]
+    assert box["name"] and box["n"] >= box["strong"] + box["good"] > 0
     api_mod._CACHE.pop("nav_live", None)

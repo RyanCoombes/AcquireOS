@@ -4,7 +4,8 @@ import { createPortal } from "react-dom";
 import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import "./styles.css";
 import "./skin-ledger.css";
-import { ACCENTS, NAVS, applySkin, getRecent, setNav, setSkin, useSkin } from "./skin";
+import { ACCENTS, GLOWS, NAVS, applySkin, getRecent, setEffects, setNav, setSkin, useSkin } from "./skin";
+import Dots from "./components/Dots";
 
 applySkin();  // before the first paint
 import { api, type Meta } from "./api";
@@ -109,7 +110,7 @@ const MARK = <svg viewBox="0 0 22 22" aria-hidden><path d="M4 18 11 4l7 14M7.5 1
 
 /** Look, accent colour and navigation style, behind a cog at the foot of the rail. */
 function RailSettings() {
-  const { accent, nav } = useSkin();
+  const { accent, nav, glow, drift } = useSkin();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const pop = useRef<HTMLDivElement>(null);
@@ -142,6 +143,24 @@ function RailSettings() {
               <button key={col} className={accent === col ? "on" : ""} style={{ background: col }} aria-label={`${name} accent`}
                       aria-pressed={accent === col} title={name} onClick={() => setSkin("ledger", col)} />
             ))}
+            <label className={`rset-pick ${ACCENTS.some(([c]) => c === accent) ? "" : "on"}`} title="Pick any colour">
+              <input type="color" value={accent} aria-label="Pick any accent colour" onChange={(e) => setSkin("ledger", e.target.value)} />
+            </label>
+          </div>
+          <div className="rset-l">Glow</div>
+          <div className="rset-seg" role="group" aria-label="Glow">
+            {GLOWS.map(([key, label]) => <button key={key} className={glow === key ? "on" : ""} aria-pressed={glow === key} onClick={() => setEffects({ glow: key })}>{label}</button>)}
+          </div>
+          <div className="rset-l">Dots drift when idle</div>
+          <div className="rset-seg" role="group" aria-label="Dots drift when idle">
+            <button className={drift ? "on" : ""} aria-pressed={drift} onClick={() => setEffects({ drift: true })}>On</button>
+            <button className={!drift ? "on" : ""} aria-pressed={!drift} onClick={() => setEffects({ drift: false })}>Off</button>
+          </div>
+          <div className="rset-l">Data</div>
+          <div className="rset-links">
+            <Link to="/import" onClick={() => setOpen(false)}>Data and updates</Link>
+            <Link to="/reports" onClick={() => setOpen(false)}>Reports</Link>
+            <Link to="/connect" onClick={() => setOpen(false)}>Connect AI</Link>
           </div>
           <div className="rset-l">Look</div>
           <button className="rset-old" onClick={() => setSkin("classic")}>Go back to the old look</button>
@@ -167,6 +186,7 @@ function Rail({ meta }: { meta: Meta | null }) {
   const narrow = useNarrow();  // the tiles and tabs need the full height of a wide screen
   if (!narrow && nav === "live") return <LiveRail meta={meta} />;
   if (!narrow && nav === "tabs") return <TabsRail meta={meta} />;
+  if (!narrow && nav === "dock") return <DockNav meta={meta} />;
   return <IconRail meta={meta} />;
 }
 
@@ -189,60 +209,107 @@ function IconRail({ meta }: { meta: Meta | null }) {
         );
       })}
       <div className="rfoot"><RailSettings /></div>
+      <Dots tone="dark" />
+    </nav>
+  );
+}
+
+/** Dock navigation: a floating bar at the bottom, so the page has the whole width. */
+function DockNav({ meta }: { meta: Meta | null }) {
+  const loc = useLocation();
+  const cur = sectionOf(loc.pathname);
+  const c = meta?.counts;
+  const badge: Record<string, [number | undefined, boolean]> = { deals: [c?.tracked, false], watching: [c?.pipeline_new, true] };
+  return (
+    <nav className="dock" aria-label="Main">
+      {SECTIONS.map((s) => {
+        const [n, alert] = badge[s.key] ?? [undefined, false];
+        return (
+          <Link key={s.key} to={sectionLink(s.key, s.pages[0][0], c?.pipeline_new)}
+                className={`ditem ${cur?.key === s.key ? "on" : ""}`} aria-current={cur?.key === s.key ? "page" : undefined}>
+            <Icon name={s.icon} /><span>{s.label}</span>
+            {n ? <i className={`rbadge ${alert ? "alert" : ""}`}>{n > 99 ? "99+" : n}</i> : null}
+          </Link>
+        );
+      })}
+      <span className="dsep" aria-hidden />
+      <RailSettings />
     </nav>
   );
 }
 
 const dots = (n: number, cls = "") => Array.from({ length: Math.min(n, 8) }, (_, i) => <i key={cls + i} className={cls} />);
 
-/** Live navigation: each section is a small panel showing what is in it now. */
+/** Live navigation: each section shows what is in it now. Buy boxes sit under Find, one row each;
+    Data and Reports are in Settings. */
 function LiveRail({ meta }: { meta: Meta | null }) {
   const loc = useLocation();
   const cur = sectionOf(loc.pathname);
   const c = meta?.counts;
   const [live, setLive] = useState<Awaited<ReturnType<typeof api.nav>> | null>(null);
   const [recent, setRecent] = useState(getRecent);
-  useEffect(() => { api.nav().then(setLive).catch(() => {}); }, [loc.pathname]);
+  useEffect(() => {
+    let off = false;
+    const load = () => api.nav().then((v) => { if (!off) setLive(v); }).catch(() => {});
+    load();
+    const t = window.setInterval(load, 60000);  // keeps itself current while the app is open
+    return () => { off = true; window.clearInterval(t); };
+  }, [loc.pathname]);
   useEffect(() => {
     const on = () => setRecent(getRecent());
     window.addEventListener("ao-recent", on);
     return () => window.removeEventListener("ao-recent", on);
   }, []);
   const n = (v?: number | null) => (v ?? 0).toLocaleString("en-GB");
-  const top = Math.max(1, ...(live?.bands ?? []));
+  const short = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  const on = (...keys: string[]) => (cur && keys.includes(cur.key) ? "on" : "");
   const most = Math.max(1, ...(live?.phases ?? []).map((p) => p.n));
-  const boxes = meta?.buy_boxes.filter((b) => b.is_active).length ?? 0;
-  const imp = c?.last_import ? new Date(c.last_import).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null;
-  const cap: Record<string, string> = {
-    today: !live ? "" : live.due ? `${n(live.due)} due${live.late ? ` · ${n(live.late)} late` : ""}` : "nothing due",
-    find: c ? `${n(c.in_scope)} targets` : "",
-    deals: c ? `${n(c.tracked)} in progress` : "",
-    watching: c?.pipeline_new ? `${n(c.pipeline_new)} unread` : "all read",
-    boxes: meta ? `${boxes} active` : "",
-    data: imp ? `loaded ${imp}` : "",
-  };
-  const viz: Record<string, React.ReactNode> = {
-    today: live && live.due > 0 ? <span className="lviz due" aria-hidden>{dots(live.late, "late")}{dots(live.due - live.late)}</span> : null,
-    find: live && live.bands.some(Boolean) ? (
-      <span className="lviz cols" aria-hidden title="Open targets by score: under 40, 40 to 59, 60 to 79, 80 and over">
-        {live.bands.map((b, i) => <i key={i} style={{ "--h": b ? Math.max(1, Math.round((b / top) * 4)) : 0 } as React.CSSProperties} />)}
-      </span>) : null,
-    deals: live && live.phases.some((p) => p.n) ? (
-      <span className="lviz bars" aria-hidden>
-        {live.phases.map((p) => <i key={p.value} title={`${p.label}: ${p.n}`} style={{ "--w": `${(p.n / most) * 100}%` } as React.CSSProperties} />)}
-      </span>) : null,
-    watching: c?.pipeline_new ? <span className="lviz due" aria-hidden>{dots(c.pipeline_new, "new")}</span> : null,
-  };
+  const week = live?.week ?? [], weekTop = Math.max(1, ...week), weekAll = week.reduce((a, b) => a + b, 0);
+  const bb = new URLSearchParams(loc.search).get("bb");
+  const today = !live ? "" : live.due ? `${n(live.due)} due${live.late ? ` · ${n(live.late)} late` : ""}`
+    : live.next_due ? `next ${short(live.next_due)}` : "nothing due";
   return (
     <nav className="lrail" aria-label="Main">
       <Link to="/" className="lbrand" aria-label="AcquireOS: Today"><span className="rmark">{MARK}</span>AcquireOS</Link>
-      {SECTIONS.map((s) => (
-        <Link key={s.key} to={sectionLink(s.key, s.pages[0][0], c?.pipeline_new)}
-              className={`ltile ${cur?.key === s.key ? "on" : ""}`} aria-current={cur?.key === s.key ? "page" : undefined}>
-          <span className="lhd">{s.label}<span className="lcap">{cap[s.key] ?? ""}</span></span>
-          {viz[s.key]}
-        </Link>
-      ))}
+
+      <Link to="/" className={`ltile ${on("today")}`} aria-current={on("today") ? "page" : undefined}>
+        <span className="lhd">Today<span className="lcap">{today}</span></span>
+        {live && live.due > 0 && <span className="lviz due" aria-hidden>{dots(live.late, "late")}{dots(live.due - live.late)}</span>}
+        {live && !live.due && live.no_next > 0 && <span className="lline">{n(live.no_next)} deal{live.no_next === 1 ? " has" : "s have"} no next step</span>}
+      </Link>
+
+      <div className={`ltile lfind ${on("find", "boxes")}`}>
+        <Link to="/targets" className="lhd" aria-current={on("find") ? "page" : undefined}>Find<span className="lcap">{c ? `${n(c.in_scope)} targets` : ""}</span></Link>
+        {(live?.boxes ?? []).map((b) => (
+          <Link key={b.id} to={`/targets?bb=${b.id}`} className={`lbox ${loc.pathname === "/targets" && bb === String(b.id) ? "cur" : ""}`}
+                title={`${b.name}: ${n(b.n)} companies fit. ${n(b.strong)} score 80 or more, ${n(b.good)} score 60 to 79.`}>
+            <span className="lbn">{b.name}</span><span className="lcap">{n(b.strong)} strong</span>
+            <span className="lmix" aria-hidden>
+              <i className="s" style={{ width: `${b.n ? (b.strong / b.n) * 100 : 0}%` }} /><i className="g" style={{ width: `${b.n ? (b.good / b.n) * 100 : 0}%` }} />
+            </span>
+          </Link>
+        ))}
+        <Link to="/buy-box" className="lmore" aria-current={on("boxes") ? "page" : undefined}>{live && !live.boxes.length ? "Set up a buy box" : "Edit buy boxes"}</Link>
+      </div>
+
+      <Link to="/map" className={`ltile ${on("map")}`} aria-current={on("map") ? "page" : undefined}><span className="lhd">Map</span></Link>
+
+      <Link to="/pipeline" className={`ltile ${on("deals")}`} aria-current={on("deals") ? "page" : undefined}>
+        <span className="lhd">Deals<span className="lcap">{c ? `${n(c.tracked)} in progress` : ""}</span></span>
+        {(live?.phases ?? []).filter((p) => p.n > 0).map((p) => (
+          <span key={p.value} className="lphase"><span>{p.label}</span><span className="lbar"><i style={{ width: `${Math.max(4, (p.n / most) * 100)}%` }} /></span><b>{n(p.n)}</b></span>
+        ))}
+      </Link>
+
+      <Link to={sectionLink("watching", "/changes", c?.pipeline_new)} className={`ltile ${on("watching")}`} aria-current={on("watching") ? "page" : undefined}>
+        <span className="lhd">Watching<span className="lcap">{c?.pipeline_new ? `${n(c.pipeline_new)} unread` : weekAll ? `${n(weekAll)} this week` : "quiet this week"}</span></span>
+        {weekAll > 0 && (
+          <span className="lviz cols" aria-hidden title="Changes on your companies, each of the last seven days">
+            {week.map((v, i) => <i key={i} className={i === 6 ? "now" : ""} style={{ "--h": v ? Math.max(1, Math.round((v / weekTop) * 4)) : 0 } as React.CSSProperties} />)}
+          </span>
+        )}
+      </Link>
+
       {recent.length > 0 && (
         <div className="lrecent">
           <span className="lcap">Opened lately</span>
@@ -250,6 +317,7 @@ function LiveRail({ meta }: { meta: Meta | null }) {
         </div>
       )}
       <div className="rfoot"><RailSettings /></div>
+      <Dots tone="dark" />
     </nav>
   );
 }
@@ -359,6 +427,7 @@ function TopBar() {
         <span className="kbd" aria-hidden>/</span>
       </form>
       <div className="right"><JobBar /></div>
+      <Dots reach={110} />
     </header>
   );
 }

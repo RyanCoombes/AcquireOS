@@ -1,5 +1,6 @@
 // The new look's home page: what needs you, then new matches, your deals and what changed.
 // Same data as the classic Home page; only shown in the new look (see skin.ts).
+import Dots from "../components/Dots";
 import { Link } from "react-router-dom";
 import { StatusMark } from "../components/bits";
 import { ageFrom, CHANGE_KIND, describeChange, int, range, relDays } from "../format";
@@ -22,6 +23,7 @@ export default function Today({ data, which, setWhich, tq, todo, boxes, numbers,
   return (
     <div className="today">
       <div className="td-top">
+        <Dots />
         <div>
           <div className="td-eyebrow">{new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}</div>
           <h1>{n === 0 ? "Nothing needs you today" : `${words[n] ?? `${n} things`} need${n === 1 ? "s" : ""} you today`}</h1>
@@ -68,6 +70,7 @@ export default function Today({ data, which, setWhich, tq, todo, boxes, numbers,
 
         <div className="td-side">
           <section className="td-deals">
+            <Dots tone="dark" />
             <div className="td-head"><h2>Your deals</h2><span className="td-n">{int(h.pipeline)} live</span></div>
             <div className="td-value">{h.pipeline_value_low ? range(h.pipeline_value_low, h.pipeline_value_high) : "—"}</div>
             <div className="td-note">indicative value across live deals (estimates, not valuations)</div>

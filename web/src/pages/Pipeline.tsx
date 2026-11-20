@@ -1,3 +1,4 @@
+import Dots from "../components/Dots";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type Status } from "../api";
@@ -315,6 +316,7 @@ export default function Pipeline() {
           })}
         </div>
         <div className={skin === "ledger" && peek ? "deal-layout" : undefined}>
+        <div className="board-wrap"><Dots />
         <div className="board">
           {cols.map((s) => {
             const items = rows.filter((r) => r.status === s.value);
@@ -409,6 +411,7 @@ export default function Pipeline() {
               </div>
             );
           })}
+        </div>
         </div>
         {skin === "ledger" && peek && all.some((r) => r.company_number === peek) && (
           <DealPeek key={peek} num={peek} statuses={data.statuses} onClose={() => setPeek(null)}
