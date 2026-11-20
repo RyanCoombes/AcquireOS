@@ -634,6 +634,16 @@ def research_brief(company_number: str) -> str:
 
 
 @server.tool(description=(
+    "Remove a wrong website or LinkedIn address from a company. which: website|linkedin. reason: why it is wrong "
+    "(e.g. belongs to a different company with a similar name). The old address and reason are kept in the research "
+    "history. To replace an address with the right one, call save_enrichment with the new website or linkedin instead: "
+    "it overwrites the old one. Remove only when you have no correct address to put in its place."))
+def remove_link(company_number: str, which: str, reason: str) -> str:
+    with db.conn() as c:
+        return _j(enrich.remove_link(c, company_number, which, reason, by="claude (mcp)"))
+
+
+@server.tool(description=(
     "Check a website for a company: fetches it (and its contact, about and legal pages) and confirms it by the "
     "company number (high) or registered postcode (medium) on the site. A confirmed site is saved as the "
     "company's website with the page as its source."))
@@ -713,6 +723,7 @@ def audit_and_enrich(batch_size: int = 10, check: str = "all") -> str:
    - Call research_brief and search the web with its queries (the site may be under a previous, parent,
      subsidiary or trading name). Pass the most likely site to check_website: it saves it only if the
      company number or postcode is on it. If nothing confirms, do not save a website.
+     If a saved website or LinkedIn is wrong, replace it with save_enrichment, or take it off with remove_link.
    - Decide business_type, whether revenue looks recurring (contracts, subscriptions, managed services,
      support plans) and whether it does field-service or van-based work (installations, engineers on site).
    - Check the careers page and job adverts for how staff work (remote, hybrid or on-site): work_model.

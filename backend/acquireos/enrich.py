@@ -247,6 +247,34 @@ def save_enrichment(conn, company_number: str, *, source_url: str, website: str 
     return {"saved": list(given), "enrichment": row, "score_now": sc}
 
 
+REMOVABLE = {"website": "Website", "linkedin": "LinkedIn"}
+
+
+def remove_link(conn, company_number: str, which: str, reason: str, by: str = "claude") -> dict:
+    """Take a wrong website or LinkedIn address off a company. The old address and the
+    reason stay in the research history. A removed website is not looked for again by the
+    automatic check for six months (it would likely find the same wrong site); its logo goes too."""
+    num = company_number.strip().upper()
+    if which not in REMOVABLE:
+        raise EnrichError(f"which must be one of {list(REMOVABLE)}")
+    if not reason or not reason.strip():
+        raise EnrichError("Say why it is wrong (reason)")
+    cur = conn.execute(f"select {which} as v from enrichment where company_number = %s", (num,)).fetchone()
+    if not cur or not cur["v"]:
+        return {"removed": None, "message": f"No {REMOVABLE[which]} is saved for {num}"}
+    conn.execute(f"update enrichment set {which} = null, updated_at = now(), updated_by = %s where company_number = %s", (by, num))
+    if which == "website":
+        conn.execute("""insert into website_check (company_number, result) values (%s, 'none')
+                        on conflict (company_number) do update set result = 'none', checked_at = now()""", (num,))
+        conn.execute("delete from company_logo where company_number = %s and not manual", (num,))
+    conn.execute("""insert into research (company_number, kind, content, source_url, source_label, created_by, confidence)
+                    values (%s, %s, %s, %s, %s, %s, 'high')""",
+                 (num, "website" if which == "website" else "contact",
+                  f"{REMOVABLE[which]} removed: {cur['v']}. {reason.strip()}", cur["v"], f"Removed by {by}", by))
+    scoring.rescore(conn, company_number=num)
+    return {"removed": cur["v"], "which": which}
+
+
 def flag_issue(conn, company_number: str | None, issue: str, detail: str | None = None,
                suggested_fix: str | None = None, by: str = "claude") -> dict:
     if not issue.strip():

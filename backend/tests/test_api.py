@@ -2580,3 +2580,26 @@ def test_every_column_sorts_both_ways_through_an_index_path(loaded):
                 assert len({x["company_number"] for x in rows}) == len(rows) >= 4   # every company once, none lost
         first = cl.get("/api/companies", params={"sort": "work", "dir": "asc"}).json()["rows"][0]
         assert first["company_number"] == "01000001"   # the one with a figure comes first
+
+
+def test_ai_can_replace_and_remove_wrong_links(loaded):
+    from acquireos import enrich
+
+    num = loaded.execute("select company_number from company limit 1").fetchone()["company_number"]
+    enrich.save_enrichment(loaded, num, source_url="manual", website="https://wrong.example", linkedin="linkedin.com/company/wrong")
+    # Replacing: a new save overwrites the old address.
+    enrich.save_enrichment(loaded, num, source_url="https://right.example/about", website="right.example")
+    assert loaded.execute("select website from enrichment where company_number = %s", (num,)).fetchone()["website"] == "https://right.example"
+    with pytest.raises(enrich.EnrichError):
+        enrich.remove_link(loaded, num, "website", "")          # a reason is required
+    with pytest.raises(enrich.EnrichError):
+        enrich.remove_link(loaded, num, "summary", "wrong")      # only addresses
+    r = enrich.remove_link(loaded, num, "website", "Belongs to a different company with a similar name")
+    assert r["removed"] == "https://right.example"
+    assert enrich.remove_link(loaded, num, "linkedin", "Wrong company")["removed"] == "https://linkedin.com/company/wrong"
+    e = loaded.execute("select website, linkedin from enrichment where company_number = %s", (num,)).fetchone()
+    assert e["website"] is None and e["linkedin"] is None
+    # The automatic check leaves it alone for now, and the history keeps what was removed and why.
+    assert loaded.execute("select result from website_check where company_number = %s", (num,)).fetchone()["result"] == "none"
+    assert loaded.execute("select 1 from research where company_number = %s and content like 'Website removed: https://right.example. Belongs%%'", (num,)).fetchone()
+    assert enrich.remove_link(loaded, num, "website", "again")["removed"] is None
