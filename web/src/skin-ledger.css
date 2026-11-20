@@ -185,8 +185,9 @@
 .dotfield { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: -1; }
 :root[data-skin="ledger"] :is(.rail, .lrail, .today .td-top, .today .td-deals, .board-wrap) { isolation: isolate; }
 :root[data-skin="ledger"] :is(.today .td-top, .today .td-deals, .board-wrap) { position: relative; }
-.today .td-top .dotfield { -webkit-mask-image: linear-gradient(90deg, transparent 0, transparent 56%, #000 82%); mask-image: linear-gradient(90deg, transparent 0, transparent 56%, #000 82%); }
-:root[data-skin="ledger"] .today .td-right { background: var(--canvas); border-radius: 10px; padding: 4px 8px; }
+.today .td-top .dotfield { -webkit-mask-image: radial-gradient(ellipse 36% 70% at 80% 45%, #000 0, rgba(0, 0, 0, .7) 38%, transparent 100%);
+  mask-image: radial-gradient(ellipse 36% 70% at 80% 45%, #000 0, rgba(0, 0, 0, .7) 38%, transparent 100%); }
+:root[data-skin="ledger"] .today .td-right { background: var(--canvas); box-shadow: 0 0 10px 8px var(--canvas); border-radius: 10px; }
 .today .td-deals .dotfield { opacity: .75; border-radius: inherit; -webkit-mask-image: linear-gradient(90deg, transparent 0, transparent 34%, #000 66%); mask-image: linear-gradient(90deg, transparent 0, transparent 34%, #000 66%); }
 :is(.rail, .lrail) .dotfield { -webkit-mask-image: linear-gradient(180deg, transparent 0, transparent 64%, #000 94%); mask-image: linear-gradient(180deg, transparent 0, transparent 64%, #000 94%); }
 :root[data-skin="ledger"] .board-wrap :is(.col h3, .col .desc, .grpsep) { background: var(--canvas); }
@@ -369,15 +370,17 @@
 
 /* The new look on every page: dots beside each page heading, and glow on the things you point at */
 :root[data-skin="ledger"] .pagehead { position: relative; isolation: isolate; }
-.pagehead .dotfield { -webkit-mask-image: linear-gradient(90deg, transparent 0, transparent 46%, #000 76%); mask-image: linear-gradient(90deg, transparent 0, transparent 46%, #000 76%); }
-:root[data-skin="ledger"] .pagehead :is(.metaline, .lede, .crumb) { background: var(--canvas); }
-:root[data-skin="ledger"] .pagehead .right { background: var(--canvas); border-radius: 12px; padding: 4px 6px; }
+/* The field fades out on every side, so it never ends in a hard edge */
+.pagehead .dotfield { inset: -24px -12px -18px 0; width: calc(100% + 12px); height: calc(100% + 42px);
+  -webkit-mask-image: radial-gradient(ellipse 38% 62% at 80% 46%, #000 0, rgba(0, 0, 0, .7) 38%, transparent 100%);
+  mask-image: radial-gradient(ellipse 38% 62% at 80% 46%, #000 0, rgba(0, 0, 0, .7) 38%, transparent 100%); }
+/* Words in the heading sit on a soft-edged patch of the page colour, not a hard block */
+:root[data-skin="ledger"] .pagehead :is(.metaline, .lede, .right) { background: var(--canvas); box-shadow: 0 0 10px 8px var(--canvas); border-radius: 10px; }
 :root[data-skin="ledger"] :is(.kpi, .cokpis) { transition: box-shadow .3s, border-color .25s; }
 :root[data-skin="ledger"] :is(.kpi, .cokpis):hover { border-color: color-mix(in srgb, var(--accent) calc(45% * var(--glow-k)), var(--line));
   box-shadow: 0 18px calc(44px * var(--glow-k)) -26px var(--glow); }
 :root[data-skin="ledger"] .list tbody tr:hover td { background: var(--teal-soft); }
 :root[data-skin="ledger"] .list tbody tr:hover td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
-:root[data-skin="ledger"] .cokpi:first-child b { text-shadow: 0 0 calc(18px * var(--glow-k)) var(--glow); }
 /* Tabs within a page: a dotted marker under the one you are on, as in the navigation */
 :root[data-skin="ledger"] .subnav a.active { border-bottom-color: transparent; position: relative; }
 :root[data-skin="ledger"] .subnav a.active::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -3px; height: 5px;
@@ -387,14 +390,12 @@
 /* Graphs: quieter grids, lines that draw in, bars that rise, and a little depth. Nothing here moves
    again after it has arrived, and none of it runs when the device asks for reduced motion. */
 :root[data-skin="ledger"] :is(.combo .gl, .lc-wrap .gl, .miniline .gl, .chart .grid, .balchart .gl) { stroke: var(--line-2); stroke-dasharray: 0.1 6; stroke-linecap: round; stroke-width: 1.6; }
-:root[data-skin="ledger"] :is(.combo, .lc-wrap, .miniline, .balchart) rect[rx] { transition: filter .2s; }
-:root[data-skin="ledger"] :is(.combo, .lc-wrap, .balchart) rect[rx]:hover { filter: brightness(1.08) drop-shadow(0 0 calc(8px * var(--glow-k)) var(--glow)); }
 :root[data-skin="ledger"] :is(.combo .ln, .lc-wrap, .miniline, .chart, .balchart) polyline:not(.a),
 :root[data-skin="ledger"] .chart path.line { filter: drop-shadow(0 5px 5px rgba(15, 27, 45, .14)); stroke-linejoin: round; stroke-linecap: round; }
 :root[data-skin="ledger"] .chart .dot, :root[data-skin="ledger"] .miniline .mc { transition: r .15s; }
 :root[data-skin="ledger"] .ovt-sp .d { filter: drop-shadow(0 0 calc(4px * var(--glow-k)) var(--accent)); }
 :root[data-skin="ledger"] .hbars .track i { background: color-mix(in srgb, var(--accent) 45%, #fff); transform-origin: left; }
-:root[data-skin="ledger"] .hbars tr:hover .track i, :root[data-skin="ledger"] .hbars tr.accent .track i { background: var(--accent); box-shadow: 0 0 calc(8px * var(--glow-k)) var(--glow); }
+:root[data-skin="ledger"] .hbars tr:hover .track i, :root[data-skin="ledger"] .hbars tr.accent .track i { background: var(--accent); }
 :root[data-skin="ledger"] .today .td-stage .bar i { transform-origin: left; }
 @media (prefers-reduced-motion: no-preference) {
   :root[data-skin="ledger"] :is(.combo, .lc-wrap, .balchart) rect[rx] { animation: ao-rise .5s cubic-bezier(.2, .7, .2, 1) both; }

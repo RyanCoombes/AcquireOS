@@ -25,7 +25,7 @@ export default function Dots({ tone = "light", reach = 160 }: { tone?: "light" |
     const snap = (v: number, up?: boolean) => (up ? Math.ceil(v / GAP) : Math.floor(v / GAP)) * GAP;
 
     const layout = () => {
-      W = host.clientWidth; H = host.clientHeight;
+      W = cv.clientWidth; H = cv.clientHeight;  // the canvas may reach a little past its host, to fade out
       if (!W || !H) return;
       dpr = Math.min(window.devicePixelRatio || 1, 2);
       for (const c of [cv, base]) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
