@@ -6,6 +6,7 @@ import "./styles.css";
 import "./skin-ledger.css";
 import { ACCENTS, GLOWS, NAVS, applySkin, getRecent, setEffects, setNav, setSkin, useSkin } from "./skin";
 import Dots from "./components/Dots";
+import Jump from "./components/Jump";
 
 applySkin();  // before the first paint
 import { api, type Meta } from "./api";
@@ -404,7 +405,7 @@ function TopBar() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName);
-      if ((e.key === "/" && !typing) || (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey))) {
+      if (e.key === "/" && !typing) {
         e.preventDefault();
         ref.current?.focus();
       }
@@ -426,6 +427,8 @@ function TopBar() {
         <input ref={ref} type="search" placeholder="Search by company, number, postcode or owner's name" aria-label="Search companies" />
         <span className="kbd" aria-hidden>/</span>
       </form>
+      <button type="button" className="jump-open" onClick={() => window.dispatchEvent(new Event("ao-jump"))} title="Jump to a page, buy box or company">
+        Jump to… <span className="kbd" aria-hidden>Ctrl K</span></button>
       <div className="right"><JobBar /></div>
       <Dots reach={110} />
     </header>
@@ -453,10 +456,23 @@ function App() {
     // On phones the menu scrolls sideways: bring the current page into view.
     document.querySelector(".side a.nav.active")?.scrollIntoView({ inline: "center", block: "nearest" });
   }, [loc.pathname]);
+  // The new look draws its dots behind each page's heading: find the heading the page has put up.
+  const [head, setHead] = useState<Element | null>(null);
+  useEffect(() => {
+    if (skin !== "ledger") { setHead(null); return; }
+    const look = () => setHead(document.querySelector("main .pagehead"));
+    look();
+    const mo = new MutationObserver(look);
+    const main = document.querySelector("main");
+    if (main) mo.observe(main, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, [skin, loc.pathname]);
   return (
     <div className="shell">
       {skin === "ledger" ? <Rail meta={meta} /> : <Side meta={meta} />}
       <div className="content">
+        <Jump meta={meta} />
+        {head && createPortal(<Dots />, head)}
         <TopBar />
         {skin === "ledger" && <SubNav meta={meta} />}
         <main>
