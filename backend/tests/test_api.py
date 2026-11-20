@@ -2111,7 +2111,7 @@ def test_next_action_tick_off_and_undo(loaded):
     c = loaded
     n = c.execute("select company_number from company order by company_number limit 1").fetchone()["company_number"]
     c.execute("""insert into user_company (user_id, company_number, status, next_action, next_action_on)
-                 values (%s, %s, 'contacted', 'Call the owner', current_date - 3)
+                 values (1, %s, 'contacted', 'Call the owner', current_date - 3)
                  on conflict (user_id, company_number) do update set status = 'contacted', next_action = 'Call the owner',
                  next_action_on = current_date - 3""", (n,))
     c.commit()
@@ -2427,7 +2427,7 @@ def test_shareholder_sweep_goes_pipeline_targets_then_everyone_in_batches(loaded
     c.execute("delete from shareholder"); c.execute("delete from ch_fetch")
     nums = [r["company_number"] for r in c.execute("select company_number from company order by company_number")]
     pipe = nums[0]
-    c.execute("""insert into user_company (user_id, company_number, status) values (%s, %s, 'contacted')
+    c.execute("""insert into user_company (user_id, company_number, status) values (1, %s, 'contacted')
                  on conflict (user_id, company_number) do update set status = 'contacted'""", (pipe,))
     box = [r["company_number"] for r in c.execute("select company_number from company_best where company_number <> %s order by 1", (pipe,))]
     other = [n for n in nums if n not in box and n != pipe]
