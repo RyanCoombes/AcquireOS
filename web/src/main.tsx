@@ -430,7 +430,6 @@ function TopBar() {
       <button type="button" className="jump-open" onClick={() => window.dispatchEvent(new Event("ao-jump"))} title="Jump to a page, buy box or company">
         Jump to… <span className="kbd" aria-hidden>Ctrl K</span></button>
       <div className="right"><JobBar /></div>
-      <Dots reach={110} />
     </header>
   );
 }

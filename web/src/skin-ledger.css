@@ -185,7 +185,6 @@
 .dotfield { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: -1; }
 :root[data-skin="ledger"] :is(.rail, .lrail, .today .td-top, .today .td-deals, .board-wrap) { isolation: isolate; }
 :root[data-skin="ledger"] :is(.today .td-top, .today .td-deals, .board-wrap) { position: relative; }
-.topbar .dotfield { -webkit-mask-image: linear-gradient(90deg, transparent 0, transparent 48%, #000 74%); mask-image: linear-gradient(90deg, transparent 0, transparent 48%, #000 74%); }
 .today .td-top .dotfield { -webkit-mask-image: linear-gradient(90deg, transparent 0, transparent 56%, #000 82%); mask-image: linear-gradient(90deg, transparent 0, transparent 56%, #000 82%); }
 :root[data-skin="ledger"] .today .td-right { background: var(--canvas); border-radius: 10px; padding: 4px 8px; }
 .today .td-deals .dotfield { opacity: .75; border-radius: inherit; -webkit-mask-image: linear-gradient(90deg, transparent 0, transparent 34%, #000 66%); mask-image: linear-gradient(90deg, transparent 0, transparent 34%, #000 66%); }
@@ -373,8 +372,8 @@
 .pagehead .dotfield { -webkit-mask-image: linear-gradient(90deg, transparent 0, transparent 46%, #000 76%); mask-image: linear-gradient(90deg, transparent 0, transparent 46%, #000 76%); }
 :root[data-skin="ledger"] .pagehead :is(.metaline, .lede, .crumb) { background: var(--canvas); }
 :root[data-skin="ledger"] .pagehead .right { background: var(--canvas); border-radius: 12px; padding: 4px 6px; }
-:root[data-skin="ledger"] :is(main section, .panel, .kpi, .cokpis, table.list) { transition: box-shadow .3s, border-color .25s; }
-:root[data-skin="ledger"] :is(main section, .panel, .kpi, .cokpis):hover { border-color: color-mix(in srgb, var(--accent) calc(45% * var(--glow-k)), var(--line));
+:root[data-skin="ledger"] :is(.kpi, .cokpis) { transition: box-shadow .3s, border-color .25s; }
+:root[data-skin="ledger"] :is(.kpi, .cokpis):hover { border-color: color-mix(in srgb, var(--accent) calc(45% * var(--glow-k)), var(--line));
   box-shadow: 0 18px calc(44px * var(--glow-k)) -26px var(--glow); }
 :root[data-skin="ledger"] .list tbody tr:hover td { background: var(--teal-soft); }
 :root[data-skin="ledger"] .list tbody tr:hover td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
@@ -384,3 +383,34 @@
 :root[data-skin="ledger"] .subnav a.active::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -3px; height: 5px;
   background: radial-gradient(circle, var(--accent) 1.5px, transparent 1.9px) 0 0 / 7px 5px repeat-x; filter: drop-shadow(0 0 calc(5px * var(--glow-k)) var(--accent)); }
 :root[data-skin="ledger"] .secnav a.on { box-shadow: 0 0 calc(16px * var(--glow-k)) -6px var(--accent); }
+
+/* Graphs: quieter grids, lines that draw in, bars that rise, and a little depth. Nothing here moves
+   again after it has arrived, and none of it runs when the device asks for reduced motion. */
+:root[data-skin="ledger"] :is(.combo .gl, .lc-wrap .gl, .miniline .gl, .chart .grid, .balchart .gl) { stroke: var(--line-2); stroke-dasharray: 0.1 6; stroke-linecap: round; stroke-width: 1.6; }
+:root[data-skin="ledger"] :is(.combo, .lc-wrap, .miniline, .balchart) rect[rx] { transition: filter .2s; }
+:root[data-skin="ledger"] :is(.combo, .lc-wrap, .balchart) rect[rx]:hover { filter: brightness(1.08) drop-shadow(0 0 calc(8px * var(--glow-k)) var(--glow)); }
+:root[data-skin="ledger"] :is(.combo .ln, .lc-wrap, .miniline, .chart, .balchart) polyline:not(.a),
+:root[data-skin="ledger"] .chart path.line { filter: drop-shadow(0 5px 5px rgba(15, 27, 45, .14)); stroke-linejoin: round; stroke-linecap: round; }
+:root[data-skin="ledger"] .chart .dot, :root[data-skin="ledger"] .miniline .mc { transition: r .15s; }
+:root[data-skin="ledger"] .ovt-sp .d { filter: drop-shadow(0 0 calc(4px * var(--glow-k)) var(--accent)); }
+:root[data-skin="ledger"] .hbars .track i { background: color-mix(in srgb, var(--accent) 45%, #fff); transform-origin: left; }
+:root[data-skin="ledger"] .hbars tr:hover .track i, :root[data-skin="ledger"] .hbars tr.accent .track i { background: var(--accent); box-shadow: 0 0 calc(8px * var(--glow-k)) var(--glow); }
+:root[data-skin="ledger"] .today .td-stage .bar i { transform-origin: left; }
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-skin="ledger"] :is(.combo, .lc-wrap, .balchart) rect[rx] { animation: ao-rise .5s cubic-bezier(.2, .7, .2, 1) both; }
+  :root[data-skin="ledger"] :is(.combo .ln, .lc-wrap, .miniline, .chart, .balchart) polyline:not(.a),
+  :root[data-skin="ledger"] .chart path.line { animation: ao-draw .8s cubic-bezier(.3, .6, .2, 1) both; }
+  :root[data-skin="ledger"] :is(.combo, .lc-wrap, .miniline, .chart) :is(circle, text.bv, text.lv, text.mv, .value) { animation: ao-fade .5s .35s both; }
+  :root[data-skin="ledger"] :is(.hbars .track i, .today .td-stage .bar i, .lbar i, .lmix) { animation: ao-grow .6s cubic-bezier(.2, .7, .2, 1) both; }
+  /* Pages settle in rather than snap: a short fade as each one opens */
+  :root[data-skin="ledger"] main > :is(.pagehead, .today, .company-page, section, .cokpis, table.list) { animation: ao-fade .28s both; }
+}
+@keyframes ao-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes ao-draw { from { clip-path: inset(-20px 100% -20px -20px); } to { clip-path: inset(-20px -20px -20px -20px); } }
+@keyframes ao-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ao-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+/* Small touches on things you press and type in */
+:root[data-skin="ledger"] .btn { transition: background .15s, border-color .15s, box-shadow .2s, transform .1s; }
+:root[data-skin="ledger"] .btn:active:not(:disabled) { transform: translateY(1px); }
+:root[data-skin="ledger"] :is(input, select, textarea):focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); border-color: var(--accent); outline: 0; }
+:root[data-skin="ledger"] .lmix { transform-origin: left; }
