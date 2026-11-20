@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { useSkin } from "../skin";
+import { noteRecent, useSkin } from "../skin";
 import { api, type CompanyDetail } from "../api";
 import { ErrorLine, Flags, Hint, Score, Signals, StatusMark, Toast, useAsync, WatchButton, LogoEditor, NationBadge, TrustBadge, WorkIcon } from "../components/bits";
 import Valuation from "../components/Valuation";
@@ -22,6 +22,8 @@ export default function Company() {
   const bbParam = /^\d+$/.test(params.get("bb") ?? "") ? Number(params.get("bb")) : null;
   const { data, error, setData, reload } = useAsync(() => api.company(num, bbParam), [num, bbParam]);
   const [toast, setToast] = useState<string | null>(null);
+  const coName = data?.company?.name;
+  useEffect(() => { if (coName) noteRecent(num, coName); }, [num, coName]);
 
   const setState = async (patch: Record<string, unknown>) => {
     if (!data) return;

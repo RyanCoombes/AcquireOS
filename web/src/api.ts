@@ -391,6 +391,7 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ key, value, note }) }),
   review: (params: Record<string, string>) =>
     req<{ total: number; rows: { company_number: string; name: string; score: string | null }[] }>("/api/review?" + new URLSearchParams(params)),
+  nav: () => req<{ due: number; late: number; bands: number[]; phases: { value: string; label: string; n: number }[] }>("/api/nav"),
   dashboardFor: (bb: string) => req<Record<string, any>>(`/api/dashboard?bb=${encodeURIComponent(bb)}`),
   cancelJob: (id: number) => req<{ ok: boolean; message: string }>(`/api/jobs/${id}/cancel`, { method: "POST" }),
   changes: (params: Record<string, string>) =>

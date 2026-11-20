@@ -1,9 +1,10 @@
 import { lazy, StrictMode, Suspense, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
 import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import "./styles.css";
 import "./skin-ledger.css";
-import { ACCENTS, applySkin, setSkin, useSkin } from "./skin";
+import { ACCENTS, NAVS, applySkin, getRecent, setNav, setSkin, useSkin } from "./skin";
 
 applySkin();  // before the first paint
 import { api, type Meta } from "./api";
@@ -103,34 +104,176 @@ const SECTIONS: { key: string; label: string; icon: string; pages: [string, stri
 const sectionOf = (path: string) =>
   SECTIONS.find((s) => s.pages.some(([to]) => (to === "/" ? path === "/" : path === to || path.startsWith(to + "/")))) ?? (path.startsWith("/c/") ? SECTIONS[1] : null);
 
+const sectionLink = (key: string, first: string, unread?: number) => (key === "watching" && unread ? "/changes?alerts=1&unread=1" : first);
+const MARK = <svg viewBox="0 0 22 22" aria-hidden><path d="M4 18 11 4l7 14M7.5 13h7" /></svg>;
+
+/** Look, accent colour and navigation style, behind a cog at the foot of the rail. */
+function RailSettings() {
+  const { accent, nav } = useSkin();
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node) && !pop.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", away); document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  return (
+    <div className="rset" ref={box}>
+      <button className="rset-btn" onClick={() => setOpen(!open)} aria-expanded={open} aria-label="Settings" title="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.7 1.7 0 0 0-2.8 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.8-1.200l-.1.1a2 2 0 1 1-2.9-2.900l.1-.1a1.7 1.7 0 0 0-1.2-2.800H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.800l-.1-.1a2 2 0 1 1 2.9-2.900l.1.1a1.7 1.7 0 0 0 2.8-1.200V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.8 1.200l.1-.1a2 2 0 1 1 2.9 2.900l-.1.1a1.7 1.7 0 0 0 1.2 2.800H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
+      </button>
+      {open && createPortal(
+        <div className="rset-pop" ref={pop} role="dialog" aria-label="Settings">
+          <h3>Settings</h3>
+          <div className="rset-l">Navigation</div>
+          <div className="rset-navs">
+            {NAVS.map(([key, label, what]) => (
+              <button key={key} className={nav === key ? "on" : ""} aria-pressed={nav === key} onClick={() => setNav(key)}>
+                <b>{label}</b><span>{what}</span>
+              </button>
+            ))}
+          </div>
+          <div className="rset-l">Accent colour</div>
+          <div className="rset-dots" role="group" aria-label="Accent colour">
+            {ACCENTS.map(([col, name]) => (
+              <button key={col} className={accent === col ? "on" : ""} style={{ background: col }} aria-label={`${name} accent`}
+                      aria-pressed={accent === col} title={name} onClick={() => setSkin("ledger", col)} />
+            ))}
+          </div>
+          <div className="rset-l">Look</div>
+          <button className="rset-old" onClick={() => setSkin("classic")}>Go back to the old look</button>
+          <p className="rset-note">Saved in this browser only.</p>
+        </div>, document.body)}
+    </div>
+  );
+}
+
+function useNarrow() {
+  const q = "(max-width: 860px)";
+  const [narrow, setNarrow] = useState(() => window.matchMedia(q).matches);
+  useEffect(() => {
+    const m = window.matchMedia(q), on = () => setNarrow(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  return narrow;
+}
+
 function Rail({ meta }: { meta: Meta | null }) {
+  const { nav } = useSkin();
+  const narrow = useNarrow();  // the tiles and tabs need the full height of a wide screen
+  if (!narrow && nav === "live") return <LiveRail meta={meta} />;
+  if (!narrow && nav === "tabs") return <TabsRail meta={meta} />;
+  return <IconRail meta={meta} />;
+}
+
+function IconRail({ meta }: { meta: Meta | null }) {
   const loc = useLocation();
-  const { accent } = useSkin();
   const cur = sectionOf(loc.pathname);
   const c = meta?.counts;
   const badge: Record<string, [number | undefined, boolean]> = { deals: [c?.tracked, false], watching: [c?.pipeline_new, true] };
   return (
     <nav className="rail" aria-label="Main">
-      <Link to="/" className="rmark" aria-label="AcquireOS: Today"><svg viewBox="0 0 22 22" aria-hidden><path d="M4 18 11 4l7 14M7.5 13h7" /></svg></Link>
+      <Link to="/" className="rmark" aria-label="AcquireOS: Today">{MARK}</Link>
       {SECTIONS.map((s) => {
         const [n, alert] = badge[s.key] ?? [undefined, false];
         return (
-          <Link key={s.key} to={s.key === "watching" && c?.pipeline_new ? "/changes?alerts=1&unread=1" : s.pages[0][0]}
+          <Link key={s.key} to={sectionLink(s.key, s.pages[0][0], c?.pipeline_new)}
                 className={`ritem ${cur?.key === s.key ? "on" : ""}`} aria-current={cur?.key === s.key ? "page" : undefined}>
             <Icon name={s.icon} /><span>{s.label}</span>
             {n ? <i className={`rbadge ${alert ? "alert" : ""}`} title={alert ? "Unread changes" : "In your pipeline"}>{n > 99 ? "99+" : n}</i> : null}
           </Link>
         );
       })}
-      <div className="rfoot">
-        <div className="rdots" role="group" aria-label="Accent colour">
-          {ACCENTS.map(([col, name]) => (
-            <button key={col} className={`rdot ${accent === col ? "on" : ""}`} style={{ background: col }} aria-label={`${name} accent`}
-                    aria-pressed={accent === col} title={`${name} accent`} onClick={() => setSkin("ledger", col)} />
-          ))}
+      <div className="rfoot"><RailSettings /></div>
+    </nav>
+  );
+}
+
+const dots = (n: number, cls = "") => Array.from({ length: Math.min(n, 8) }, (_, i) => <i key={cls + i} className={cls} />);
+
+/** Live navigation: each section is a small panel showing what is in it now. */
+function LiveRail({ meta }: { meta: Meta | null }) {
+  const loc = useLocation();
+  const cur = sectionOf(loc.pathname);
+  const c = meta?.counts;
+  const [live, setLive] = useState<Awaited<ReturnType<typeof api.nav>> | null>(null);
+  const [recent, setRecent] = useState(getRecent);
+  useEffect(() => { api.nav().then(setLive).catch(() => {}); }, [loc.pathname]);
+  useEffect(() => {
+    const on = () => setRecent(getRecent());
+    window.addEventListener("ao-recent", on);
+    return () => window.removeEventListener("ao-recent", on);
+  }, []);
+  const n = (v?: number | null) => (v ?? 0).toLocaleString("en-GB");
+  const top = Math.max(1, ...(live?.bands ?? []));
+  const most = Math.max(1, ...(live?.phases ?? []).map((p) => p.n));
+  const boxes = meta?.buy_boxes.filter((b) => b.is_active).length ?? 0;
+  const imp = c?.last_import ? new Date(c.last_import).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null;
+  const cap: Record<string, string> = {
+    today: !live ? "" : live.due ? `${n(live.due)} due${live.late ? ` · ${n(live.late)} late` : ""}` : "nothing due",
+    find: c ? `${n(c.in_scope)} targets` : "",
+    deals: c ? `${n(c.tracked)} in progress` : "",
+    watching: c?.pipeline_new ? `${n(c.pipeline_new)} unread` : "all read",
+    boxes: meta ? `${boxes} active` : "",
+    data: imp ? `loaded ${imp}` : "",
+  };
+  const viz: Record<string, React.ReactNode> = {
+    today: live && live.due > 0 ? <span className="lviz due" aria-hidden>{dots(live.late, "late")}{dots(live.due - live.late)}</span> : null,
+    find: live && live.bands.some(Boolean) ? (
+      <span className="lviz cols" aria-hidden title="Open targets by score: under 40, 40 to 59, 60 to 79, 80 and over">
+        {live.bands.map((b, i) => <i key={i} style={{ "--h": b ? Math.max(1, Math.round((b / top) * 4)) : 0 } as React.CSSProperties} />)}
+      </span>) : null,
+    deals: live && live.phases.some((p) => p.n) ? (
+      <span className="lviz bars" aria-hidden>
+        {live.phases.map((p) => <i key={p.value} title={`${p.label}: ${p.n}`} style={{ "--w": `${(p.n / most) * 100}%` } as React.CSSProperties} />)}
+      </span>) : null,
+    watching: c?.pipeline_new ? <span className="lviz due" aria-hidden>{dots(c.pipeline_new, "new")}</span> : null,
+  };
+  return (
+    <nav className="lrail" aria-label="Main">
+      <Link to="/" className="lbrand" aria-label="AcquireOS: Today"><span className="rmark">{MARK}</span>AcquireOS</Link>
+      {SECTIONS.map((s) => (
+        <Link key={s.key} to={sectionLink(s.key, s.pages[0][0], c?.pipeline_new)}
+              className={`ltile ${cur?.key === s.key ? "on" : ""}`} aria-current={cur?.key === s.key ? "page" : undefined}>
+          <span className="lhd">{s.label}<span className="lcap">{cap[s.key] ?? ""}</span></span>
+          {viz[s.key]}
+        </Link>
+      ))}
+      {recent.length > 0 && (
+        <div className="lrecent">
+          <span className="lcap">Opened lately</span>
+          <div>{recent.map((r) => <Link key={r.num} to={`/c/${r.num}`} title={r.name} aria-label={r.name}>{r.name.trim().charAt(0).toUpperCase()}</Link>)}</div>
         </div>
-        <button className="rback" onClick={() => setSkin("classic")}>Old look</button>
-      </div>
+      )}
+      <div className="rfoot"><RailSettings /></div>
+    </nav>
+  );
+}
+
+/** Tabs navigation: section names written up the edge; the open one joins the page. */
+function TabsRail({ meta }: { meta: Meta | null }) {
+  const loc = useLocation();
+  const cur = sectionOf(loc.pathname);
+  const c = meta?.counts;
+  const count: Record<string, [number | undefined, boolean]> = { find: [c?.in_scope, false], deals: [c?.tracked, false], watching: [c?.pipeline_new, true] };
+  return (
+    <nav className="trail" aria-label="Main">
+      <Link to="/" className="rmark" aria-label="AcquireOS: Today">{MARK}</Link>
+      {SECTIONS.map((s) => {
+        const [n, alert] = count[s.key] ?? [undefined, false];
+        return (
+          <Link key={s.key} to={sectionLink(s.key, s.pages[0][0], c?.pipeline_new)}
+                className={`vtab ${cur?.key === s.key ? "on" : ""}`} aria-current={cur?.key === s.key ? "page" : undefined}>
+            {n ? <span className={`vn ${alert ? "alert" : ""}`}>{n > 999 ? "999+" : n}</span> : null}
+            <span className="vl">{s.label}</span>
+          </Link>
+        );
+      })}
+      <div className="rfoot"><RailSettings /></div>
     </nav>
   );
 }

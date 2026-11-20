@@ -57,12 +57,79 @@
                 border-radius: 99px; padding: 0 5px; background: var(--rail-2); color: #fff; }
 .rail .rbadge.alert { background: #c8352b; }
 .rail .rfoot { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 12px; }
-.rail .rdots { display: grid; grid-template-columns: repeat(2, 18px); gap: 6px; }
-.rail .rdot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; padding: 0; cursor: pointer; }
-.rail .rdot.on { border-color: #fff; }
-.rail .rback { border: 0; background: none; color: var(--rail-ink); font: inherit; font-size: 11px; cursor: pointer; padding: 6px 4px; text-decoration: underline;
-               text-underline-offset: 3px; }
-.rail .rback:hover { color: #fff; }
+/* Settings: a cog at the foot of whichever rail is showing */
+.rset-btn { width: 40px; height: 40px; border: 0; border-radius: 10px; background: none; color: var(--rail-ink); cursor: pointer; display: grid; place-items: center; }
+.rset-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.rset-btn:hover, .rset-btn[aria-expanded="true"] { background: var(--rail-2); color: #fff; }
+.rset-pop { position: fixed; left: calc(var(--side) + 10px); bottom: 12px; width: 290px; z-index: 200; background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+            border-radius: 14px; padding: 14px 16px 12px; box-shadow: 0 24px 60px -24px rgba(15, 27, 45, .45); text-align: left; }
+.rset-pop h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+.rset-l { font-family: var(--mono); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin: 12px 0 6px; }
+.rset-navs { display: grid; gap: 6px; }
+.rset-navs button { display: grid; gap: 1px; text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 8px 10px; cursor: pointer;
+                    font: inherit; color: var(--ink-2); min-height: 44px; }
+.rset-navs button b { color: var(--ink); font-weight: 600; }
+.rset-navs button span { font-size: 13px; color: var(--ink-3); }
+.rset-navs button:hover { border-color: var(--line-2); }
+.rset-navs button.on { border-color: var(--accent); background: var(--teal-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.rset-dots { display: flex; gap: 10px; }
+.rset-dots button { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--line); padding: 0; cursor: pointer; }
+.rset-dots button.on { box-shadow: 0 0 0 2px var(--ink); }
+.rset-old { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 0 12px; min-height: 40px; font: inherit; color: var(--ink); cursor: pointer; width: 100%; text-align: left; }
+.rset-old:hover { border-color: var(--line-2); }
+.rset-note { margin: 10px 0 0; font-size: 12.5px; color: var(--ink-3); }
+
+/* Live navigation: a wider dark rail where each section shows what is in it now */
+.lrail { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: var(--rail); color: #fff; display: flex; flex-direction: column; gap: 4px; padding: 14px 10px 10px; }
+.lrail .lbrand { display: flex; align-items: center; gap: 10px; color: #fff; font-weight: 600; font-size: 17px; letter-spacing: -0.01em; padding: 2px 6px 10px; text-decoration: none; }
+.lrail .rmark { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; flex: none; }
+.lrail .rmark svg { width: 17px; height: 17px; fill: none; stroke: #fff; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.ltile { position: relative; display: grid; gap: 7px; padding: 10px 12px 11px; border-radius: 12px; border: 1px solid transparent; color: var(--rail-ink); text-decoration: none; }
+.ltile:hover { border-color: rgba(255, 255, 255, .16); color: #fff; text-decoration: none; }
+.ltile.on { background: var(--rail-2); }
+.ltile.on::before { content: ""; position: absolute; left: -3px; top: 11px; bottom: 11px; width: 5px;
+                    background: radial-gradient(circle, var(--accent) 1.5px, transparent 1.9px) 0 0 / 5px 7px repeat-y; }
+.lhd { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 15px; font-weight: 600; color: #fff; }
+.lcap { font-family: var(--mono); font-size: 11.5px; font-weight: 400; color: var(--rail-ink); white-space: nowrap; letter-spacing: -0.01em; }
+.lviz { display: flex; align-items: flex-end; gap: 5px; }
+.lviz.due { align-items: center; }
+.lviz.due i { width: 8px; height: 8px; border-radius: 50%; background: #dfa33a; }
+.lviz.due i.late { background: #ef5b50; }
+.lviz.due i.new { background: color-mix(in srgb, var(--accent) 55%, #fff); }
+.lviz.cols { height: 24px; }
+.lviz.cols i { width: 6px; height: calc(var(--h) * 6px); min-height: 2px; border-bottom: 2px solid #33445f;
+               background: radial-gradient(circle, color-mix(in srgb, var(--accent) 55%, #fff) 2px, transparent 2.4px) 0 100% / 6px 6px repeat-y; }
+.lviz.bars { display: grid; gap: 3px; align-items: stretch; }
+.lviz.bars i { height: 4px; border-radius: 4px; background: #26364f; position: relative; }
+.lviz.bars i::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--w); border-radius: 4px; background: var(--accent); }
+.lrecent { padding: 10px 12px 4px; display: grid; gap: 7px; }
+.lrecent div { display: flex; gap: 6px; }
+.lrecent a { width: 26px; height: 26px; border-radius: 7px; background: #26364f; color: #fff; font-size: 12px; font-weight: 600; display: grid; place-items: center; text-decoration: none; }
+.lrecent a:hover { background: var(--accent); text-decoration: none; }
+.lrail .rfoot { margin-top: auto; padding-top: 8px; }
+
+/* Tabs navigation: section names written up the edge; the open tab joins the page */
+.trail { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: var(--canvas); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+.trail .rmark { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); display: grid; place-items: center; margin: 12px auto 10px; flex: none; }
+.trail .rmark svg { width: 19px; height: 19px; fill: none; stroke: #fff; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.vtab { position: relative; flex: none; border-top: 1px solid var(--line); padding: 14px 0; display: flex; flex-direction: column; align-items: center; gap: 9px; color: var(--ink-3); text-decoration: none; }
+.vtab:last-of-type { border-bottom: 1px solid var(--line); }
+.vtab .vl { writing-mode: vertical-rl; transform: rotate(180deg); font-family: var(--mono); font-size: 12px; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; }
+.vtab .vn { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--ink-2); }
+.vtab .vn.alert { color: var(--red); }
+.vtab:hover { background: var(--panel); color: var(--ink); text-decoration: none; }
+.vtab.on { background: var(--panel); color: var(--ink); margin-right: -1px; }
+.vtab.on .vl { font-weight: 600; }
+.vtab.on::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 5px;
+                   background: radial-gradient(circle, var(--accent) 1.5px, transparent 1.9px) 2px 0 / 5px 7px repeat-y; }
+.trail .rfoot { margin-top: auto; padding: 8px 0; display: grid; place-items: center; }
+.trail .rset-btn { color: var(--ink-3); }
+.trail .rset-btn:hover, .trail .rset-btn[aria-expanded="true"] { background: var(--panel); color: var(--ink); }
+@media (min-width: 861px) {
+  :root[data-skin="ledger"][data-nav="live"] { --side: 216px; }
+  :root[data-skin="ledger"][data-nav="tabs"] { --side: 58px; }
+  :root[data-skin="ledger"][data-nav="tabs"] .shell { background: none; }
+}
 
 /* The pages inside a section, as tabs under the search bar */
 .subnav { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 var(--gutter); border-bottom: 1px solid var(--line); }
@@ -92,7 +159,7 @@
   .rail a.ritem { width: auto; flex-direction: row; padding: 7px 10px; gap: 6px; font-size: 12.5px; }
   .rail .rbadge { position: static; }
   .rail .rfoot { margin: 0 0 0 auto; flex-direction: row; padding: 0; }
-  .rail .rdots { grid-template-columns: repeat(4, 18px); }
+  .rset-pop { left: auto; right: 10px; top: 58px; bottom: auto; }
 }
 @media (max-width: 640px) {
   .rail { display: none; }

@@ -2111,7 +2111,7 @@ def test_next_action_tick_off_and_undo(loaded):
     c = loaded
     n = c.execute("select company_number from company order by company_number limit 1").fetchone()["company_number"]
     c.execute("""insert into user_company (user_id, company_number, status, next_action, next_action_on)
-                 values (1, %s, 'contacted', 'Call the owner', current_date - 3)
+                 values (%s, %s, 'contacted', 'Call the owner', current_date - 3)
                  on conflict (user_id, company_number) do update set status = 'contacted', next_action = 'Call the owner',
                  next_action_on = current_date - 3""", (n,))
     c.commit()
@@ -2427,7 +2427,7 @@ def test_shareholder_sweep_goes_pipeline_targets_then_everyone_in_batches(loaded
     c.execute("delete from shareholder"); c.execute("delete from ch_fetch")
     nums = [r["company_number"] for r in c.execute("select company_number from company order by company_number")]
     pipe = nums[0]
-    c.execute("""insert into user_company (user_id, company_number, status) values (1, %s, 'contacted')
+    c.execute("""insert into user_company (user_id, company_number, status) values (%s, %s, 'contacted')
                  on conflict (user_id, company_number) do update set status = 'contacted'""", (pipe,))
     box = [r["company_number"] for r in c.execute("select company_number from company_best where company_number <> %s order by 1", (pipe,))]
     other = [n for n in nums if n not in box and n != pipe]
@@ -2603,3 +2603,23 @@ def test_ai_can_replace_and_remove_wrong_links(loaded):
     assert loaded.execute("select result from website_check where company_number = %s", (num,)).fetchone()["result"] == "none"
     assert loaded.execute("select 1 from research where company_number = %s and content like 'Website removed: https://right.example. Belongs%%'", (num,)).fetchone()
     assert enrich.remove_link(loaded, num, "website", "again")["removed"] is None
+
+
+def test_nav_live_figures(loaded):
+    from datetime import date, timedelta
+
+    from acquireos import api as api_mod
+    from acquireos.api import app
+
+    nums = [r["company_number"] for r in loaded.execute("select company_number from company order by 1 limit 3")]
+    loaded.execute("delete from user_company")
+    loaded.execute("insert into user_company (user_id, company_number, status, next_action_on) values (%s, %s, 'contacted', %s)", (api_mod.UID, nums[0], date.today() - timedelta(days=2)))
+    loaded.execute("insert into user_company (user_id, company_number, status, next_action_on) values (%s, %s, 'approach', %s)", (api_mod.UID, nums[1], date.today()))
+    loaded.execute("insert into user_company (user_id, company_number, status, next_action_on) values (%s, %s, 'future', %s)", (api_mod.UID, nums[2], date.today() + timedelta(days=9)))
+    loaded.commit()
+    api_mod._CACHE.pop("nav_live", None)
+    r = TestClient(app).get("/api/nav").json()
+    assert (r["due"], r["late"]) == (2, 1)
+    assert {p["value"]: p["n"] for p in r["phases"]} == {"assess": 1, "engage": 1, "deal": 0, "owned": 0}   # future is not a deal
+    assert len(r["bands"]) == 4 and all(isinstance(n, int) for n in r["bands"])
+    api_mod._CACHE.pop("nav_live", None)
